@@ -1,0 +1,131 @@
+{
+  "filters": [
+    {
+      "name": "Inflammation",
+      "enabled": true,
+      "category": "(any)",
+      "days_back": 7,
+      "start_date": "",
+      "end_date": "",
+      "text_groups": [
+        {
+          "title": "inflammation",
+          "abstract": "",
+          "both": ""
+        }
+      ],
+      "authors": [],
+      "institution": "",
+      "paper_type": "(any)",
+      "version": "(any)",
+      "published": "(any)",
+      "license": "(any)",
+      "species": "Exclude animal studies",
+      "source_selection": {
+        "all": true,
+        "selected": []
+      }
+    },
+    {
+      "name": "Welch",
+      "enabled": true,
+      "category": "(any)",
+      "days_back": 0,
+      "start_date": "2020-03-22",
+      "end_date": "2026-03-29",
+      "text_groups": [
+        {
+          "title": "",
+          "abstract": "",
+          "both": ""
+        }
+      ],
+      "authors": [
+        "Welch",
+        "Ludwig"
+      ],
+      "institution": "",
+      "paper_type": "(any)",
+      "version": "(any)",
+      "published": "(any)",
+      "license": "(any)",
+      "species": "Human studies only",
+      "source_selection": {
+        "all": true,
+        "selected": []
+      }
+    },
+    {
+      "name": "maternal deprivation",
+      "enabled": true,
+      "category": "(any)",
+      "days_back": 0,
+      "start_date": "2025-03-22",
+      "end_date": "2026-03-29",
+      "text_groups": [
+        {
+          "title": "Maternal deprivation",
+          "abstract": "",
+          "both": "Maternal, deprivation"
+        }
+      ],
+      "authors": [],
+      "institution": "",
+      "paper_type": "(any)",
+      "version": "(any)",
+      "published": "(any)",
+      "license": "(any)",
+      "species": "Exclude animal studies",
+      "source_selection": {
+        "all": true,
+        "selected": []
+      }
+    },
+    {
+      "name": "New Filter",
+      "enabled": true,
+      "category": "(any)",
+      "days_back": 7,
+      "start_date": "",
+      "end_date": "",
+      "text_groups": [],
+      "authors": [],
+      "institution": "",
+      "paper_type": "(any)",
+      "version": "(any)",
+      "published": "(any)",
+      "license": "(any)",
+      "species": "(any)",
+      "source_selection": {
+        "all": true,
+        "selected": []
+      }
+    },
+    {
+      "name": "Psychological Stress and Inflammation",
+      "enabled": true,
+      "category": "(any)",
+      "days_back": 7,
+      "start_date": "",
+      "end_date": "",
+      "text_groups": [
+        {
+          "title": "Inflammation",
+          "abstract": "psychological Stress, Inflammation",
+          "both": ""
+        }
+      ],
+      "authors": [],
+      "institution": "",
+      "paper_type": "(any)",
+      "version": "(any)",
+      "published": "(any)",
+      "license": "(any)",
+      "species": "Human studies only",
+      "source_selection": {
+        "all": true,
+        "selected": []
+      }
+    }
+  ]
+}

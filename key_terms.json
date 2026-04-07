@@ -1,0 +1,64 @@
+{
+  "search_clusters": {
+    "Genetics & CRISPR": {
+      "enabled": true,
+      "profiles": [
+        {
+          "name": "CRISPR Gene Editing",
+          "enabled": true,
+          "category": "genetics",
+          "keywords": [],
+          "days_back": 7
+        },
+        {
+          "name": "CRISPR Delivery",
+          "enabled": true,
+          "category": "genetics",
+          "keywords": [],
+          "days_back": 7
+        }
+      ]
+    },
+    "Infectious Disease": {
+      "enabled": true,
+      "profiles": [
+        {
+          "name": "COVID-19 Variants",
+          "enabled": true,
+          "category": "genetics",
+          "keywords": [],
+          "days_back": 7
+        },
+        {
+          "name": "Influenza Research",
+          "enabled": false,
+          "category": "genetics",
+          "keywords": [],
+          "days_back": 7
+        }
+      ]
+    },
+    "AI/ML in Biology": {
+      "enabled": false,
+      "profiles": [
+        {
+          "name": "Deep Learning for Protein Structure",
+          "enabled": true,
+          "category": "genetics",
+          "keywords": [],
+          "days_back": 7
+        }
+      ]
+    }
+  },
+  "settings": {
+    "download": {
+      "auto_download": true,
+      "max_papers_per_run": 50
+    },
+    "summarization": {
+      "auto_summarize": true,
+      "max_summaries_per_run": 10
+    }
+  }
+}

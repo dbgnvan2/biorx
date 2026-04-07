@@ -1,0 +1,35 @@
+publication_sources:
+  europepmc:
+    enabled: true
+    default_selected: true
+
+  psyarxiv:
+    enabled: true
+    default_selected: true
+
+  biorxiv_medrxiv:
+    enabled: false
+    default_selected: false
+
+  pubmed:
+    enabled: false
+    default_selected: false
+
+  openalex:
+    enabled: false
+    default_selected: false
+
+  crossref:
+    enabled: true
+
+  unpaywall:
+    enabled: true
+
+  pmc_oa:
+    enabled: false
+
+# Contact email for Unpaywall API (required)
+unpaywall_email: research@example.com
+
+# User-Agent string for Crossref polite pool
+crossref_user_agent: "ResearchTool/1.0 (mailto:research@example.com)"
