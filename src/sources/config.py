@@ -12,9 +12,10 @@ logger = logging.getLogger(__name__)
 _DEFAULT_CONFIG: Dict[str, Any] = {
     "publication_sources": {
         "europepmc":        {"enabled": True,  "default_selected": True},
+        "pubmed":           {"enabled": True,  "default_selected": True},
         "psyarxiv":         {"enabled": True,  "default_selected": True},
-        "biorxiv_medrxiv":  {"enabled": False, "default_selected": False},
-        "pubmed":           {"enabled": False, "default_selected": False},
+        "socarxiv":         {"enabled": True,  "default_selected": True},
+        "biorxiv_medrxiv":  {"enabled": True,  "default_selected": False},
         "openalex":         {"enabled": False, "default_selected": False},
         "crossref":         {"enabled": True},
         "unpaywall":        {"enabled": True},
@@ -25,14 +26,15 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 # Sources that are search-capable (shown in picker)
-_SEARCH_SOURCES = ["europepmc", "psyarxiv", "biorxiv_medrxiv", "pubmed", "openalex"]
+_SEARCH_SOURCES = ["europepmc", "pubmed", "psyarxiv", "socarxiv", "biorxiv_medrxiv", "openalex"]
 
 # Display labels for picker
 SOURCE_LABELS: Dict[str, str] = {
     "europepmc":       "Europe PMC",
-    "psyarxiv":        "PsyArXiv",
-    "biorxiv_medrxiv": "bioRxiv / medRxiv",
     "pubmed":          "PubMed",
+    "psyarxiv":        "PsyArXiv",
+    "socarxiv":        "SocArXiv",
+    "biorxiv_medrxiv": "bioRxiv / medRxiv",
     "openalex":        "OpenAlex",
 }
 

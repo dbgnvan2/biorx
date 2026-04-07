@@ -34,6 +34,7 @@ _SOURCE_TRUST: Dict[str, float] = {
     "pubmed":          1.00,
     "crossref":        0.85,
     "psyarxiv":        0.75,
+    "socarxiv":        0.75,
     "biorxiv_medrxiv": 0.75,
     "openalex":        0.70,
 }
@@ -62,10 +63,20 @@ class SourceOrchestrator:
             self._search_adapters["europepmc"] = EuropePmcAdapter()
             logger.info("Registered adapter: europepmc")
 
+        if is_source_enabled(self.config, "pubmed"):
+            from .pubmed import PubMedAdapter
+            self._search_adapters["pubmed"] = PubMedAdapter()
+            logger.info("Registered adapter: pubmed")
+
         if is_source_enabled(self.config, "psyarxiv"):
             from .psyarxiv import PsyArxivAdapter
             self._search_adapters["psyarxiv"] = PsyArxivAdapter()
             logger.info("Registered adapter: psyarxiv")
+
+        if is_source_enabled(self.config, "socarxiv"):
+            from .socarxiv import SocArxivAdapter
+            self._search_adapters["socarxiv"] = SocArxivAdapter()
+            logger.info("Registered adapter: socarxiv")
 
         if is_source_enabled(self.config, "biorxiv_medrxiv"):
             from .biorxiv_medrxiv import BiorxivMedrxivAdapter
@@ -172,9 +183,9 @@ class SourceOrchestrator:
 
     def _build_query(self, source_name: str, filter_dict: Dict[str, Any]) -> str:
         """Convert filter_dict into a source-specific query string."""
-        if source_name == "europepmc":
+        if source_name in ("europepmc", "pubmed"):
             return build_europepmc_query(filter_dict)
-        if source_name == "psyarxiv":
+        if source_name in ("psyarxiv", "socarxiv"):
             return build_psyarxiv_query(filter_dict)
         # bioRxiv/medRxiv is date-based, query is informational only
         return build_psyarxiv_query(filter_dict)
@@ -204,8 +215,8 @@ class SourceOrchestrator:
                 break
 
             try:
-                # PsyArXiv and bioRxiv adapters accept filter_dict for date range
-                if source_name in ("psyarxiv", "biorxiv_medrxiv"):
+                # PsyArXiv, SocArXiv and bioRxiv adapters accept filter_dict for date range
+                if source_name in ("psyarxiv", "socarxiv", "biorxiv_medrxiv"):
                     raw_records = adapter.search(
                         query, page=page, page_size=self.PAGE_SIZE,
                         filter_dict=filter_dict
