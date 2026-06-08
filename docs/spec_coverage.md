@@ -1,3 +1,31 @@
+# Spec Coverage — Search panel enhancements
+
+Specs: `docs/implementation_plan_2026-06-07.md` (E1/E2),
+`docs/implementation_plan_2026-06-08.md` (F1/B1)
+
+## F1 + B1 — "Select All" across all pages
+
+| Spec ID | Description | Implementation | Test | Status |
+|---|---|---|---|---|
+| F1.1 | Select All spans every page, not just rendered rows | `src/selection.py::ResultsSelection.select_all`; `gui.py::MainWindow._select_all` | `tests/test_selection.py::test_f1_1_select_all_spans_all_results` | done |
+| F1.2 | Selection is page-independent (persists across Prev/Next) | `src/selection.py::ResultsSelection` (keyed by `paper_key`); `gui.py::display_page` reads model | `tests/test_selection.py::test_f1_2_selection_is_page_independent` | done |
+| F1.3 | Checked-papers returns the full selected set | `gui.py::MainWindow._checked_papers` → `ResultsSelection.selected` | `tests/test_selection.py::test_f1_3_selected_returns_full_set` | done |
+| F1.4 | Per-paper toggle add/remove, deduped by key | `gui.py::MainWindow._on_item_changed` → `ResultsSelection.set` | `tests/test_selection.py::test_f1_4_toggle_add_remove` | done |
+| F1.5 | Paginated rows are checkable + reflect model (latent bug A) | `gui.py::display_page` (sets `ItemIsUserCheckable` + check state from model) | `tests/test_selection.py::test_f1_5_is_selected_drives_checkbox_state` | done |
+| B1 | Single rendering path: live search + Prev/Next both paginate | `gui.py::_append_batch` renders via `display_page` | covered by F1.* (model) + human verify | done |
+| F1.6 | End-to-end GUI behaviour | n/a (GUI runtime) | **human verification** — checklist below | pending user check |
+
+### F1/B1 human-verification checklist (run `python gui.py`)
+
+1. Run a search returning > 20 papers (multiple pages).
+2. Click **Select All** → the "N selected" count equals the **total** count, not 20.
+3. Page **Next/Prev** → every page shows its rows checked; the count stays at the total.
+4. Uncheck one paper on page 2, page away and back → it stays unchecked; count is total−1.
+5. Save selection as a reference list → all selected papers across pages are saved.
+6. Start a new search → selection resets to 0.
+
+---
+
 # Spec Coverage — Search panel enhancements (2026-06-07 plan)
 
 Spec: `docs/implementation_plan_2026-06-07.md`

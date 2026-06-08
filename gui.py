@@ -32,6 +32,7 @@ from src.sources.config import (
     get_default_selected_sources, SOURCE_LABELS,
 )
 from src.sources.orchestrator import SourceOrchestrator
+from src.selection import ResultsSelection, paper_key
 
 _LOG_FILE = Path("biorx.log")
 logging.basicConfig(
@@ -923,6 +924,7 @@ class SearchBrowseTab(QWidget):
         self.current_results: List[Dict[str, Any]] = []
         self.current_page   = 0
         self.results_per_page = 20
+        self._selection = ResultsSelection()  # page-independent paper selection (F1)
         self._threads: list = []
         # Source picker (reuses orchestrator's enabled sources)
         enabled  = orchestrator.get_enabled_sources()
@@ -1079,6 +1081,7 @@ class SearchBrowseTab(QWidget):
         self.run_selected_btn.setEnabled(False)
         self.run_all_btn.setEnabled(False)
         self.current_results = []
+        self._selection.clear()  # a new search starts with nothing selected (F1)
         self.results_table.setRowCount(0)
         self.current_page = 0
         self._filter_queue  = list(filters)
@@ -1180,24 +1183,9 @@ class SearchBrowseTab(QWidget):
     def _append_batch(self, papers: list):
         self.current_results.extend(papers)
         self._current_filter_matched += len(papers)
-        for paper in papers:
-            row = self.results_table.rowCount()
-            self.results_table.insertRow(row)
-            title_item = QTableWidgetItem(paper.get("title", ""))
-            title_item.setData(Qt.ItemDataRole.UserRole, paper)
-            title_item.setFlags(title_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            title_item.setCheckState(Qt.CheckState.Unchecked)
-            self.results_table.setItem(row, 0, title_item)
-            authors = paper.get("authors", "")
-            if isinstance(authors, list):
-                authors = "; ".join(authors)
-            self.results_table.setItem(row, 1, QTableWidgetItem(str(authors)[:50]))
-            self.results_table.setItem(row, 2, QTableWidgetItem(paper.get("date") or paper.get("pub_date", "")))
-            self.results_table.setItem(row, 3, QTableWidgetItem(paper.get("category", "")))
-            self.results_table.setItem(row, 4, QTableWidgetItem(paper.get("type", paper.get("document_type", ""))))
-            source_label = SOURCE_LABELS.get(paper.get("source", ""), paper.get("source", ""))
-            self.results_table.setItem(row, 5, QTableWidgetItem(source_label))
-        self.page_label.setText(f"{len(self.current_results):,} papers")
+        # Render through the single paginated path so live results and page
+        # navigation behave identically (B1).
+        self.display_page()
         self.status_label.setText(self._search_status_text())
         self._update_checked_count()
 
@@ -1236,14 +1224,25 @@ class SearchBrowseTab(QWidget):
         self._run_filters([f], save_to_db=False)
 
     def display_page(self):
-        self.results_table.setRowCount(0)
+        """Render the current page of current_results. Single rendering path for
+        both live search and Prev/Next. Checkbox state is read from the
+        page-independent selection model (F1); signals are blocked while
+        populating so programmatic check states don't echo back into the model."""
         start = self.current_page * self.results_per_page
         page  = self.current_results[start:start + self.results_per_page]
 
+        self.results_table.blockSignals(True)
+        self.results_table.setRowCount(0)
         for row, paper in enumerate(page):
             self.results_table.insertRow(row)
             title_item = QTableWidgetItem(paper.get("title", ""))
             title_item.setData(Qt.ItemDataRole.UserRole, paper)   # store full dict for right-click
+            title_item.setFlags(title_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            title_item.setCheckState(
+                Qt.CheckState.Checked
+                if self._selection.is_selected(paper_key(paper))
+                else Qt.CheckState.Unchecked
+            )
             self.results_table.setItem(row, 0, title_item)
             authors = paper.get("authors", "")
             if isinstance(authors, list):
@@ -1251,10 +1250,13 @@ class SearchBrowseTab(QWidget):
             self.results_table.setItem(row, 1, QTableWidgetItem(str(authors)[:50]))
             self.results_table.setItem(row, 2, QTableWidgetItem(paper.get("date") or paper.get("pub_date", "")))
             self.results_table.setItem(row, 3, QTableWidgetItem(paper.get("category", "")))
-            self.results_table.setItem(row, 4, QTableWidgetItem(paper.get("type", "")))
+            self.results_table.setItem(row, 4, QTableWidgetItem(paper.get("type", paper.get("document_type", ""))))
+            source_label = SOURCE_LABELS.get(paper.get("source", ""), paper.get("source", ""))
+            self.results_table.setItem(row, 5, QTableWidgetItem(source_label))
+        self.results_table.blockSignals(False)
 
         total = max(1, (len(self.current_results) + self.results_per_page - 1) // self.results_per_page)
-        self.page_label.setText(f"Page {self.current_page + 1} of {total}  ({len(self.current_results)} total)")
+        self.page_label.setText(f"Page {self.current_page + 1} of {total}  ({len(self.current_results):,} total)")
         self.prev_btn.setEnabled(self.current_page > 0)
         self.next_btn.setEnabled(self.current_page < total - 1)
 
@@ -1272,41 +1274,33 @@ class SearchBrowseTab(QWidget):
     # ── Checkbox / selection helpers ──────────────────────────────────────────
 
     def _on_item_changed(self, item: QTableWidgetItem):
+        # A user toggle of a visible row updates the page-independent model (F1).
         if item.column() == 0:
+            paper = item.data(Qt.ItemDataRole.UserRole)
+            if paper is not None:
+                self._selection.set(
+                    paper_key(paper), item.checkState() == Qt.CheckState.Checked
+                )
             self._update_checked_count()
 
     def _update_checked_count(self):
-        count = sum(
-            1 for r in range(self.results_table.rowCount())
-            if (it := self.results_table.item(r, 0)) and it.checkState() == Qt.CheckState.Checked
-        )
+        count = self._selection.count(self.current_results)
         self._checked_label.setText(f"{count} selected")
 
     def _select_all(self):
-        self.results_table.itemChanged.disconnect(self._on_item_changed)
-        for r in range(self.results_table.rowCount()):
-            it = self.results_table.item(r, 0)
-            if it:
-                it.setCheckState(Qt.CheckState.Checked)
-        self.results_table.itemChanged.connect(self._on_item_changed)
+        # Select across ALL pages, not just rendered rows (F1).
+        self._selection.select_all(self.current_results)
+        self.display_page()  # reflect selection on the current page
         self._update_checked_count()
 
     def _select_none(self):
-        self.results_table.itemChanged.disconnect(self._on_item_changed)
-        for r in range(self.results_table.rowCount()):
-            it = self.results_table.item(r, 0)
-            if it:
-                it.setCheckState(Qt.CheckState.Unchecked)
-        self.results_table.itemChanged.connect(self._on_item_changed)
+        self._selection.clear()
+        self.display_page()
         self._update_checked_count()
 
     def _checked_papers(self) -> List[Dict[str, Any]]:
-        papers = []
-        for r in range(self.results_table.rowCount()):
-            it = self.results_table.item(r, 0)
-            if it and it.checkState() == Qt.CheckState.Checked:
-                papers.append(it.data(Qt.ItemDataRole.UserRole))
-        return papers
+        # Return selected papers across the whole result set, not just the page.
+        return self._selection.selected(self.current_results)
 
     def _save_selected_as_reference(self):
         papers = self._checked_papers()
