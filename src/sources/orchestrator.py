@@ -39,6 +39,22 @@ _SOURCE_TRUST: Dict[str, float] = {
     "openalex":        0.70,
 }
 
+# Human-readable source names for status messages (spec E2.1)
+_SOURCE_LABELS: Dict[str, str] = {
+    "europepmc":       "Europe PMC",
+    "pubmed":          "PubMed",
+    "crossref":        "Crossref",
+    "psyarxiv":        "PsyArXiv",
+    "socarxiv":        "SocArXiv",
+    "biorxiv_medrxiv": "bioRxiv/medRxiv",
+    "openalex":        "OpenAlex",
+}
+
+
+def _source_label(source_name: str) -> str:
+    """Return a display label for a source, falling back to the raw name."""
+    return _SOURCE_LABELS.get(source_name, source_name)
+
 
 class SourceOrchestrator:
     """
@@ -103,6 +119,7 @@ class SourceOrchestrator:
         source_selection: Optional[Dict[str, Any]] = None,
         on_batch: Optional[Callable[[List[CanonicalRecord]], None]] = None,
         on_progress: Optional[Callable[[int, int], None]] = None,
+        on_status: Optional[Callable[[str], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None,
         max_results: int = 2000,
     ) -> List[CanonicalRecord]:
@@ -114,6 +131,8 @@ class SourceOrchestrator:
             source_selection: {"all": bool, "selected": list[str]}
             on_batch:         Callback called with each batch of new records.
             on_progress:      Callback called with (fetched_so_far, total_estimate).
+            on_status:        Callback called with a human-readable phase string
+                              (e.g. "Searching Europe PMC…", "Enriching 120 papers…").
             should_stop:      Callable returning True when search should abort.
             max_results:      Maximum total records to return.
 
@@ -128,8 +147,9 @@ class SourceOrchestrator:
             logger.warning("No active sources — restoring All Sources")
             active = list(self._search_adapters.keys())
 
-        dedup        = Deduplicator()
-        total_fetched = 0
+        dedup         = Deduplicator()
+        total_fetched = 0     # records fetched across all completed sources
+        known_total   = 0     # sum of completed sources' realized totals (for the bar)
 
         for source_name in active:
             if should_stop and should_stop():
@@ -137,7 +157,25 @@ class SourceOrchestrator:
 
             adapter = self._search_adapters[source_name]
             query   = self._build_query(source_name, filter_dict)
+            label   = _source_label(source_name)
             logger.info("Searching %s: %s", source_name, query[:80])
+            if on_status:
+                on_status(f"Searching {label}…")
+
+            budget = max_results - total_fetched
+
+            # Per-source progress wrapper: translate this source's local
+            # (fetched, total) into cumulative numbers so the bar advances
+            # smoothly across the whole multi-source run (spec E2.2).
+            def on_source_progress(src_fetched, src_total,
+                                   _baseline=total_fetched, _known=known_total,
+                                   _budget=budget):
+                if not on_progress:
+                    return
+                g_fetched = _baseline + src_fetched
+                eff_total = min(src_total, _budget) if src_total else src_fetched
+                g_total   = _known + max(eff_total, src_fetched)
+                on_progress(g_fetched, max(g_fetched, g_total))
 
             try:
                 fetched = self._search_source(
@@ -147,16 +185,23 @@ class SourceOrchestrator:
                     filter_dict=filter_dict,
                     dedup=dedup,
                     on_batch=on_batch,
-                    on_progress=on_progress,
+                    on_progress=on_source_progress,
                     should_stop=should_stop,
-                    max_results=max_results - total_fetched,
+                    max_results=budget,
                 )
                 total_fetched += fetched
+                known_total   += fetched
+                if on_status:
+                    on_status(f"{label}: {fetched:,} fetched")
             except SourceUnavailableError as e:
                 logger.error("Source unavailable (%s): %s", source_name, e)
+                if on_status:
+                    on_status(f"{label} unavailable — skipped")
                 continue
             except Exception as e:
                 logger.error("Unexpected error from %s: %s", source_name, e, exc_info=True)
+                if on_status:
+                    on_status(f"{label} error — skipped")
                 continue
 
             if total_fetched >= max_results:
@@ -164,7 +209,8 @@ class SourceOrchestrator:
 
         # Enrichment phase (only for records that have DOIs)
         records = dedup.results()
-        self._enrich(records)
+        self._enrich(records, on_status=on_status, on_progress=on_progress,
+                     should_stop=should_stop)
 
         return self._rank(records)
 
@@ -247,16 +293,22 @@ class SourceOrchestrator:
             if batch and on_batch:
                 on_batch(batch)
 
-            if on_progress:
-                on_progress(fetched, fetched)  # total unknown until all pages done
-
-            # bioRxiv returns raw dicts with _total attached
+            # Determine this source's total hit count when the source reports one,
+            # so the progress bar can advance against a real target (spec E2.2).
+            src_total = 0
             if source_name == "biorxiv_medrxiv" and raw_records:
-                total = raw_records[0].get("_total", 0) if isinstance(raw_records[0], dict) else 0
-                if on_progress and total:
-                    on_progress(fetched, total)
-                if total and fetched >= total:
-                    break
+                # bioRxiv returns raw dicts with _total attached
+                if isinstance(raw_records[0], dict):
+                    src_total = raw_records[0].get("_total", 0) or 0
+            else:
+                # EuropePMC/PubMed expose hitCount as adapter.last_total
+                src_total = getattr(adapter, "last_total", None) or 0
+
+            if on_progress:
+                on_progress(fetched, src_total)  # src_total == 0 means "unknown"
+
+            if src_total and fetched >= src_total:
+                break
 
             if len(raw_records) < self.PAGE_SIZE:
                 break  # last page
@@ -268,11 +320,35 @@ class SourceOrchestrator:
 
     # ── Enrichment ─────────────────────────────────────────────────────────────
 
-    def _enrich(self, records: List[CanonicalRecord]) -> None:
-        """Run Crossref and Unpaywall enrichment on records that have DOIs."""
-        for record in records:
-            if not record.doi:
-                continue
+    def _enrich(
+        self,
+        records: List[CanonicalRecord],
+        on_status: Optional[Callable[[str], None]] = None,
+        on_progress: Optional[Callable[[int, int], None]] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> None:
+        """Run Crossref and Unpaywall enrichment on records that have DOIs.
+
+        Emits status/progress so the GUI is not silent during this phase, which
+        makes up to two synchronous HTTP calls per DOI (spec E2.3).
+        """
+        if not (self._crossref or self._unpaywall):
+            return  # nothing to enrich against
+
+        targets = [r for r in records if r.doi]
+        if not targets:
+            return
+
+        total = len(targets)
+        logger.info("Enriching %d records via Crossref/Unpaywall", total)
+        if on_status:
+            on_status(f"Enriching {total:,} papers…")
+        if on_progress:
+            on_progress(0, total)
+
+        for i, record in enumerate(targets, start=1):
+            if should_stop and should_stop():
+                break
             try:
                 if self._crossref:
                     self._crossref.enrich(record)
@@ -283,6 +359,11 @@ class SourceOrchestrator:
                     self._unpaywall.enrich(record)
             except Exception as e:
                 logger.debug("Unpaywall error for %s: %s", record.doi, e)
+            # Update every 25 records (and on the final one) to limit UI churn.
+            if on_progress and (i % 25 == 0 or i == total):
+                on_progress(i, total)
+            if on_status and (i % 25 == 0 or i == total):
+                on_status(f"Enriching {i:,}/{total:,} papers…")
 
     # ── Ranking ────────────────────────────────────────────────────────────────
 

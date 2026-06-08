@@ -101,6 +101,9 @@ class EuropePmcAdapter:
         # Cursor state per query (reset on each new search call)
         self._cursor_mark: str = "*"
         self._last_query: str = ""
+        # Total hit count reported by the most recent search() response.
+        # Surfaced for progress reporting (spec E2.2). None until first search.
+        self.last_total: Optional[int] = None
 
     def search(
         self, query: str, page: int = 1, page_size: int = 25
@@ -145,6 +148,13 @@ class EuropePmcAdapter:
         data = resp.json()
         # Advance cursor for next page
         self._cursor_mark = data.get("nextCursorMark", "*")
+        # Surface the total hit count for progress reporting (spec E2.2)
+        hit_count = data.get("hitCount")
+        if hit_count is not None:
+            try:
+                self.last_total = int(hit_count)
+            except (TypeError, ValueError):
+                self.last_total = None
 
         results = data.get("resultList", {}).get("result", [])
         logger.debug(

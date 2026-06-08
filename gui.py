@@ -6,6 +6,7 @@ Main application with Search & Browse and Filters tabs.
 import sys
 import json
 import logging
+import re
 import threading
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -100,6 +101,28 @@ def save_filters(path: Path, filters: List[Dict[str, Any]]):
         json.dump({"filters": filters}, f, indent=2)
 
 
+def filter_initial_check_state() -> "Qt.CheckState":
+    """Purpose: Decide the startup check state of a saved-filter row in the Search panel.
+    Spec:    docs/implementation_plan_2026-06-07.md#E1.1
+    Tests:   tests/test_gui_filters.py::test_e1_1_filters_unchecked_on_startup
+
+    Saved-filter rows always start unchecked so a run only happens on an
+    explicit selection, regardless of the filter's persisted ``enabled`` flag.
+    """
+    return Qt.CheckState.Unchecked
+
+
+def filter_is_enabled(f: Dict[str, Any]) -> bool:
+    """Purpose: Report whether a filter participates in 'Run All Enabled'.
+    Spec:    docs/implementation_plan_2026-06-07.md#E1.2
+    Tests:   tests/test_gui_filters.py::test_e1_2_run_all_enabled_uses_enabled_field
+
+    This reads the persisted ``enabled`` flag and is independent of the row's
+    visual check state in the Search panel.
+    """
+    return f.get("enabled", True)
+
+
 def _filter_has_text(f: Dict[str, Any]) -> bool:
     """Return True if the filter has at least one non-empty text search term."""
     groups = f.get("text_groups", [])
@@ -118,7 +141,8 @@ def _filter_has_text(f: Dict[str, Any]) -> bool:
 class SearchWorker(QObject):
     batch_ready = pyqtSignal(list)      # matched papers from one API page
     progress    = pyqtSignal(int, int)  # (fetched so far, total)
-    status      = pyqtSignal(str)
+    status      = pyqtSignal(str)       # terminal status (Done / Stopped)
+    phase       = pyqtSignal(str)       # live phase text (per-source / enriching)
     finished    = pyqtSignal(list)      # all matched papers
     error       = pyqtSignal(str)
 
@@ -151,18 +175,22 @@ class SearchWorker(QObject):
                 if matched:
                     self._all_matched.extend(matched)
                     self.batch_ready.emit(matched)
-                    self.status.emit(
-                        f"{len(self._all_matched):,} matched so far…"
-                    )
+                    # Live status is composed UI-side in _append_batch so it can
+                    # show both this filter's count and the running total.
 
             def on_progress(fetched: int, total: int):
                 self.progress.emit(fetched, max(fetched, total))
+
+            def on_status(message: str):
+                if not self._stop_event.is_set():
+                    self.phase.emit(message)
 
             self.orchestrator.search(
                 filter_dict=f,
                 source_selection=source_selection,
                 on_batch=on_batch,
                 on_progress=on_progress,
+                on_status=on_status,
                 should_stop=self._stop_event.is_set,
                 max_results=self.MAX_PAPERS,
             )
@@ -227,6 +255,22 @@ def _pdf_url(paper: Dict[str, Any]) -> str:
     if doi:
         return f"https://doi.org/{doi}"
     return paper.get("source_url", paper.get("url", ""))
+
+
+def _paper_link(paper: Dict[str, Any]) -> str:
+    """Return the best landing-page/document URL for a paper.
+
+    Prefers the publisher/source landing page, then a DOI resolver, then any
+    explicit PDF/OA URL. Used for export links the user can click through to
+    the document of record.
+    """
+    doi = paper.get("doi", "")
+    return (
+        paper.get("source_url")
+        or paper.get("url")
+        or (f"https://doi.org/{doi}" if doi else "")
+        or _pdf_url(paper)
+    )
 
 
 def _open_in_browser(url: str):
@@ -1005,7 +1049,7 @@ class SearchBrowseTab(QWidget):
         for f in load_filters(FILTERS_PATH):
             item = QListWidgetItem(f["name"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked if f.get("enabled", True) else Qt.CheckState.Unchecked)
+            item.setCheckState(filter_initial_check_state())
             item.setData(Qt.ItemDataRole.UserRole, f)
             self.filters_list.addItem(item)
 
@@ -1024,7 +1068,7 @@ class SearchBrowseTab(QWidget):
         filters = [
             self.filters_list.item(i).data(Qt.ItemDataRole.UserRole)
             for i in range(self.filters_list.count())
-            if self.filters_list.item(i).data(Qt.ItemDataRole.UserRole).get("enabled", True)
+            if filter_is_enabled(self.filters_list.item(i).data(Qt.ItemDataRole.UserRole))
         ]
         if not filters:
             QMessageBox.information(self, "No enabled filters", "Enable at least one filter in the Filters tab")
@@ -1041,6 +1085,10 @@ class SearchBrowseTab(QWidget):
         self._save_to_db    = save_to_db
         self._total_filters = len(filters)
         self._filter_idx    = 0
+        self._current_filter_name    = ""
+        self._current_filter_matched = 0
+        self._current_phase          = ""
+        self._progress_format        = "Fetched %v / %m papers"
         self._current_worker: Optional[SearchWorker] = None
         # Indeterminate bar while we don't know total yet
         self.progress_bar.setMaximum(0)
@@ -1065,6 +1113,9 @@ class SearchBrowseTab(QWidget):
         f = self._filter_queue.pop(0)
         self._filter_idx += 1
         name = f.get("name", "")
+        self._current_filter_name    = name
+        self._current_filter_matched = 0
+        self._current_phase          = ""
         # Skip filters with no search terms — they'd return an unfiltered date scan
         if not _filter_has_text(f):
             self.status_label.setText(
@@ -1073,9 +1124,7 @@ class SearchBrowseTab(QWidget):
             )
             self._run_next_filter()
             return
-        self.status_label.setText(
-            f"⏳  Filter {self._filter_idx}/{self._total_filters}: {name}"
-        )
+        self.status_label.setText(self._search_status_text(phase="searching…"))
         # Stay indeterminate until first progress signal
         self.progress_bar.setMaximum(0)
         self.progress_bar.setFormat("Connecting…")
@@ -1087,20 +1136,50 @@ class SearchBrowseTab(QWidget):
         thread.started.connect(worker.run)
         worker.batch_ready.connect(self._append_batch)
         worker.progress.connect(self._update_progress)
+        worker.phase.connect(self._on_phase)
         worker.status.connect(self.status_label.setText)
         worker.error.connect(lambda e: self.status_label.setText(f"⚠  {e}"))
         worker.finished.connect(lambda _: self._run_next_filter())
         thread.start()
         self._threads.append((thread, worker))
 
+    def _search_status_text(self, phase: str = "") -> str:
+        """Compose the top status line: the live phase (current source being
+        queried, or the enrichment step) plus the running total across all
+        filters in the run. Falls back to the per-filter matched count when no
+        live phase is active."""
+        total = len(self.current_results)
+        matched = self._current_filter_matched
+        live = self._current_phase or phase
+        body = live if live else f"{matched:,} matched"
+        if self._total_filters > 1:
+            prefix = f"⏳  Filter {self._filter_idx}/{self._total_filters} '{self._current_filter_name}'"
+            return f"{prefix}: {body} · {total:,} total so far"
+        if live:
+            # Quick / single search: lead with the live phase rather than the
+            # (often unhelpful, e.g. "quick") filter name.
+            return f"⏳  {body} · {total:,} so far"
+        label = f"'{self._current_filter_name}'" if self._current_filter_name else "Search"
+        return f"⏳  {label}: {body}"
+
+    def _on_phase(self, message: str):
+        """Slot for SearchWorker.phase — the current source/enrichment phase."""
+        self._current_phase = message
+        if message.startswith("Enriching"):
+            self._progress_format = "Enriching %v / %m papers"
+        else:
+            self._progress_format = "Fetched %v / %m papers"
+        self.status_label.setText(self._search_status_text())
+
     def _update_progress(self, fetched: int, total: int):
         if total > 0:
             self.progress_bar.setMaximum(total)
-            self.progress_bar.setFormat("Fetched %v / %m papers")
+            self.progress_bar.setFormat(self._progress_format)
             self.progress_bar.setValue(fetched)
 
     def _append_batch(self, papers: list):
         self.current_results.extend(papers)
+        self._current_filter_matched += len(papers)
         for paper in papers:
             row = self.results_table.rowCount()
             self.results_table.insertRow(row)
@@ -1119,14 +1198,19 @@ class SearchBrowseTab(QWidget):
             source_label = SOURCE_LABELS.get(paper.get("source", ""), paper.get("source", ""))
             self.results_table.setItem(row, 5, QTableWidgetItem(source_label))
         self.page_label.setText(f"{len(self.current_results):,} papers")
+        self.status_label.setText(self._search_status_text())
         self._update_checked_count()
 
     def _on_all_filters_done(self):
+        self._current_phase = ""
+        # Top the bar out so the completed run reads as 100% before it hides.
+        if self.progress_bar.maximum() > 0:
+            self.progress_bar.setValue(self.progress_bar.maximum())
         self.progress_bar.setVisible(False)
         self.stop_btn.setVisible(False)
         self.stop_btn.setEnabled(True)
         self.status_label.setStyleSheet("")
-        self.status_label.setText(f"Done — {len(self.current_results):,} papers found")
+        self.status_label.setText(f"✅  Done — {len(self.current_results):,} papers found")
         self.run_selected_btn.setEnabled(True)
         self.run_all_btn.setEnabled(True)
 
@@ -1866,11 +1950,15 @@ class SavedReferencesTab(QWidget):
         dl_sel_btn.clicked.connect(lambda: self._start_download(selected_only=True))
         dl_all_btn = QPushButton("⬇  Download All PDFs")
         dl_all_btn.clicked.connect(lambda: self._start_download(selected_only=False))
+        export_btn = QPushButton("📑  Export to Excel…")
+        export_btn.setToolTip("Export this list (or selected papers) to an .xlsx file with clickable links")
+        export_btn.clicked.connect(self._export_to_excel)
         self._stop_dl_btn = QPushButton("⏹  Stop")
         self._stop_dl_btn.setVisible(False)
         self._stop_dl_btn.clicked.connect(self._stop_download)
         dl_bar.addWidget(dl_sel_btn)
         dl_bar.addWidget(dl_all_btn)
+        dl_bar.addWidget(export_btn)
         dl_bar.addStretch()
         dl_bar.addWidget(self._stop_dl_btn)
         rl.addLayout(dl_bar)
@@ -1998,6 +2086,101 @@ class SavedReferencesTab(QWidget):
         if self._current_list_id:
             self._load_papers(self._current_list_id)
             self.refresh_lists()
+
+    # ── Export ──────────────────────────────────────────────────────────────
+
+    def _export_to_excel(self):
+        """Export the current list (selected papers if any are checked, else all)
+        to an .xlsx file with a clickable link per paper."""
+        if self._current_list_id is None:
+            QMessageBox.information(self, "No list", "Select a reference list first.")
+            return
+
+        checked = self._checked_entries()
+        papers = (
+            [e["paper"] for e in checked]
+            if checked
+            else self._papers_for_download(selected_only=False)
+        )
+        if not papers:
+            QMessageBox.information(self, "Nothing to export", "This list has no papers.")
+            return
+
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            QMessageBox.critical(
+                self, "Missing dependency",
+                "Excel export needs the 'openpyxl' package.\n\n"
+                "Install it with:\n    pip install openpyxl",
+            )
+            return
+
+        from PyQt6.QtWidgets import QFileDialog
+
+        # Default filename from the list name (strip the trailing " (count)").
+        row = self.lists_widget.currentRow()
+        raw_name = self.lists_widget.item(row).text() if row >= 0 else "references"
+        base = re.sub(r"\s*\(\d+\)\s*$", "", raw_name).strip() or "references"
+        safe = re.sub(r"[^\w\-. ]+", "_", base)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Reference List", f"{safe}.xlsx", "Excel Workbook (*.xlsx)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+
+        headers = ["Title", "Authors", "Date", "Type", "Source", "DOI", "Link"]
+        try:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = base[:31] or "References"  # Excel caps sheet names at 31 chars
+
+            ws.append(headers)
+            for c in range(1, len(headers) + 1):
+                ws.cell(row=1, column=c).font = Font(bold=True)
+
+            link_font = Font(color="0563C1", underline="single")
+            for paper in papers:
+                authors = paper.get("authors", "")
+                if isinstance(authors, list):
+                    authors = "; ".join(str(a) for a in authors)
+                source = SOURCE_LABELS.get(paper.get("source", ""), paper.get("source", ""))
+                ws.append([
+                    paper.get("title", ""),
+                    str(authors),
+                    paper.get("date") or paper.get("pub_date", ""),
+                    paper.get("type", paper.get("document_type", "")),
+                    source,
+                    paper.get("doi", ""),
+                    "",  # link cell filled below as a hyperlink
+                ])
+                cell = ws.cell(row=ws.max_row, column=len(headers))
+                url = _paper_link(paper)
+                if url:
+                    cell.value = "Open paper"
+                    cell.hyperlink = url
+                    cell.font = link_font
+
+            # Reasonable column widths.
+            widths = [60, 30, 12, 12, 16, 28, 14]
+            for i, w in enumerate(widths, start=1):
+                ws.column_dimensions[get_column_letter(i)].width = w
+            ws.freeze_panes = "A2"
+
+            wb.save(path)
+        except Exception as e:
+            logger.error("Excel export failed: %s", e)
+            QMessageBox.critical(self, "Export failed", f"Could not write the file:\n{e}")
+            return
+
+        QMessageBox.information(
+            self, "Export complete",
+            f"Exported {len(papers)} paper(s) to:\n{path}",
+        )
 
     # ── Batch download ────────────────────────────────────────────────────────
 

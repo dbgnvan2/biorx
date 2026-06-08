@@ -196,3 +196,79 @@ def test_on_batch_callback_called():
     )
 
     assert len(batches) > 0
+
+
+def test_e2_1_on_status_emits_per_source():
+    """E2.1: on_status emits a 'Searching <label>…' message for each active source."""
+    config = _config(europepmc=True, psyarxiv=True)
+    orch = SourceOrchestrator.__new__(SourceOrchestrator)
+    orch.config = config
+    orch._crossref  = None
+    orch._unpaywall = None
+
+    mock_epmc = MagicMock(); mock_epmc.search.return_value = []
+    mock_psya = MagicMock(); mock_psya.search.return_value = []
+    orch._search_adapters = {"europepmc": mock_epmc, "psyarxiv": mock_psya}
+
+    messages = []
+    orch.search(
+        filter_dict={"days_back": 7, "text_groups": [{"both": "stress"}]},
+        source_selection={"all": True, "selected": []},
+        on_status=messages.append,
+    )
+
+    assert any("Searching Europe PMC" in m for m in messages), messages
+    assert any("Searching PsyArXiv" in m for m in messages), messages
+
+
+def test_e2_2_progress_reports_known_total():
+    """E2.2: on_progress reports a real total (> fetched), not the degenerate
+    fetched == total emitted previously."""
+    config = _config(europepmc=True, psyarxiv=False)
+    orch = SourceOrchestrator.__new__(SourceOrchestrator)
+    orch.config = config
+    orch._crossref  = None
+    orch._unpaywall = None
+
+    record = _make_record(doi="10.1234/total")
+    mock_epmc = MagicMock()
+    mock_epmc.search.return_value = [{}]      # one short page -> stops after page 1
+    mock_epmc.normalize.return_value = record
+    mock_epmc.last_total = 120                # source reports 120 total hits
+    orch._search_adapters = {"europepmc": mock_epmc}
+
+    progress = []
+    orch.search(
+        filter_dict={"days_back": 7, "text_groups": []},
+        source_selection={"all": True, "selected": []},
+        on_progress=lambda fetched, total: progress.append((fetched, total)),
+    )
+
+    assert progress, "expected at least one progress update"
+    # The reported total should reflect the source's hit count, not just fetched.
+    assert any(total >= 120 and fetched < total for fetched, total in progress), progress
+
+
+def test_e2_3_enrichment_emits_status():
+    """E2.3: the enrichment phase emits an 'Enriching N papers…' status message."""
+    config = _config(europepmc=True, psyarxiv=False)
+    orch = SourceOrchestrator.__new__(SourceOrchestrator)
+    orch.config = config
+    orch._unpaywall = None
+    orch._crossref  = MagicMock()
+
+    record = _make_record(doi="10.1234/enrichstatus")
+    mock_epmc = MagicMock()
+    mock_epmc.search.return_value = [{}]
+    mock_epmc.normalize.return_value = record
+    orch._search_adapters = {"europepmc": mock_epmc}
+
+    messages = []
+    orch.search(
+        filter_dict={"days_back": 7, "text_groups": []},
+        source_selection={"all": True, "selected": []},
+        on_status=messages.append,
+    )
+
+    assert any("Enriching" in m for m in messages), messages
+    orch._crossref.enrich.assert_called()

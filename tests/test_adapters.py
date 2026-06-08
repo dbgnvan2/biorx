@@ -89,6 +89,27 @@ def test_europepmc_search_calls_api():
     assert results[0]["doi"] == "10.1234/test.paper"
 
 
+def test_e2_2_europepmc_exposes_last_total():
+    """E2.2: search() surfaces the API hitCount as adapter.last_total for progress."""
+    from src.sources.europepmc import EuropePmcAdapter
+    adapter = EuropePmcAdapter()
+    assert adapter.last_total is None  # nothing fetched yet
+
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "hitCount": 999,
+        "nextCursorMark": "ABC",
+        "resultList": {"result": [EPMC_FIXTURE]},
+    }
+
+    with patch.object(adapter.session, "get", return_value=mock_resp):
+        adapter.search("maternal AND FIRST_PDATE:[2025-01-01 TO 2025-03-29]")
+
+    assert adapter.last_total == 999
+
+
 # ── PsyArXiv adapter ──────────────────────────────────────────────────────────
 
 PSYARXIV_FIXTURE = {
