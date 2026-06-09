@@ -1207,7 +1207,7 @@ class SearchBrowseTab(QWidget):
             self.matches_label.setText(f"Matches: {total:,}")
         else:
             self.matches_label.setText(
-                f"Total Matches: {total:,}    Unduplicated: {unique:,}"
+                f"Total Matches: {total:,}    Unduplicated Matches: {unique:,}"
             )
 
     def _on_all_filters_done(self):
@@ -1219,15 +1219,9 @@ class SearchBrowseTab(QWidget):
         self.stop_btn.setVisible(False)
         self.stop_btn.setEnabled(True)
         self.status_label.setStyleSheet("")
-        unique = self._results.unique_count
-        dupes  = self._results.duplicate_count
-        if dupes:
-            self.status_label.setText(
-                f"✅  Done — {unique:,} unduplicated papers "
-                f"({self._results.total_matches:,} total matches, {dupes:,} duplicates removed)"
-            )
-        else:
-            self.status_label.setText(f"✅  Done — {unique:,} papers found")
+        self.status_label.setText(
+            f"✅  Done — {self._results.unique_count:,} unique papers found"
+        )
         self._update_matches_label()
         self.run_selected_btn.setEnabled(True)
         self.run_all_btn.setEnabled(True)
