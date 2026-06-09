@@ -283,7 +283,15 @@ class SourceOrchestrator:
             for raw in raw_records:
                 try:
                     canonical = adapter.normalize(raw)
+                    before    = len(dedup)
                     canonical = dedup.add(canonical)
+                    if len(dedup) == before:
+                        # Duplicate of an already-seen record (e.g. the heavy
+                        # EuropePMC/PubMed overlap). It was merged into the
+                        # existing record — don't re-stream or re-count it, so
+                        # the GUI's result count matches the unique set that is
+                        # actually saved.
+                        continue
                     batch.append(canonical)
                     fetched += 1
                 except Exception as e:

@@ -198,6 +198,36 @@ def test_on_batch_callback_called():
     assert len(batches) > 0
 
 
+def test_duplicate_across_sources_streamed_once():
+    """A paper found in two overlapping sources (e.g. EuropePMC + PubMed) must be
+    streamed to on_batch only once, so the displayed count matches the unique set
+    that gets saved (regression for the 121-found / 70-saved discrepancy)."""
+    config = _config(europepmc=True, psyarxiv=False)
+    orch = SourceOrchestrator.__new__(SourceOrchestrator)
+    orch.config = config
+    orch._crossref  = None
+    orch._unpaywall = None
+
+    # Both sources return the SAME DOI.
+    epmc_rec = _make_record(doi="10.1234/overlap", source="europepmc")
+    pm_rec   = _make_record(doi="10.1234/overlap", source="pubmed")
+    mock_epmc = MagicMock(); mock_epmc.search.return_value = [{}]; mock_epmc.normalize.return_value = epmc_rec
+    mock_pm   = MagicMock(); mock_pm.search.return_value = [{}];   mock_pm.normalize.return_value = pm_rec
+    orch._search_adapters = {"europepmc": mock_epmc, "pubmed": mock_pm}
+
+    streamed = []
+    orch.search(
+        filter_dict={"days_back": 7, "text_groups": []},
+        source_selection={"all": True, "selected": []},
+        on_batch=lambda recs: streamed.extend(recs),
+    )
+
+    # Both sources were queried, but the duplicate is streamed only once.
+    mock_epmc.search.assert_called()
+    mock_pm.search.assert_called()
+    assert len(streamed) == 1, [r.doi for r in streamed]
+
+
 def test_e2_1_on_status_emits_per_source():
     """E2.1: on_status emits a 'Searching <label>…' message for each active source."""
     config = _config(europepmc=True, psyarxiv=True)
