@@ -13,6 +13,7 @@ Specs: `docs/implementation_plan_2026-06-07.md` (E1/E2),
 | F1.4 | Per-paper toggle add/remove, deduped by key | `gui.py::MainWindow._on_item_changed` → `ResultsSelection.set` | `tests/test_selection.py::test_f1_4_toggle_add_remove` | done |
 | F1.5 | Paginated rows are checkable + reflect model (latent bug A) | `gui.py::display_page` (sets `ItemIsUserCheckable` + check state from model) | `tests/test_selection.py::test_f1_5_is_selected_drives_checkbox_state` | done |
 | B1 | Single rendering path: live search + Prev/Next both paginate | `gui.py::_append_batch` renders via `display_page` | covered by F1.* (model) + human verify | done |
+| B1b | Cross-filter dedup + Total/Unduplicated counts shown | `src/selection.py::ResultsAccumulator`; `gui.py::_append_batch`, `_update_matches_label`, `matches_label` | `tests/test_selection.py::test_accumulator_*` | done |
 | F1.6 | End-to-end GUI behaviour | n/a (GUI runtime) | **human verification** — checklist below | pending user check |
 
 ### F1/B1 human-verification checklist (run `python gui.py`)

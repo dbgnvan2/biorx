@@ -32,7 +32,7 @@ from src.sources.config import (
     get_default_selected_sources, SOURCE_LABELS,
 )
 from src.sources.orchestrator import SourceOrchestrator
-from src.selection import ResultsSelection, paper_key
+from src.selection import ResultsSelection, ResultsAccumulator, paper_key
 
 _LOG_FILE = Path("biorx.log")
 logging.basicConfig(
@@ -921,7 +921,8 @@ class SearchBrowseTab(QWidget):
         self.db           = db
         self.orchestrator = orchestrator
         self.summ_agent   = SummarizationAgent()
-        self.current_results: List[Dict[str, Any]] = []
+        self._results = ResultsAccumulator()  # dedups results across filters
+        self.current_results: List[Dict[str, Any]] = self._results.papers
         self.current_page   = 0
         self.results_per_page = 20
         self._selection = ResultsSelection()  # page-independent paper selection (F1)
@@ -1034,6 +1035,12 @@ class SearchBrowseTab(QWidget):
         page_layout.addWidget(self.page_label)
         page_layout.addWidget(self.next_btn)
         page_layout.addStretch()
+        self.matches_label = QLabel("")
+        self.matches_label.setToolTip(
+            "Total Matches counts every hit across all run filters; "
+            "Unduplicated is the unique set (what gets saved)."
+        )
+        page_layout.addWidget(self.matches_label)
         rl.addLayout(page_layout)
 
         right.setLayout(rl)
@@ -1080,8 +1087,9 @@ class SearchBrowseTab(QWidget):
     def _run_filters(self, filters: List[Dict], save_to_db: bool = False):
         self.run_selected_btn.setEnabled(False)
         self.run_all_btn.setEnabled(False)
-        self.current_results = []
+        self._results.reset()    # clears current_results in place + match counts
         self._selection.clear()  # a new search starts with nothing selected (F1)
+        self.matches_label.setText("")
         self.results_table.setRowCount(0)
         self.current_page = 0
         self._filter_queue  = list(filters)
@@ -1181,13 +1189,26 @@ class SearchBrowseTab(QWidget):
             self.progress_bar.setValue(fetched)
 
     def _append_batch(self, papers: list):
-        self.current_results.extend(papers)
+        # Dedup across filters: only genuinely-new papers join current_results,
+        # while total_matches tracks every hit (shown as Total vs Unduplicated).
+        self._results.add_batch(papers)
         self._current_filter_matched += len(papers)
         # Render through the single paginated path so live results and page
         # navigation behave identically (B1).
         self.display_page()
         self.status_label.setText(self._search_status_text())
+        self._update_matches_label()
         self._update_checked_count()
+
+    def _update_matches_label(self):
+        total  = self._results.total_matches
+        unique = self._results.unique_count
+        if total == unique:
+            self.matches_label.setText(f"Matches: {total:,}")
+        else:
+            self.matches_label.setText(
+                f"Total Matches: {total:,}    Unduplicated: {unique:,}"
+            )
 
     def _on_all_filters_done(self):
         self._current_phase = ""
@@ -1198,7 +1219,16 @@ class SearchBrowseTab(QWidget):
         self.stop_btn.setVisible(False)
         self.stop_btn.setEnabled(True)
         self.status_label.setStyleSheet("")
-        self.status_label.setText(f"✅  Done — {len(self.current_results):,} papers found")
+        unique = self._results.unique_count
+        dupes  = self._results.duplicate_count
+        if dupes:
+            self.status_label.setText(
+                f"✅  Done — {unique:,} unduplicated papers "
+                f"({self._results.total_matches:,} total matches, {dupes:,} duplicates removed)"
+            )
+        else:
+            self.status_label.setText(f"✅  Done — {unique:,} papers found")
+        self._update_matches_label()
         self.run_selected_btn.setEnabled(True)
         self.run_all_btn.setEnabled(True)
 

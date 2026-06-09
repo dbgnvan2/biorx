@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.selection import ResultsSelection, paper_key
+from src.selection import ResultsSelection, ResultsAccumulator, paper_key
 
 
 def _papers(n: int):
@@ -82,6 +82,32 @@ def test_f1_clear_resets_selection():
     sel.select_all(papers)
     sel.clear()
     assert sel.count(papers) == 0
+
+
+def test_accumulator_dedups_across_batches_and_counts_total():
+    """Cross-filter duplicates are dropped from the unique set but counted in total."""
+    acc = ResultsAccumulator()
+    f1 = [{"canonical_id": "a"}, {"canonical_id": "b"}, {"canonical_id": "c"}]
+    f2 = [{"canonical_id": "b"}, {"canonical_id": "d"}]  # 'b' overlaps filter 1
+    new1 = acc.add_batch(f1)
+    new2 = acc.add_batch(f2)
+    assert len(new1) == 3
+    assert len(new2) == 1                 # only 'd' is new
+    assert acc.unique_count == 4          # a, b, c, d
+    assert acc.total_matches == 5         # 3 + 2 offered
+    assert acc.duplicate_count == 1       # the second 'b'
+
+
+def test_accumulator_reset_clears_in_place():
+    """reset() empties the unique set in place so external references stay valid."""
+    acc = ResultsAccumulator()
+    papers_ref = acc.papers
+    acc.add_batch([{"canonical_id": "a"}, {"canonical_id": "b"}])
+    acc.reset()
+    assert acc.unique_count == 0
+    assert acc.total_matches == 0
+    assert papers_ref is acc.papers       # same list object, cleared in place
+    assert papers_ref == []
 
 
 def test_paper_key_falls_back_when_no_canonical_id():

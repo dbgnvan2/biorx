@@ -28,6 +28,49 @@ def paper_key(paper: Dict[str, Any]) -> str:
     )
 
 
+class ResultsAccumulator:
+    """Purpose: Collect result papers across batches/filters, dropping duplicates
+    by paper_key while tracking the raw total matched.
+    Spec:    docs/implementation_plan_2026-06-08.md#B1 (cross-filter follow-up)
+    Tests:   tests/test_selection.py
+
+    `papers` holds the unique set (cleared in place on reset so external
+    references stay valid); `total_matches` counts every paper offered,
+    including cross-filter duplicates, so the GUI can show both numbers.
+    """
+
+    def __init__(self):
+        self._keys: set = set()
+        self.papers: List[Dict[str, Any]] = []
+        self.total_matches: int = 0
+
+    def add_batch(self, papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Add a batch; return only the newly-unique papers (for incremental UI)."""
+        new: List[Dict[str, Any]] = []
+        for p in papers:
+            self.total_matches += 1
+            key = paper_key(p)
+            if key in self._keys:
+                continue
+            self._keys.add(key)
+            self.papers.append(p)
+            new.append(p)
+        return new
+
+    @property
+    def unique_count(self) -> int:
+        return len(self.papers)
+
+    @property
+    def duplicate_count(self) -> int:
+        return self.total_matches - len(self.papers)
+
+    def reset(self) -> None:
+        self._keys.clear()
+        self.papers.clear()
+        self.total_matches = 0
+
+
 class ResultsSelection:
     """Purpose: Page-independent record of which result papers are selected.
     Spec:    docs/implementation_plan_2026-06-08.md#F1
