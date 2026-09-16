@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BioRx</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Access code gate -->
+  <section id="gate" class="hidden">
+    <header><h1>BioRx</h1></header>
+    <div class="card" style="max-width:420px">
+      <h2>Enter the access code</h2>
+      <p class="muted small">Ask whoever runs this server for the code. Your name
+        is just a label so you can tell your own searches apart.</p>
+      <div id="gate-error" class="banner error hidden"></div>
+      <label><span>Access code</span>
+        <input id="access-code" type="password" autocomplete="off"></label>
+      <label><span>Your name (optional)</span>
+        <input id="display-name" type="text" autocomplete="off"></label>
+      <button id="sign-in" class="primary">Continue</button>
+    </div>
+  </section>
+
+  <!-- Main app -->
+  <section id="app" class="hidden">
+    <header>
+      <h1>BioRx</h1>
+      <span id="who" class="muted small"></span>
+      <span class="spacer"></span>
+      <button id="toggle-settings" class="link">LLM settings</button>
+      <button id="sign-out" class="link">Sign out</button>
+    </header>
+
+    <div id="notice" class="banner hidden"></div>
+
+    <!-- LLM settings -->
+    <div id="settings" class="card hidden">
+      <h2>LLM settings</h2>
+      <p id="key-state" class="muted small"></p>
+      <div id="byo-disabled" class="banner warn hidden small"></div>
+      <div id="byo" class="row">
+        <label class="shrink" style="min-width:160px"><span>Provider</span>
+          <select id="key-provider"></select></label>
+        <label><span>Your API key</span>
+          <input id="api-key" type="password" autocomplete="off"
+                 placeholder="Stored encrypted; only the last 4 are ever shown"></label>
+        <div class="shrink">
+          <button id="save-key" class="primary">Save key</button>
+          <button id="remove-key">Remove</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Saved filters -->
+    <div class="card">
+      <h2>Saved searches</h2>
+      <ul id="filter-list" class="filters"></ul>
+    </div>
+
+    <!-- Manual search -->
+    <div class="card">
+      <h2>Search</h2>
+      <div class="row">
+        <label><span>Words in title or abstract (comma-separated)</span>
+          <input id="q-both" type="text" placeholder="generative agents, agent-based model"></label>
+        <label class="shrink" style="min-width:110px"><span>Days back</span>
+          <input id="q-days" type="number" value="14" min="1" max="3650"></label>
+        <label class="shrink" style="min-width:110px"><span>Max results</span>
+          <input id="q-max" type="number" value="200" min="1" max="2000"></label>
+        <div class="shrink">
+          <button id="run-search" class="primary">Search</button>
+          <button id="cancel-search" disabled>Stop</button>
+        </div>
+      </div>
+      <div id="progress-wrap" class="hidden" style="margin-top:10px">
+        <progress id="progress" max="100" value="0"></progress>
+        <p id="phase" class="muted small" style="margin:4px 0 0"></p>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="results-card" class="card hidden">
+      <h2 id="results-heading">Results</h2>
+      <div id="sources-failed" class="banner warn hidden small"></div>
+      <p id="empty-note" class="muted small hidden"></p>
+      <table>
+        <thead><tr>
+          <th style="width:46%">Title</th><th>Authors</th><th>Date</th>
+          <th>Source</th><th style="width:150px"></th>
+        </tr></thead>
+        <tbody id="results-body"></tbody>
+      </table>
+      <div class="pager">
+        <button id="prev-page">Previous</button>
+        <span id="page-label" class="muted small"></span>
+        <button id="next-page">Next</button>
+      </div>
+    </div>
+
+    <!-- Summary output -->
+    <div id="summary-card" class="card hidden">
+      <h2 id="summary-title">Summary</h2>
+      <p id="summary-meta" class="muted small"></p>
+      <div id="summary-body" class="summary"></div>
+    </div>
+  </section>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -12,8 +12,19 @@ import pytest
 
 from tests.web.conftest import ACCESS_CODE
 
-# Routes that must be reachable without a session.
-PUBLIC = {("/healthz", "get"), ("/api/session", "post"), ("/api/session", "delete")}
+# Routes that must be reachable without a session, each with its reason. A
+# route added to this set is a deliberate decision, not an oversight.
+PUBLIC = {
+    ("/healthz", "get"),          # liveness, for the platform
+    ("/api/session", "post"),     # the sign-in itself
+    ("/api/session", "delete"),   # signing out must work from a stale session
+    ("/", "get"),                 # the page shell, so a visitor sees the form
+}
+
+# The exact number of authenticated operations. An exact count, not a floor:
+# a floor stays satisfied while the route table halves (learnings P29). Update
+# this deliberately when a route is added or removed.
+PROTECTED_ROUTE_COUNT = 15
 
 
 def test_wrong_access_code_is_rejected(client):
@@ -55,7 +66,11 @@ def test_no_route_can_be_reached_without_a_session(app, client):
                 "without a session"
             )
             checked += 1
-    assert checked >= 10, f"only {checked} protected routes found — did routing change?"
+    assert checked == PROTECTED_ROUTE_COUNT, (
+        f"{checked} protected operations found, expected {PROTECTED_ROUTE_COUNT}. "
+        "If a route was added or removed, update PROTECTED_ROUTE_COUNT — and if "
+        "it was added, confirm it is meant to require a session."
+    )
 
 
 def test_every_public_route_exists(app):

@@ -80,12 +80,108 @@ Records are emitted as one JSON object per line on stdout; progress goes to stde
 └── biorxiv.db          (SQLite: papers, summaries, bookmarks)
 ```
 
-## In progress
+## Web app
 
-A small private web app (FastAPI) so a few colleagues can run their own searches
-and summaries from a browser, with a pluggable LLM backend (Ollama / DeepSeek /
-Anthropic) and bring-your-own-key support. Plan and acceptance criteria:
-`docs/implementation_plan_2026-09-15.md`.
+A small private FastAPI app so a few colleagues can run their own searches and
+summaries from a browser, without installing anything. It wraps the same
+retrieval pipeline the desktop app uses — the orchestrator, dedup, query builder
+and adapters are unchanged.
+
+### Run it locally
+
+```bash
+pip install -r requirements-web.txt
+cp .env.example .env          # then fill in ACCESS_CODE at minimum
+set -a && source .env && set +a
+SESSION_COOKIE_INSECURE=1 uvicorn web.app:app --reload --port 8000
+```
+
+Open http://127.0.0.1:8000 and enter the access code. `SESSION_COOKIE_INSECURE=1`
+is needed only over plain HTTP; never set it in a deployment.
+
+`GET /healthz` reports the effective configuration — which provider and model
+are in use, whether an owner key is set, whether personal keys can be stored —
+without ever reporting a secret. Check it first when something looks wrong.
+
+### How access works
+
+One shared `ACCESS_CODE` is the gate. Entering it mints a **server-issued opaque
+user id** and puts it in a signed cookie; the display name someone types is only
+a label. That distinction matters: with a shared code and a name-based identity,
+anyone holding the code could type a colleague's name and spend that colleague's
+API key.
+
+There are no accounts and no password reset. Rotate `ACCESS_CODE` when someone
+leaves — it invalidates nothing else, but it stops new sign-ins.
+
+### LLM backends and keys
+
+Three backends, configured in `llm_config.yaml`: local **Ollama** for
+development, **DeepSeek** over its OpenAI-compatible API, and **Anthropic** over
+the Messages API. `LLM_PROVIDER` picks the default.
+
+Each summary resolves a credential in this order:
+
+1. the requesting user's own key, if they saved one;
+2. the server owner's key from the environment;
+3. otherwise an error telling them to add a key.
+
+A colleague can paste their own DeepSeek or Anthropic key under **LLM settings**.
+It is encrypted with Fernet before storage and only its last four characters are
+ever shown. This requires `KEY_ENC_SECRET`; without it the app still runs on the
+owner key and the UI says plainly that personal keys cannot be stored. The
+secret is never generated automatically — one written next to the data it
+protects is not protection.
+
+**Summaries billed to the owner's key are capped** at 25 per user per day
+(`SUMMARY_DAILY_CAP_PER_USER`). Users on their own key are not capped. The
+access code is shared, so this is the ceiling on what a leaked code can spend.
+
+### Searches are jobs
+
+A multi-source search takes minutes, so `POST /api/searches` returns a job id
+and the page polls it. Results page in as they arrive, a search can be stopped,
+and a job that has aged out says so ("run it again") rather than vanishing. If a
+source was unreachable the page says which, so an empty result is never mistaken
+for a quiet week.
+
+### Deploy to Railway
+
+The repository has a `Dockerfile` and `railway.json`. The image installs
+`requirements-web.txt` only — never `requirements.txt`, which would pull the
+desktop GUI into a headless container.
+
+1. Create a Railway project from this repository; it picks up `railway.json`.
+2. **Attach a volume mounted at `/data`.** Without it the database and any
+   downloaded PDFs are lost on every redeploy.
+3. Set the variables from `.env.example`. At minimum: `ACCESS_CODE`,
+   `SESSION_SECRET`, `KEY_ENC_SECRET`, `LLM_PROVIDER`, and the matching
+   provider key.
+4. Deploy, then walk the checklist below.
+
+#### Deploy checklist (manual — these cannot be tested in CI)
+
+- [ ] `GET /healthz` returns `access_code_set: true`, the expected `provider`
+      and `model`, and `owner_key_set: true`.
+- [ ] The wrong access code is refused; the right one signs you in.
+- [ ] A saved search returns results, and "Stop" stops it.
+- [ ] One summary completes, and the model shown matches what you configured.
+- [ ] Saving a personal key shows only its last four characters.
+- [ ] Redeploy, then confirm your filters and summaries are still there — this
+      is what proves the volume is mounted.
+- [ ] `docker build .` succeeds. The image is not built in CI, and was not built
+      on the development machine (no Docker daemon running), so the first build
+      is the first real test of it.
+
+Live calls to Anthropic and DeepSeek are integration-only: every test in the
+suite mocks them. Run one real summary per provider after a deploy and note the
+date and model — that is the only thing that exercises the real API.
+
+### What is deliberately not there
+
+No accounts, SSO, or per-user permissions. No editing `sources_config.yaml` from
+the browser. No scheduled searches — `agents/monitor.py` still owns that. The
+web app offers what the desktop app offers, and nothing more.
 
 ---
 
