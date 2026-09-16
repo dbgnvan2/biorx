@@ -1,6 +1,6 @@
 # Making biorx GREAT — Differentiation Spec
 
-Status: proposal, revision 3. Date: 2026-09-16.
+Status: APPROVED 2026-09-16 (revision 4: LLM key primary, Ollama optional).
 Audience: the coding agent + Dave.
 
 Thesis: biorx does not win by out-S2-ing Semantic Scholar (more papers, more
@@ -27,6 +27,7 @@ deliberately not `P…`, which is the failure-pattern catalogue in
 | D4 | **Retire the Railway deployment** and the multi-user code: access code, session users, per-user encrypted keys in the database, owner-key spend cap, Dockerfile, `railway.json`, `docker-entrypoint.sh`. |
 | D5 | Europe PMC "both" field defaults to title/abstract; full-text search is an explicit option (G0.1). |
 | D6 | Scheduled runs never call a paid LLM automatically (G3.2). |
+| D7 | **An LLM API key is the primary way to summarize; Ollama is optional.** No feature may require installing Ollama. A user with no key and no Ollama can still search, download, organize and export; only summarization is unavailable, and the UI says why. |
 
 Revision 2's G2 (per-user scoping) is removed: with one user per install there
 is nothing to scope.
@@ -119,13 +120,17 @@ their library on their machine, and tells them when something new appears.
 1. **Native source queries** — Lucene with species clauses (Europe PMC/PubMed),
    date-windowed streams (bioRxiv/medRxiv).
 2. **Source-trust ranking** with retraction penalty.
-3. **Local-first summarization** — Ollama on the user's machine; DeepSeek or
-   Anthropic with the user's own key.
+3. **Summaries with the user's own key** — DeepSeek or Anthropic by default;
+   Ollama as an option for users who already run it. Summaries are stored
+   locally and not re-billed.
 4. **PDF download + local full-text extraction.**
 5. **Saved filters + monitoring.**
 6. **Transparency** — `sources_failed`, "empty ≠ quiet week", retraction flags.
 7. **Stable paper identity** — a stored paper keeps its `canonical_id` (N1).
 8. **The user's data stays on the user's machine.** No telemetry, no hosted copy.
+   The one thing sent out is the text of the paper being summarized, to the
+   provider the user chose. Filters, library, notes and search history are never
+   sent to an LLM provider (G5.3's query expansion sends only the typed query).
 
 ---
 
@@ -210,7 +215,8 @@ browser (cross-site requests, DNS rebinding). So:
 - Delete `Dockerfile`, `railway.json`, `docker-entrypoint.sh`,
   `tests/web/test_deploy_files.py`, and the README deploy section.
 - Remove the access code, `/api/session` user creation, display names, and the
-  owner-key spend cap (`usage_events` counting against a cap). Keep an optional
+  owner-key spend cap (`usage_events` counting against a cap, and
+  `summary_daily_cap_per_user` in `llm_config.yaml`). Keep an optional
   local record of LLM calls if useful for the user's own cost tracking — a
   decision for the plan, not required.
 - Schema: no destructive migration. Existing `user_id` columns stay; the code
@@ -253,12 +259,30 @@ through to the backend (learnings P25).
 **GL.6 Install and launch on macOS and Windows.** Scripted install per OS
 (`install.sh`, `install.ps1`) that installs a pinned Python environment, the
 dependencies and a launcher (a `.command` file on macOS, a Start-menu/desktop
-shortcut on Windows). Optional Ollama is detected and explained, not required.
+shortcut on Windows). The installer does not install or mention Ollama as a
+step; Ollama appears only as an advanced option in settings (GL.8). Remove the
+Ollama checks from `run.sh`.
 - A packaged app (PyInstaller `.app`/`.exe`, signing, notarization) is out of
   scope for this revision; see §7 open decision O1.
 - Acceptance: CI job per OS runs the install script on a clean runner, launches
   the server, and calls a health route (integration); written install
   instructions tested once by hand on each OS (human review).
+
+**GL.8 First-run LLM setup (D7).** On first launch, and from settings: choose a
+provider (DeepSeek or Anthropic), paste a key, and press "Test key", which makes
+one minimal call and reports success or the provider's error in plain words
+(invalid key, no credit, network). The step can be skipped.
+- `default_provider` in `llm_config.yaml` changes from `ollama` to none. With no
+  provider configured, summary buttons are disabled with "Add an API key in
+  Settings to summarize", not an error after the click.
+- Ollama is listed under "Advanced", with a note that it must already be
+  installed and running; "Test" checks it the same way.
+- Model per provider stays in `llm_config.yaml`, editable in settings (O4).
+- Acceptance: `test_gl_8_no_provider_disables_summaries_with_reason`;
+  `test_gl_8_test_key_reports_invalid_key` (patched provider response);
+  `test_gl_8_default_provider_is_not_ollama`;
+  `test_gl_8_search_download_export_work_with_no_provider`; the live key test is
+  integration-only, flagged.
 
 **GL.7 CI on both platforms.** GitHub Actions matrix `macos-latest` and
 `windows-latest` running the full suite (amends backlog batch H). Every check
@@ -385,17 +409,27 @@ opened (OpenAlex `cited_by` / `related_works`, or S2 recommendations). A failed
 lookup shows "couldn't load", never "no citations".
 - Acceptance: `test_g5_2_lookup_failure_is_distinct_from_empty`.
 
-**G5.3 Search within the library.**
-1. Persist extracted text in a `paper_text` table (`paper_id`, `text`,
-   `extracted_at`, `pages`), written when a PDF is extracted, and index it with
-   abstracts in SQLite FTS5. Works for every user.
-2. Semantic search, available when Ollama is installed: `nomic-embed-text`
-   embeddings stored in SQLite, brute-force cosine. Without Ollama the option is
-   shown as unavailable with the reason. No vector database.
+**G5.3 Search within the library.** Neither DeepSeek nor Anthropic offers an
+embeddings API, so semantic search cannot simply reuse the user's LLM key. Three
+layers, none requiring Ollama (D7):
+1. **Keyword search (always on).** Persist extracted text in a `paper_text` table
+   (`paper_id`, `text`, `extracted_at`, `pages`), written when a PDF is
+   extracted, and index it with abstracts in SQLite FTS5. No key, no install.
+2. **Query expansion (when a key is set, opt-in per search).** The user's
+   provider turns the typed query into synonyms and related terms (e.g.
+   "stress hormone" → cortisol, HPA axis, glucocorticoid). The terms are shown to
+   the user before the FTS5 search runs. Only the query text is sent.
+3. **Embeddings (later, optional).** An in-process embedding model (e.g. a small
+   ONNX model via `fastembed`, downloaded once on first use, roughly 100 MB) —
+   no Ollama, no extra key. Built only if 1–2 prove insufficient in use; the
+   download size and first indexing time are stated before the user opts in.
+- A failed expansion call falls back to the plain query and says so.
 - Acceptance: `test_g5_3_extracted_text_is_persisted`;
   `test_g5_3_fts_finds_term_only_in_full_text`;
-  `test_g5_3_semantic_search_reports_missing_ollama`; embedding quality is
-  integration-only, flagged.
+  `test_g5_3_expansion_terms_shown_before_search`;
+  `test_g5_3_expansion_failure_falls_back_to_plain_query`;
+  `test_g5_3_expansion_sends_only_the_query` (captures the provider payload);
+  expansion quality is integration-only, flagged.
 
 ### G6 — Hardening
 
@@ -421,6 +455,7 @@ backup is older than a configured number of days, and on demand.
 - **Sync or sharing between colleagues.** Each install is independent. Sharing a
   filter or reference list by exporting a file is a possible later item.
 - **A packaged, signed installer.** Open decision O1.
+- **Requiring Ollama for anything.** D7.
 - **Full S2 corpus replacement**, **a vector database**, **merging preprints with
   published versions**, **replacing `canonical_id`**, **becoming Google Scholar.**
 
@@ -433,6 +468,7 @@ backup is older than a configured number of days, and on demand.
 | O1 | Install method for colleagues: scripted install (GL.6), or a packaged `.app`/`.exe` | Scripted install first. A packaged app needs code signing (Apple Developer account, Windows certificate) to avoid OS security warnings; do it only if colleagues cannot manage the script. |
 | O2 | Keep the legacy CLI agents (`agents/search_agent.py`, `summarization_agent.py`, `monitor.py`) or fold them into `biorx run-due` and friends | Fold `monitor.py` into `biorx run-due` (G3.2); decide the other two in the plan. |
 | O3 | Record the user's own LLM calls locally for cost tracking (GL.3) | Yes, as a simple history with no cap. |
+| O4 | Default model per provider for a key-paying user | A cheaper model by default (e.g. `deepseek-chat`, `claude-haiku-4-5`), the stronger model selectable; verify ids and prices against current provider docs during planning. |
 
 ---
 
@@ -442,7 +478,7 @@ backup is older than a configured number of days, and on demand.
 |---|---|---|
 | 1 | Amend backlog plan (§3); backlog H (macOS + Windows CI), A, D, C | In progress; D/C touch the same adapters |
 | 2 | G0.1 | Live precision bug in every Europe PMC/PubMed search |
-| 3 | GL.1, GL.2, GL.3, GL.4 | The local app is the platform everything else ships on |
+| 3 | GL.1, GL.2, GL.3, GL.4, GL.8 | The local app is the platform everything else ships on |
 | 4 | GL.5, GL.6 | Parity and install; then retire `gui.py` |
 | 5 | G1.1, G1.2, G1.3 | Identity settled before deltas depend on it |
 | 6 | G3.1, then G3.2 | The main differentiator |
