@@ -12,9 +12,60 @@ guard that depends on every future test remembering; this one does not.
 Loopback and Unix-domain sockets are allowed: the test client, a local server
 started by a test, and SQLite never leave the machine.
 """
+import os
 import socket
+from pathlib import Path
 
 import pytest
+
+# ── Real-artifact fingerprint guard ──────────────────────────────────────────
+# A class-level patch in a test (gui_module.Database) can be defeated by a
+# second import spelling (src.db.Database). Fingerprinting the real artifacts
+# catches any escape regardless of how it occurred (P28/P6).
+
+_REAL_DB      = Path("~/preprints/biorxiv.db").expanduser()
+_REAL_FILTERS = Path(__file__).parent.parent / "filters.json"
+
+
+def _fingerprint(path: Path):
+    try:
+        s = path.stat()
+        return (s.st_mtime_ns, s.st_size)
+    except FileNotFoundError:
+        return None
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _guard_real_artifacts(tmp_path_factory):
+    """Redirect BIORX_DB_PATH to a temp DB and fail if the real artifacts change."""
+    tmp_db = tmp_path_factory.mktemp("db") / "test.db"
+    prev = os.environ.get("BIORX_DB_PATH")
+    os.environ["BIORX_DB_PATH"] = str(tmp_db)
+
+    before_db      = _fingerprint(_REAL_DB)
+    before_filters = _fingerprint(_REAL_FILTERS)
+
+    yield
+
+    if prev is None:
+        os.environ.pop("BIORX_DB_PATH", None)
+    else:
+        os.environ["BIORX_DB_PATH"] = prev
+
+    after_db      = _fingerprint(_REAL_DB)
+    after_filters = _fingerprint(_REAL_FILTERS)
+
+    escapes = []
+    if before_db != after_db:
+        escapes.append(f"production DB was modified during the test run: {_REAL_DB}")
+    if before_filters != after_filters:
+        escapes.append(f"filters.json was modified during the test run: {_REAL_FILTERS}")
+    if escapes:
+        pytest.fail(
+            "a test escaped artifact isolation (class-level patch bypassed?):\n"
+            + "\n".join(escapes),
+            pytrace=False,
+        )
 
 _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "0.0.0.0", ""}
 
