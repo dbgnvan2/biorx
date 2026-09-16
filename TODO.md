@@ -38,6 +38,29 @@ APPROVED at fix-loop 2, with three low findings carried rather than fixed:
 - `_release_connection` catches only `sqlite3.Error`. At interpreter shutdown a
   different exception could escape and print "Exception ignored".
 
+## From the chunk-5 QA gate (`docs/cycles/2026-09-15_chunk5-qa-gate.md`)
+
+Rejected three times before approval — every rejection a real defect in
+`docker-entrypoint.sh`, and every one invisible to the suite until the tests
+were rewritten to run the script instead of grepping it. Carried findings:
+
+- **F8 (low)** — `fatal()`'s second line always says "mount the volume writable
+  by biorx", but the non-root branch fails under whatever uid the platform
+  enforced. The first line names the real uid, so the hint merely misleads.
+- **F6 (low)** — the "derive env vars from the code" test misses variables read
+  through indirection (`KEY_ENC_SECRET`, the provider keys, the model names), so
+  its guarantee rests partly on a hand-kept list.
+- **No Content-Security-Policy header.** The client sets text rather than
+  markup and checks URL schemes, but a CSP would be defence in depth.
+- **Unbounded job and user creation**: anyone with the access code can create
+  users and queue jobs without limit. The spend cap bounds money, not memory.
+
+### The container image has not been built
+Docker's daemon was not running on the development machine, so `docker build`
+was never executed. Everything about the image is verified structurally or by
+running `docker-entrypoint.sh` directly under `sh`/`dash`. The first real build
+is the deployer's.
+
 ## From the chunk-4 QA gate (`docs/cycles/2026-09-15_chunk4-qa-gate.md`)
 
 REJECTED, then APPROVED at fix-loop 1. The two blocking findings are fixed; four

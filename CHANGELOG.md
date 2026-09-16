@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-09-16 — the web client and deployment
+
+### Added
+- **A single-page client** (`web/static/`): vanilla HTML, CSS and JS with no
+  build step, so the whole app is one deployable container that works offline.
+  Saved searches with Run, a manual search form, a paginated results table with
+  per-paper PDF and Summarize, and an LLM settings panel. It mirrors the desktop
+  app's screens and adds nothing beyond them.
+- **`Dockerfile`, `docker-entrypoint.sh`, `.dockerignore`, `railway.json`** and
+  a documented `.env.example`. The image installs `requirements-web.txt` only,
+  runs the app as an unprivileged user, and writes solely to the mounted volume.
+- **README** sections on running locally, how access and credential precedence
+  work, why searches are jobs, deploying to Railway, and a manual checklist for
+  what CI cannot test.
+
+### Fixed
+- A search that matched nothing now says how many papers were fetched and
+  filtered out. "0 matching" alone cannot be told apart from "the sources
+  returned nothing".
+- Link URLs from external APIs pass through a scheme check, so a
+  `javascript:` URL in a paper record cannot run on click.
+- The placeholder `ACCESS_CODE` from `.env.example` is treated as unset rather
+  than as a live credential that is readable on GitHub.
+- The container makes its mounted volume writable at **runtime**. A build-time
+  `chown` does not survive a volume mount, so without this the first database
+  write fails on startup. The app also refuses to start, naming the directory
+  and uid, rather than surfacing a bare sqlite error later.
+
+### Known
+The container image has never been built: no Docker daemon was running on the
+development machine. The first `docker build` is the deployer's, and the README
+says so.
+
 ## 2026-09-15 — the web app backend
 
 ### Added
