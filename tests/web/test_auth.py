@@ -227,3 +227,40 @@ def test_an_expired_cookie_is_refused(ctx, monkeypatch):
     token = URLSafeTimedSerializer(ctx.session_secret, salt="biorx-session-v1").dumps("u-1")
     monkeypatch.setattr(auth, "SESSION_MAX_AGE_SECONDS", -1)
     assert auth.read_session(ctx, token) is None
+
+
+def test_the_placeholder_access_code_is_not_a_live_credential(tmp_path, monkeypatch):
+    """
+    `.env.example` ships ACCESS_CODE=change-me. Someone who deploys without
+    editing it has not chosen a code — and that code is readable on GitHub.
+    Treat it as unset rather than as a credential.
+    """
+    from fastapi.testclient import TestClient
+    from web.app import create_app
+    from web.deps import PLACEHOLDER_ACCESS_CODES, build_context
+
+    for placeholder in sorted(PLACEHOLDER_ACCESS_CODES):
+        ctx_ = build_context(db_path=str(tmp_path / f"{placeholder}.db"),
+                             access_code=placeholder,
+                             session_secret="z" * 32, cookie_secure=False)
+        try:
+            client = TestClient(create_app(ctx_))
+            assert client.post("/api/session",
+                               json={"access_code": placeholder}).status_code == 401
+        finally:
+            ctx_.jobs.shutdown(); ctx_.db.close()
+
+
+def test_a_real_access_code_that_merely_resembles_one_still_works(tmp_path):
+    from fastapi.testclient import TestClient
+    from web.app import create_app
+    from web.deps import build_context
+
+    code = "change-me-for-real-2026"          # not the placeholder itself
+    ctx_ = build_context(db_path=str(tmp_path / "real.db"), access_code=code,
+                         session_secret="z" * 32, cookie_secure=False)
+    try:
+        client = TestClient(create_app(ctx_))
+        assert client.post("/api/session", json={"access_code": code}).status_code == 200
+    finally:
+        ctx_.jobs.shutdown(); ctx_.db.close()

@@ -1,0 +1,18 @@
+# Keep the build context small, and keep secrets and local data out of it.
+.env
+.env.*
+!.env.example
+*.db
+*.log
+.git
+.github
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+tests/
+docs/
+gui.py
+requirements.txt
+*.xlsx
+preprints/

@@ -9,6 +9,20 @@
 const PAGE_SIZE = 25;
 const POLL_MS = 1500;
 
+/* A paper's URL comes from an external API. Assigning it to href without
+ * checking the scheme would let a "javascript:" URL run in a colleague's
+ * browser on click — the same class of problem as innerHTML, through a
+ * different door. */
+function safeUrl(value) {
+  if (!value) return "";
+  try {
+    const url = new URL(value, window.location.origin);
+    return (url.protocol === "https:" || url.protocol === "http:") ? url.href : "";
+  } catch (e) {
+    return "";
+  }
+}
+
 const state = {
   me: null,
   jobId: null,
@@ -286,10 +300,16 @@ function renderResults() {
     const tr = document.createElement("tr");
 
     const title = document.createElement("td");
-    const link = document.createElement("a");
-    link.href = paper.url || paper.source_url || "#";
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
+    const href = safeUrl(paper.url || paper.source_url);
+    let link;
+    if (href) {
+      link = document.createElement("a");
+      link.href = href;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+    } else {
+      link = document.createElement("span");
+    }
     link.textContent = paper.title || "(untitled)";
     title.appendChild(link);
 
@@ -308,9 +328,10 @@ function renderResults() {
     source.appendChild(tag);
 
     const actions = document.createElement("td");
-    if (paper.pdf_url) {
+    const pdfHref = safeUrl(paper.pdf_url);
+    if (pdfHref) {
       const pdf = document.createElement("a");
-      pdf.href = paper.pdf_url;
+      pdf.href = pdfHref;
       pdf.target = "_blank";
       pdf.rel = "noopener noreferrer";
       pdf.textContent = "PDF";

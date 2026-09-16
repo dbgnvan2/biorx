@@ -23,6 +23,11 @@ from src.sources.config import load_sources_config
 logger = logging.getLogger(__name__)
 
 SESSION_COOKIE = "biorx_session"
+
+# Values shipped in .env.example. Someone who deploys without editing them has
+# not chosen a code; treat that as "no code set" rather than as a live
+# credential anyone can read off GitHub.
+PLACEHOLDER_ACCESS_CODES = {"change-me", "changeme", "your-access-code", "secret"}
 SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30      # 30 days
 
 
@@ -63,6 +68,12 @@ def build_context(db_path: Optional[str] = None,
     import secrets
 
     code = access_code if access_code is not None else os.environ.get("ACCESS_CODE", "")
+    if code.strip().lower() in PLACEHOLDER_ACCESS_CODES:
+        logger.error(
+            "ACCESS_CODE is still the placeholder from .env.example — refusing "
+            "every request. Set it to a code of your own."
+        )
+        code = ""
     if not code:
         logger.warning(
             "ACCESS_CODE is not set — every request will be refused. Set it to "

@@ -135,16 +135,116 @@ def test_the_client_calls_the_endpoints_that_matter():
 
 # ── Safety of what the client renders ─────────────────────────────────────────
 
+def _js_without_comments() -> str:
+    """app.js with comments stripped.
+
+    Three times now a check like the ones below has matched the comment that
+    explains it rather than any code (learnings P19's corollary). Strip the
+    prose before looking for the needle.
+    """
+    source = APP_JS.read_text()
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    source = re.sub(r"^\s*//.*$", "", source, flags=re.MULTILINE)
+    return source
+
+
+def test_the_comment_stripper_works():
+    """The guard-the-guard: if stripping stops working, the checks below go
+    blind in the direction of passing."""
+    assert "/*" not in _js_without_comments()
+    assert "no build step" not in _js_without_comments()   # from the file header
+    assert "textContent" in _js_without_comments()         # real code survives
+
+
 def test_the_client_never_builds_markup_from_paper_data():
     """
-    Paper titles and author lists come from external APIs. Assigning them to
-    innerHTML would make a crafted title executable in a colleague's browser;
-    the client uses textContent throughout.
+    Paper titles and author lists come from external APIs. Assigning them into
+    the DOM as markup would make a crafted title executable in a colleague's
+    browser; the client sets text, not markup, throughout.
     """
-    source = APP_JS.read_text()
-    assert "innerHTML" not in source
+    code = _js_without_comments()
+    for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+        assert sink not in code, f"app.js assigns paper data via {sink}"
 
 
-def test_result_links_do_not_leak_the_referrer():
+def test_every_url_from_paper_data_passes_through_the_scheme_check():
+    """
+    A URL from an external API is as untrusted as a title: `javascript:` in an
+    href runs on click — the same class of problem through a different door.
+
+    Asserts the assignment form, because a check for "safeUrl appears in the
+    same statement as href" has a hole — the value can be built one line
+    earlier. The function's own behaviour is tested below.
+    """
+    code = _js_without_comments()
+    paper_urls = re.findall(r"(?:const|let|var)\s+\w*[Hh]ref\s*=\s*([^;]+);", code)
+    assert paper_urls, "no URL assignments found — did the client change shape?"
+    for expression in paper_urls:
+        assert "safeUrl(" in expression, \
+            f"a link URL is built without the scheme check: {expression.strip()}"
+
+
+# The property under test is the SCHEME, not whether the URL is well-formed.
+# Junk resolves against the page origin into an ordinary same-origin http(s)
+# link — a dead link, not a vector — so it is allowed. Rejecting it would be a
+# tidiness rule, and asserting it here would pin a belief the code never held.
+@pytest.mark.parametrize("url,expected_safe", [
+    ("https://arxiv.org/abs/2609.1", True),
+    ("http://example.org/paper", True),
+    ("/relative/path", True),
+    ("not a url at all", True),          # resolves same-origin; harmless
+    ("javascript:alert(document.cookie)", False),
+    ("JavaScript:alert(1)", False),
+    ("  javascript:alert(1)", False),
+    ("java\tscript:alert(1)", False),
+    ("data:text/html;base64,PHNjcmlwdD4=", False),
+    ("vbscript:msgbox(1)", False),
+    ("file:///etc/passwd", False),
+    ("", False),
+])
+def test_safeurl_behaviour(url, expected_safe):
+    """
+    Runs the client's own safeUrl in node against hostile input, rather than
+    asserting that a line of source exists. Skipped where node is absent.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed; safeUrl behaviour not exercised here")
+
     source = APP_JS.read_text()
-    assert source.count('rel = "noopener noreferrer"') >= 2
+    match = re.search(r"function safeUrl\(value\) \{.*?\n\}", source, re.DOTALL)
+    assert match, "safeUrl is no longer defined in app.js"
+
+    script = (
+        "globalThis.window = { location: { origin: 'https://app.example' } };\n"
+        + match.group(0)
+        + f"\nconsole.log(JSON.stringify(safeUrl({json.dumps(url)})));"
+    )
+    result = subprocess.run([node, "-e", script], capture_output=True, text=True,
+                            timeout=20)
+    assert result.returncode == 0, result.stderr
+    returned = json.loads(result.stdout.strip())
+
+    if expected_safe:
+        assert returned, f"a legitimate URL was rejected: {url!r}"
+        assert returned.startswith(("http://", "https://"))
+    else:
+        assert returned == "", f"an unsafe URL was accepted: {url!r} -> {returned!r}"
+
+
+def test_every_external_link_sets_noopener_noreferrer():
+    """
+    An exact pairing, not a floor (learnings P29): every anchor that opens in a
+    new tab must also drop the opener and the referrer.
+    """
+    code = _js_without_comments()
+    new_tabs = len(re.findall(r'\.target = "_blank"', code))
+    protected = len(re.findall(r'\.rel = "noopener noreferrer"', code))
+    assert new_tabs > 0
+    assert protected == new_tabs, (
+        f"{new_tabs} links open a new tab but only {protected} set rel"
+    )

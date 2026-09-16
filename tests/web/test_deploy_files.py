@@ -69,11 +69,90 @@ def test_the_image_runs_the_app_with_uvicorn():
     assert "--host 0.0.0.0" in text
 
 
-def test_the_image_does_not_run_as_root():
+def test_the_app_process_does_not_run_as_root():
+    """
+    Either a USER instruction, or an entrypoint that drops privileges. The
+    image starts as root deliberately — only long enough to make a mounted
+    volume writable, which a build-time chown cannot do because the mount
+    replaces the directory.
+    """
     lines = _dockerfile_lines()
     user_lines = [l for l in lines if l.upper().startswith("USER ")]
-    assert user_lines, "no USER instruction — the container would run as root"
-    assert user_lines[-1].split()[1] != "root"
+    if user_lines:
+        assert user_lines[-1].split()[1] != "root"
+        return
+
+    entrypoints = [l for l in lines if l.upper().startswith("ENTRYPOINT")]
+    assert entrypoints, "neither a USER instruction nor an entrypoint — runs as root"
+    script = ROOT / "docker-entrypoint.sh"
+    assert script.exists(), "the entrypoint script named in the Dockerfile is missing"
+    body = script.read_text()
+    assert "gosu" in body, "the entrypoint does not drop privileges"
+    assert 'exec gosu "$APP_USER"' in body
+
+
+def _entrypoint_commands() -> str:
+    """The entrypoint script with comments and echoed messages stripped.
+
+    The first version of the check below matched the word "chown" inside the
+    script's own warning message, so deleting the actual command left it green
+    (learnings P19's corollary).
+    """
+    import re as _re
+    body = (ROOT / "docker-entrypoint.sh").read_text()
+    body = _re.sub(r"^\s*#.*$", "", body, flags=_re.MULTILINE)
+    body = _re.sub(r"^\s*echo .*$", "", body, flags=_re.MULTILINE)
+    return body
+
+
+def test_the_entrypoint_makes_the_mounted_volume_writable():
+    """
+    The finding this exists for: a build-time `chown /data` does not survive a
+    runtime volume mount, so the first write fails with PermissionError.
+    """
+    import re as _re
+    commands = _entrypoint_commands()
+    assert _re.search(r'chown\s+-R\s+"\$APP_USER"\s+"\$DATA_DIR"', commands), \
+        "the entrypoint does not actually chown the data directory"
+    assert 'mkdir -p "$DATA_DIR"' in commands
+
+
+def test_the_comment_and_echo_stripper_works():
+    """Guard-the-guard: if stripping over-reaches, the check above goes blind."""
+    commands = _entrypoint_commands()
+    assert "#" not in commands.replace("$#", "")
+    assert "WARNING" not in commands          # echoed text is gone
+    assert "gosu" in commands                 # real commands survive
+
+
+def test_the_entrypoint_is_copied_and_made_executable():
+    text = DOCKERFILE.read_text()
+    assert "COPY docker-entrypoint.sh" in text
+    assert "chmod +x /usr/local/bin/docker-entrypoint.sh" in text
+
+
+def test_a_dockerignore_keeps_secrets_out_of_the_build_context():
+    ignore = ROOT / ".dockerignore"
+    assert ignore.exists(), "no .dockerignore — a filled-in .env rides the context"
+    entries = {l.strip() for l in ignore.read_text().splitlines()}
+    assert ".env" in entries
+    assert "*.db" in entries
+
+
+def test_env_example_does_not_break_a_local_run():
+    """
+    The README tells a developer to copy this file and source it. A live
+    DATA_DIR=/data would then crash the local run trying to create a directory
+    at the filesystem root.
+    """
+    for line in ENV_EXAMPLE.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or "=" not in stripped:
+            continue
+        name, _, value = stripped.partition("=")
+        if name.strip() == "DATA_DIR":
+            pytest.fail("DATA_DIR is set as a live value; a local run would use "
+                        f"{value!r} and fail. Comment it out.")
 
 
 def test_data_lives_on_a_volume_path_not_in_the_image():
