@@ -1,5 +1,20 @@
 # BioRxiv Research Tool - Claude Code Instructions
 
+## Global standards
+
+Read the relevant file from `~/.claude/standards/` before starting work:
+
+| Standard | When |
+|---|---|
+| `learnings.md` | P1 (transient API failures), P2 (silent drop), P5 (harden all sibling calls) |
+| `external-api.md` | Any bioRxiv API call — timeouts, `.json()` guarding, retry logic |
+| `llm-integration.md` | Any Ollama/Qwen integration — output validation, token budgets, model config |
+| `security.md` | SQLite parameterised queries (already used — keep it), no secrets in source |
+| `file-maintainability.md` | Any new module or significant refactor |
+| `ui-regression.md` | Any change to PyQt6 screens or controls |
+
+
+
 ## Project Overview
 Desktop GUI application (PyQt6) + CLI agents for searching bioRxiv preprints, downloading papers, and summarizing them using a local Qwen 7B model via Ollama.
 
