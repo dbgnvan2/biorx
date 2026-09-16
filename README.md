@@ -1,6 +1,8 @@
 # BioRxiv Research Tool
 
-**Purpose:** Desktop GUI app + automated agents to search bioRxiv preprint server, download papers, and summarize them using a local Qwen 7B model.
+**Purpose:** Desktop GUI app + headless agents that search nine publication sources,
+deduplicate and enrich the results, download papers, and summarize them with a local
+Qwen 7B model.
 
 ## Quick Start for Claude Code
 
@@ -21,7 +23,37 @@
 - **GUI:** PyQt6
 - **Database:** SQLite3
 - **LLM:** Qwen 7B (via Ollama)
-- **API:** bioRxiv REST API
+
+## Sources
+
+Searches run across every enabled source, are deduplicated (DOI, then title +
+first author + year), enriched via Crossref/Unpaywall, and ranked by source trust.
+
+| Source | Kind | Enabled by default |
+|---|---|---|
+| Europe PMC | peer-reviewed | yes, selected |
+| PubMed | peer-reviewed | yes, selected |
+| PsyArXiv | preprint | yes, selected |
+| SocArXiv | preprint | yes, selected |
+| bioRxiv / medRxiv | preprint | yes, not selected |
+| arXiv | preprint (CS / LLM-agent / simulation) | yes, not selected |
+| OpenAlex | index | no |
+| Crossref, Unpaywall | enrichment only | yes |
+
+Configure in `sources_config.yaml`. Saved searches live in `filters.json`.
+
+## Headless CLI
+
+`agents/monitor.py` runs saved filters without PyQt6, so cron can drive it. It
+applies the same client-side filtering the GUI applies (`src/filtering.py`), so a
+filter means the same thing on both surfaces.
+
+```bash
+python agents/monitor.py --filter "Agent Simulation" --dry-run --max 50
+python agents/monitor.py --all --json out/results.json
+```
+
+Records are emitted as one JSON object per line on stdout; progress goes to stderr.
 
 ## MVP Scope
 - GUI with Search & Browse + Configure tabs
@@ -48,12 +80,12 @@
 └── biorxiv.db          (SQLite: papers, summaries, bookmarks)
 ```
 
-## Next Steps
-1. Set up project structure
-2. Build core utilities (API, DB, PDF handler, LLM interface)
-3. Build agents (search, summarization)
-4. Build PyQt6 GUI
-5. Test with local Ollama + Qwen 7B
+## In progress
+
+A small private web app (FastAPI) so a few colleagues can run their own searches
+and summaries from a browser, with a pluggable LLM backend (Ollama / DeepSeek /
+Anthropic) and bring-your-own-key support. Plan and acceptance criteria:
+`docs/implementation_plan_2026-09-15.md`.
 
 ---
 
