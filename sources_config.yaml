@@ -36,8 +36,11 @@ publication_sources:
   pmc_oa:
     enabled: false
 
-# Your contact email. Sent to Crossref, OpenAlex and arXiv so they can reach
-# you about traffic, and required by Unpaywall (open-access lookup is off
-# without it). Leave empty here and set BIORX_CONTACT_EMAIL instead if you do
-# not want it in this file; the environment variable wins.
+# Your contact email for API polite pools and Unpaywall (required for
+# open-access lookup). The environment variable BIORX_CONTACT_EMAIL wins over
+# this field when both are set.
+#
+# Note: Crossref and Unpaywall read this file. OpenAlex and arXiv read only
+# the environment variable (they are called without the loaded config).
+# Setting BIORX_CONTACT_EMAIL covers all four.
 contact_email: ""

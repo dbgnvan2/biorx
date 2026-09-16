@@ -72,6 +72,7 @@ class SourceOrchestrator:
         self._search_adapters: Dict[str, Any] = {}
         self._crossref  = None
         self._unpaywall = None
+        self.warnings: list = []   # surfaceable startup conditions; readable by callers
         self._register_adapters()
 
     def _register_adapters(self) -> None:
@@ -120,10 +121,12 @@ class SourceOrchestrator:
             else:
                 # Unpaywall requires a real address. Say so rather than send a
                 # placeholder or skip quietly (learnings P2).
-                logger.warning(
-                    "Unpaywall open-access lookup is off: no contact email. Set "
-                    "BIORX_CONTACT_EMAIL (or contact_email in sources_config.yaml)."
+                msg = (
+                    "Open-access lookup (Unpaywall) is off: no contact email. "
+                    "Set BIORX_CONTACT_EMAIL or contact_email in sources_config.yaml."
                 )
+                logger.warning(msg)
+                self.warnings.append(msg)
 
     # ── Public search API ─────────────────────────────────────────────────────
 

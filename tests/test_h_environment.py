@@ -166,6 +166,19 @@ def test_h_no_contact_email_skips_unpaywall_and_says_so(monkeypatch, caplog):
                for r in caplog.records)
 
 
+def test_h_no_contact_email_populates_warnings_list(monkeypatch):
+    """
+    The warning is stored on orch.warnings so callers (GUI, web app) can surface
+    it to the user, not just to the log (learnings P2/P3).
+    """
+    from src.sources.orchestrator import SourceOrchestrator
+
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    cfg = {"publication_sources": {"unpaywall": {"enabled": True}}}
+    orch = SourceOrchestrator(cfg)
+    assert any("BIORX_CONTACT_EMAIL" in w for w in orch.warnings)
+
+
 def test_h_contact_email_registers_unpaywall_with_it(monkeypatch):
     from src.sources.orchestrator import SourceOrchestrator
 
@@ -173,6 +186,7 @@ def test_h_contact_email_registers_unpaywall_with_it(monkeypatch):
     cfg = {"publication_sources": {"unpaywall": {"enabled": True}}}
     orch = SourceOrchestrator(cfg)
     assert orch._unpaywall is not None and orch._unpaywall.email == "env@example.org"
+    assert orch.warnings == []
 
 
 # ── platform ─────────────────────────────────────────────────────────────────

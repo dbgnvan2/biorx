@@ -22,9 +22,12 @@ import pytest
 
 ROOT = Path(__file__).parent.parent.parent
 
-# The commit that shipped the arXiv adapter and the shared filtering module —
-# the last state of the retrieval layer before any web-app work began.
-BASELINE = "a3769ef"
+# The last commit that intentionally touched retrieval-layer files.
+# Updated from a3769ef → ad2818e by Batch H (contact-email hygiene):
+#   src/sources/arxiv.py   — User-Agent built via polite_user_agent()
+#   src/sources/orchestrator.py — Unpaywall guard added when no email is set
+# These are W1.a-flagged exceptions: hygiene changes, not retrieval-logic changes.
+BASELINE = "ad2818e"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
@@ -81,11 +84,13 @@ def test_the_baseline_commit_is_reachable():
 
 def test_the_guard_would_notice_a_change():
     """
-    Proves the diff is actually looking at these files, by asking git for the
-    changes to a file that certainly did change in the same range.
+    Proves the diff mechanism works by checking a file that changed IN the
+    baseline commit itself (BASELINE~1..BASELINE). src/sources/arxiv.py is
+    correct: it was the Batch H change that advanced the baseline here.
     """
-    changed = _git("diff", "--name-only", f"{BASELINE}..HEAD", "--", "src/db.py")
-    assert "src/db.py" in changed, (
-        "the diff reports no change to src/db.py, which definitely changed — "
-        "the comparison is not doing what this file assumes"
+    changed = _git("diff", "--name-only", f"{BASELINE}~1..{BASELINE}", "--",
+                   "src/sources/arxiv.py")
+    assert "src/sources/arxiv.py" in changed, (
+        "the diff reports no change to src/sources/arxiv.py in the baseline "
+        "commit — check that BASELINE points at the right commit"
     )
