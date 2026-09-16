@@ -23,6 +23,21 @@ in-batch, because an APPROVED verdict only covers the code the gate read.
   `CanonicalRecord.to_dict()` hardcodes `version: "1"`, so the
   "2+ (revised only)" filter can never match an arXiv paper.
 
+## From the chunk-2 QA gate (`docs/cycles/2026-09-15_chunk2-qa-gate.md`)
+
+APPROVED at fix-loop 2, with three low findings carried rather than fixed:
+
+- `Database.release()` is wired into `SearchWorker` only. Safe today because
+  every GUI worker gets a fresh QThread and the finalizer collects it, but the
+  other workers (download, summarize, abstract fetch) should release explicitly
+  too if they ever run on a pooled thread.
+- `check_same_thread=False` is set on every connection so the finalizer can
+  close a dead thread's handle. It also suppresses SQLite's own cross-thread
+  guard globally, so a future thread-locality regression would fail silently
+  rather than loudly.
+- `_release_connection` catches only `sqlite3.Error`. At interpreter shutdown a
+  different exception could escape and print "Exception ignored".
+
 ## Adjacent classes noted while fixing the chunk-2 gate
 
 - **Hardcoded personal contact addresses remain in the retrieval layer**:
