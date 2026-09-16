@@ -9,6 +9,7 @@ concurrently. WAL plus a busy timeout lets readers and one writer proceed
 without blocking each other.
 """
 
+import itertools
 import os
 import sqlite3
 import json
@@ -22,9 +23,19 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "~/preprints/biorxiv.db"
 
-# How long a writer waits for a competing write before raising "database is
-# locked". Named and env-tunable rather than left at SQLite's 0 ms default.
-BUSY_TIMEOUT_MS = int(os.environ.get("BIORX_DB_BUSY_TIMEOUT_MS", "10000"))
+DEFAULT_BUSY_TIMEOUT_MS = 10000
+
+
+def busy_timeout_ms() -> int:
+    """How long a writer waits for a competing write before raising "database is
+    locked". Read at call time, not at import, so setting the env var after
+    importing this module still takes effect (as with default_db_path()).
+    """
+    try:
+        return int(os.environ.get("BIORX_DB_BUSY_TIMEOUT_MS", DEFAULT_BUSY_TIMEOUT_MS))
+    except ValueError:
+        logger.warning("BIORX_DB_BUSY_TIMEOUT_MS is not an integer — using default")
+        return DEFAULT_BUSY_TIMEOUT_MS
 
 
 def default_db_path() -> str:
@@ -56,7 +67,22 @@ class Database:
         self.db_path = Path(db_path or default_db_path()).expanduser()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
-        self._all_conns: List[sqlite3.Connection] = []
+        # key -> (thread, connection), used to close the connections of threads
+        # that have since exited: a per-thread connection that is never released
+        # is a file descriptor and a page cache held for the life of the process
+        # (learnings P30 — handing a resource out per thread is not the same as
+        # giving it back).
+        #
+        # The key is a counter, not threading.get_ident(). CPython reuses idents
+        # after a thread exits, so an ident-keyed registry could let a new thread
+        # overwrite a dead thread's entry and drop the handle without closing it.
+        # Today the reaper always runs immediately before registration, so that
+        # overwrite is not reachable and no test can distinguish the two keys —
+        # the counter removes the dependency on that ordering rather than
+        # fixing an observable bug. Stated here because an assertion would be a
+        # test that cannot fail (learnings P27).
+        self._conns: Dict[int, Any] = {}
+        self._conn_keys = itertools.count()
         self._conns_lock = threading.Lock()
         self._init_db()
 
@@ -67,7 +93,16 @@ class Database:
         # busy handler and is reported by `PRAGMA busy_timeout`. An additional
         # explicit PRAGMA here would be redundant, and a test asserting the
         # pragma would pass whether or not the pragma line existed.
-        conn = sqlite3.connect(str(self.db_path), timeout=BUSY_TIMEOUT_MS / 1000)
+        #
+        # check_same_thread=False permits the reaper below to close a connection
+        # from another thread. Each thread still gets its own connection — the
+        # `conn` property never hands one thread's connection to another — this
+        # only allows an already-dead thread's handle to be released.
+        conn = sqlite3.connect(
+            str(self.db_path),
+            timeout=busy_timeout_ms() / 1000,
+            check_same_thread=False,
+        )
         conn.row_factory = sqlite3.Row
         # WAL is a property of the file, not the connection, but setting it is
         # idempotent and cheap. It lets readers run while a writer holds the
@@ -76,9 +111,56 @@ class Database:
             conn.execute("PRAGMA journal_mode = WAL")
         except sqlite3.Error as e:          # e.g. a database on a network mount
             logger.warning("Could not enable WAL on %s: %s", self.db_path, e)
-        with self._conns_lock:
-            self._all_conns.append(conn)
         return conn
+
+    def _reap_dead_threads(self) -> int:
+        """Close connections whose owning thread has exited. Returns how many.
+
+        Called whenever a new connection is minted, so the number of open
+        connections tracks the number of *live* threads rather than the number
+        of threads there have ever been. The GUI starts a QThread per search,
+        download, summarize and abstract fetch, so without this a long session
+        accumulates one connection per operation.
+
+        Collection is lazy: a thread that has just exited keeps its connection
+        until the next mint. That bounds the surplus to the threads that died
+        since the last mint, not the whole history. Callers that know when a
+        worker ends should call release() for immediate hand-back.
+        """
+        closed = 0
+        with self._conns_lock:
+            dead = [key for key, (thread, _) in self._conns.items()
+                    if not thread.is_alive()]
+            for key in dead:
+                _, conn = self._conns.pop(key)
+                try:
+                    conn.close()
+                    closed += 1
+                except sqlite3.Error as e:
+                    logger.debug("Error closing connection for dead thread: %s", e)
+        if closed:
+            logger.debug("Released %d connection(s) from finished threads", closed)
+        return closed
+
+    def release(self) -> None:
+        """Close and forget this thread's connection.
+
+        Optional: the reaper above collects abandoned connections anyway. Use
+        this where a worker's end is known (a job runner, a request handler) so
+        the handle goes back immediately rather than at the next connect.
+        """
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            return
+        key = getattr(self._local, "key", None)
+        self._local.conn = None
+        self._local.key = None
+        with self._conns_lock:
+            self._conns.pop(key, None)
+        try:
+            conn.close()
+        except sqlite3.Error as e:
+            logger.debug("Error closing connection on release: %s", e)
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -89,8 +171,13 @@ class Database:
         """
         conn = getattr(self._local, "conn", None)
         if conn is None:
+            self._reap_dead_threads()
             conn = self._new_connection()
+            key = next(self._conn_keys)
             self._local.conn = conn
+            self._local.key = key
+            with self._conns_lock:
+                self._conns[key] = (threading.current_thread(), conn)
         return conn
 
     def _init_db(self):
@@ -344,6 +431,7 @@ class Database:
         methodology: Optional[str] = None,
         conclusions: Optional[str] = None,
         model_version: str = "qwen:7b",
+        created_by_user_id: Optional[str] = None,
     ) -> Optional[int]:
         """
         Insert or update a summary for a paper.
@@ -355,6 +443,7 @@ class Database:
             methodology: Methodology summary
             conclusions: Conclusions summary
             model_version: LLM model version used
+            created_by_user_id: Web-app user whose run produced this summary
 
         Returns:
             Summary ID if successful, None otherwise
@@ -365,8 +454,8 @@ class Database:
                 """
                 INSERT OR REPLACE INTO summaries
                 (paper_id, summary_text, key_findings, methodology,
-                 conclusions, model_version)
-                VALUES (?, ?, ?, ?, ?, ?)
+                 conclusions, model_version, created_by_user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     paper_id,
@@ -375,6 +464,7 @@ class Database:
                     methodology,
                     conclusions,
                     model_version,
+                    created_by_user_id,
                 ),
             )
             self.conn.commit()
@@ -615,7 +705,8 @@ class Database:
     def close(self):
         """Close every connection this Database has handed out."""
         with self._conns_lock:
-            conns, self._all_conns = self._all_conns, []
+            conns = [conn for _, conn in self._conns.values()]
+            self._conns = {}
         for conn in conns:
             try:
                 conn.close()

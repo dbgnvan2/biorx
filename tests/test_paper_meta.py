@@ -166,6 +166,19 @@ def test_openalex_sets_a_timeout_and_identifies_itself():
     assert "mailto:" in g.call_args.kwargs["headers"]["User-Agent"]
 
 
+def test_openalex_contact_comes_from_the_environment(monkeypatch):
+    """A contact address is deployment config, not a source literal."""
+    monkeypatch.setenv("BIORX_CONTACT_EMAIL", "ops@example.org")
+    assert paper_meta.openalex_user_agent() == "ResearchTool/1.0 (mailto:ops@example.org)"
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL")
+    assert paper_meta.DEFAULT_CONTACT_EMAIL in paper_meta.openalex_user_agent()
+
+
+def test_no_personal_email_is_hardcoded_in_this_module():
+    source = Path(paper_meta.__file__).read_text()
+    assert "@me.com" not in source
+
+
 # ── The GUI must use these, not a private copy ────────────────────────────────
 
 def test_gui_uses_the_shared_helpers():

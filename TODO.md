@@ -23,6 +23,19 @@ in-batch, because an APPROVED verdict only covers the code the gate read.
   `CanonicalRecord.to_dict()` hardcodes `version: "1"`, so the
   "2+ (revised only)" filter can never match an arXiv paper.
 
+## Adjacent classes noted while fixing the chunk-2 gate
+
+- **Hardcoded personal contact addresses remain in the retrieval layer**:
+  `src/sources/config.py` (unpaywall_email, crossref_user_agent defaults) and
+  `src/sources/arxiv.py` (the adapter User-Agent). `src/paper_meta.py` was moved
+  to `BIORX_CONTACT_EMAIL`; the others are the same class and should follow, but
+  they sit in files the web-app plan agreed not to modify. Note that arXiv wants
+  a descriptive contact in its UA, so the replacement must keep a real address
+  in deployment config rather than dropping to `example.com`.
+- **`datetime.utcnow()` is deprecated** and used by every adapter
+  (`europepmc.py`, `psyarxiv.py`, `socarxiv.py`, `biorxiv_medrxiv.py`,
+  `arxiv.py`, `cache.py`). Fix as a class, not one at a time (P5).
+
 ## From the code review, 2026-09-15
 
 - The CLI has **no failure signal**: the orchestrator swallows per-source errors

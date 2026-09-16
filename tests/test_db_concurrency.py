@@ -92,7 +92,116 @@ def test_parallel_writes_from_multiple_threads_all_land(db):
 
 def test_wal_and_busy_timeout_are_set(db):
     assert db.conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
-    assert db.conn.execute("PRAGMA busy_timeout").fetchone()[0] == db_module.BUSY_TIMEOUT_MS
+    assert db.conn.execute("PRAGMA busy_timeout").fetchone()[0] == db_module.busy_timeout_ms()
+
+
+def test_busy_timeout_is_read_at_call_time_not_at_import(monkeypatch):
+    """A frozen module constant silently ignores env set after import."""
+    monkeypatch.setenv("BIORX_DB_BUSY_TIMEOUT_MS", "4321")
+    assert db_module.busy_timeout_ms() == 4321
+    monkeypatch.setenv("BIORX_DB_BUSY_TIMEOUT_MS", "not-a-number")
+    assert db_module.busy_timeout_ms() == db_module.DEFAULT_BUSY_TIMEOUT_MS
+
+
+# ── Releasing connections, not merely handing them out (P30) ──────────────────
+
+def _is_closed(conn) -> bool:
+    try:
+        conn.execute("SELECT 1")
+        return False
+    except sqlite3.ProgrammingError:
+        return True
+
+
+def test_connections_of_finished_threads_are_released(db):
+    """
+    A per-thread connection that is never given back is a leaked file
+    descriptor. The GUI starts a thread per search/download/summarize.
+
+    This asserts the connections were CLOSED, not that a registry dict stayed
+    small: CPython reuses thread idents, so a dict keyed by ident stays small
+    while silently dropping unclosed handles (learnings P30 — validate against
+    the quantity that actually costs something).
+    """
+    handed_out = []
+    for _ in range(12):
+        t = threading.Thread(target=lambda: handed_out.append(db.conn))
+        t.start()
+        t.join()
+
+    assert len(handed_out) == 12
+    db._reap_dead_threads()
+    still_open = [c for c in handed_out if not _is_closed(c)]
+    assert still_open == [], f"{len(still_open)} connections left open"
+
+
+def test_the_reaper_runs_when_a_new_connection_is_minted(db):
+    """
+    The reaper is lazy: it runs on the next mint, so at most the connections of
+    threads that died since the last mint linger. This asserts the trigger is
+    wired, not merely that the method works when called directly.
+    """
+    handed_out = []
+    for _ in range(4):
+        t = threading.Thread(target=lambda: handed_out.append(db.conn))
+        t.start(); t.join()
+
+    # A fresh thread minting a connection must collect the earlier ones.
+    t = threading.Thread(target=lambda: db.conn)
+    t.start(); t.join()
+    assert all(_is_closed(c) for c in handed_out[:4])
+
+
+def test_release_is_safe_when_this_thread_never_connected(db):
+    done = []
+
+    def never_connected():
+        db.release()
+        done.append(True)
+
+    t = threading.Thread(target=never_connected); t.start(); t.join()
+    assert done == [True]
+
+
+def test_a_live_threads_connection_is_not_reaped(db):
+    """The reaper must only collect connections whose owner has exited."""
+    started, may_finish, seen = threading.Event(), threading.Event(), {}
+
+    def worker():
+        seen["conn"] = db.conn
+        started.set()
+        may_finish.wait(timeout=5)
+
+    t = threading.Thread(target=worker); t.start()
+    started.wait(timeout=5)
+    for _ in range(3):               # churn other threads to drive the reaper
+        x = threading.Thread(target=lambda: db.conn.execute("SELECT 1"))
+        x.start(); x.join()
+    _ = db.conn
+
+    assert seen["conn"].execute("SELECT 1").fetchone()[0] == 1
+    may_finish.set(); t.join()
+
+
+# ── Summary provenance is written, not merely migrated in (P21) ───────────────
+
+def test_insert_summary_records_the_user_and_model(db):
+    paper_id = db.insert_paper({"doi": "10.1/s", "title": "T", "authors": "A",
+                                "abstract": "x", "date": "2026-01-01"})
+    db.insert_summary(paper_id, "text", ["f1"], "method", "concl",
+                      model_version="claude-sonnet-5", created_by_user_id="u-123")
+    row = db.conn.execute(
+        "SELECT model_version, created_by_user_id FROM summaries WHERE paper_id = ?",
+        (paper_id,)).fetchone()
+    assert row["model_version"] == "claude-sonnet-5"
+    assert row["created_by_user_id"] == "u-123"
+
+
+def test_insert_summary_keeps_working_without_provenance(db):
+    """The desktop agent calls this with no user; that must still work."""
+    paper_id = db.insert_paper({"doi": "10.1/s2", "title": "T", "authors": "A",
+                                "abstract": "x", "date": "2026-01-01"})
+    assert db.insert_summary(paper_id, "text") is not None
 
 
 def test_close_closes_every_handed_out_connection(db):

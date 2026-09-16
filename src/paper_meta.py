@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from html.parser import HTMLParser
 from typing import Any, Dict
@@ -26,7 +27,17 @@ SCRAPE_TIMEOUT = 20
 OPENALEX_TIMEOUT = 15
 MIN_ABSTRACT_CHARS = 80          # below this, a "description" is a site tagline
 MIN_HTML_CHARS = 500             # below this, the response is an error/interstitial
-OPENALEX_USER_AGENT = "ResearchTool/1.0 (mailto:davegalloway@me.com)"
+# A polite-pool contact, not a secret — but it is deployment configuration, not
+# a source literal, and it must not carry a personal address in the repository.
+# The default preserves the value this code had before it was extracted from
+# gui.py; deployments set BIORX_CONTACT_EMAIL to a real address.
+DEFAULT_CONTACT_EMAIL = "research@example.com"
+
+
+def openalex_user_agent() -> str:
+    """User-Agent for the OpenAlex polite pool, read at call time."""
+    email = os.environ.get("BIORX_CONTACT_EMAIL", DEFAULT_CONTACT_EMAIL)
+    return f"ResearchTool/1.0 (mailto:{email})"
 
 _BROWSER_HEADERS = {
     "User-Agent": (
@@ -177,7 +188,7 @@ def fetch_openalex_abstract(doi: str) -> str:
         resp = requests.get(
             f"https://api.openalex.org/works/doi:{clean}",
             params={"select": "abstract_inverted_index"},
-            headers={"User-Agent": OPENALEX_USER_AGENT},
+            headers={"User-Agent": openalex_user_agent()},
             timeout=OPENALEX_TIMEOUT,
         )
         if not resp.ok:
