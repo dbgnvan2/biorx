@@ -746,85 +746,18 @@ def _attach_context_menu(table: "QTableWidget"):
 
 # ---------------------------------------------------------------------------
 # Shared filtering logic (used by both tabs)
+#
+# The implementation lives in src/filtering.py so the headless CLI
+# (agents/monitor.py) applies exactly the same filter semantics as the GUI.
+# These module-level aliases keep the existing call sites unchanged.
 # ---------------------------------------------------------------------------
 
-def _terms(s: str) -> List[str]:
-    """Split comma-separated string into non-empty lowercase terms."""
-    return [t.strip().lower() for t in s.split(",") if t.strip()]
-
-
-def _match(term: str, text: str) -> bool:
-    """Match a single term against text. term ending in '*' = begins-with / prefix match."""
-    if term.endswith("*"):
-        return text.startswith(term[:-1])
-    return term in text
-
-
-def _text_group_matches(paper: Dict[str, Any], group: Dict[str, str]) -> bool:
-    """
-    A group is a set of AND conditions.
-    Each field may have comma-separated terms — any term in that field matches (OR within field).
-    Terms ending in '*' use prefix (begins-with) matching.
-    All non-empty fields must match (AND between fields).
-    """
-    title    = (paper.get("title")    or "").lower()
-    abstract = (paper.get("abstract") or "").lower()
-
-    title_terms    = _terms(group.get("title",    ""))
-    abstract_terms = _terms(group.get("abstract", ""))
-    both_terms     = _terms(group.get("both",     ""))
-
-    if title_terms    and not any(_match(t, title)              for t in title_terms):
-        return False
-    if abstract_terms and not any(_match(t, abstract)           for t in abstract_terms):
-        return False
-    if both_terms     and not any(_match(t, f"{title} {abstract}") for t in both_terms):
-        return False
-    return True
-
-
-def _filter_papers(papers: List[Dict[str, Any]], f: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Apply filter criteria to a list of papers. No API calls."""
-    text_groups = f.get("text_groups", [])
-    if not text_groups and f.get("keywords"):
-        text_groups = [{"title": "", "abstract": "", "both": ", ".join(f["keywords"])}]
-
-    authors     = [a.strip() for a in f.get("authors", []) if a.strip()]
-    institution = f.get("institution", "").strip().lower()
-    paper_type  = f.get("paper_type", "(any)")
-    version     = f.get("version", "(any)")
-    published   = f.get("published", "(any)")
-    license_    = f.get("license", "(any)")
-
-    out = []
-    for p in papers:
-        auth_str = f"{p.get('authors','').lower()} {p.get('author_corresponding','').lower()}"
-        inst_str = (p.get("author_corresponding_institution") or "").lower()
-        ptype    = (p.get("type") or "").lower()
-        ver      = str(p.get("version") or "")
-        pub      = (p.get("published") or "NA")
-        lic      = (p.get("license") or "").lower()
-
-        if text_groups and not any(_text_group_matches(p, g) for g in text_groups):
-            continue
-        if authors and not any(_match(a.lower(), auth_str) for a in authors):
-            continue
-        if institution and not _match(institution, inst_str):
-            continue
-        if paper_type != "(any)" and paper_type.lower() not in ptype:
-            continue
-        if version == "1 (first submission only)" and ver != "1":
-            continue
-        if version == "2+ (revised only)" and (not ver.isdigit() or int(ver) < 2):
-            continue
-        if published == "preprints only (not in journal)" and pub != "NA":
-            continue
-        if published == "published in journal only" and pub == "NA":
-            continue
-        if license_ != "(any)" and license_.lower() not in lic:
-            continue
-        out.append(p)
-    return out
+from src.filtering import (          # noqa: E402  (kept next to its former home)
+    split_terms        as _terms,
+    match_term         as _match,
+    text_group_matches as _text_group_matches,
+    filter_papers      as _filter_papers,
+)
 
 
 # ---------------------------------------------------------------------------
