@@ -8,7 +8,6 @@ Cache layers and TTLs:
 """
 
 from __future__ import annotations
-import os
 import sqlite3
 import json
 import hashlib
@@ -28,9 +27,7 @@ _TTL_ID_RESOLVE   = 30 * 24
 class SearchCache:
     """SQLite-backed multi-layer cache for source API responses."""
 
-    def __init__(self, cache_path: str | None = None):
-        if cache_path is None:
-            cache_path = os.environ.get("BIORX_CACHE_PATH", "~/preprints/source_cache.db")
+    def __init__(self, cache_path: str = "~/preprints/source_cache.db"):
         self.path = Path(cache_path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.path))

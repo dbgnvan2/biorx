@@ -43,24 +43,29 @@ _REAL_FILTERS   = _REPO_ROOT / "filters.json"
 def _fingerprint_dir(path: Path) -> dict | None:
     """Snapshot {relative_path: (mtime_ns, size)} for every file in a directory tree.
 
-    Returns None when the walk itself fails (incomplete — cannot certify clean).
-    Individual unreadable files within the walk are skipped with a warning so a
-    single stale fd does not abort the whole snapshot (P2/P31).
+    Returns None when the snapshot is incomplete — either the rglob walk itself
+    failed or an individual file could not be stat'd. None means "cannot certify
+    clean" (P2/P31 — a partial snapshot must not pass as clean).
     """
     if not path.exists():
         return {}
     out: dict = {}
+    failed: list = []
     try:
         for p in sorted(path.rglob("*")):
             if p.is_file():
                 try:
                     s = p.stat()
                     out[str(p.relative_to(path))] = (s.st_mtime_ns, s.st_size)
-                except OSError:
-                    logger.warning("artifact guard: could not stat %s (skipped)", p)
+                except OSError as exc:
+                    failed.append((str(p), exc))
     except OSError as exc:
         logger.error("artifact guard: rglob walk of %s failed: %s", path, exc)
-        return None  # incomplete — caller must not certify clean
+        return None
+    if failed:
+        for fp, exc in failed:
+            logger.error("artifact guard: could not stat %s: %s", fp, exc)
+        return None  # partial snapshot — cannot certify clean
     return out
 
 
@@ -74,27 +79,23 @@ def _fingerprint_file(path: Path):
 
 @pytest.fixture(scope="session", autouse=True)
 def _guard_real_artifacts(tmp_path_factory):
-    """Redirect BIORX_DB_PATH and BIORX_CACHE_PATH to temp paths; fail if any real
-    artifact changes. All write locations must be env-overridable so tests never
-    touch production data even when a class-level patch is bypassed (P28/P5)."""
-    tmp_db    = tmp_path_factory.mktemp("db")    / "test.db"
-    tmp_cache = tmp_path_factory.mktemp("cache") / "source_cache.db"
+    """Redirect BIORX_DB_PATH to a temp path and fail if any real artifact changes.
+    source_cache.db (SearchCache) is excluded — SearchCache has no callers so
+    ~/preprints/source_cache.db is never written by production code."""
+    tmp_db = tmp_path_factory.mktemp("db") / "test.db"
 
-    prev_db    = os.environ.get("BIORX_DB_PATH")
-    prev_cache = os.environ.get("BIORX_CACHE_PATH")
-    os.environ["BIORX_DB_PATH"]    = str(tmp_db)
-    os.environ["BIORX_CACHE_PATH"] = str(tmp_cache)
+    prev_db = os.environ.get("BIORX_DB_PATH")
+    os.environ["BIORX_DB_PATH"] = str(tmp_db)
 
     before_preprints = _fingerprint_dir(_REAL_PREPRINTS)
     before_filters   = _fingerprint_file(_REAL_FILTERS)
 
     yield
 
-    for key, prev in (("BIORX_DB_PATH", prev_db), ("BIORX_CACHE_PATH", prev_cache)):
-        if prev is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = prev
+    if prev_db is None:
+        os.environ.pop("BIORX_DB_PATH", None)
+    else:
+        os.environ["BIORX_DB_PATH"] = prev_db
 
     after_preprints = _fingerprint_dir(_REAL_PREPRINTS)
     after_filters   = _fingerprint_file(_REAL_FILTERS)
