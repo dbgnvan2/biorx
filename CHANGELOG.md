@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-09-15 — pluggable LLM backends and background jobs
+
+### Added
+- `llm_config.yaml` + `src/llm_config.py` — provider dialects, model ids, the
+  paper-text budget and the owner-key spend cap, in configuration rather than
+  source. `LLM_PROVIDER`, `ANTHROPIC_MODEL`, `DEEPSEEK_MODEL` and
+  `SUMMARY_DAILY_CAP_PER_USER` override the file.
+- `src/llm_providers.py` — `DeepSeekClient` (OpenAI-compatible dialect),
+  `AnthropicClient` (official SDK), and `resolve_client()` with the precedence
+  user key → owner key → a typed error naming both what the user should do and
+  what the operator should set. Hosted replies are requested as JSON against a
+  schema and validated, so a reply in the wrong shape raises instead of storing
+  a blank summary.
+- `src/crypto.py` — Fernet encryption of a user's API key, plus masking.
+  `KEY_ENC_SECRET` is required from the environment and never generated.
+- `src/jobs.py` — an in-process job registry for searches and summaries, which
+  take minutes and cannot be held open by an HTTP request. Owner-scoped,
+  cancellable, expiring, and guarded so a worker can never leave a job on
+  "running".
+- `requirements-web.txt`, separate from `requirements.txt` so PyQt6 is never
+  installed in the container.
+
+### Note
+The Anthropic default model is `claude-sonnet-5`. `claude-sonnet-4`, which the
+original brief specified, is not a real model id.
+
 ## 2026-09-15 — web app groundwork
 
 ### Added

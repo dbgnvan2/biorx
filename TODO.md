@@ -38,6 +38,27 @@ APPROVED at fix-loop 2, with three low findings carried rather than fixed:
 - `_release_connection` catches only `sqlite3.Error`. At interpreter shutdown a
   different exception could escape and print "Exception ignored".
 
+## From the chunk-3 QA gate (`docs/cycles/2026-09-15_chunk3-qa-gate.md`)
+
+APPROVED with five findings, all latent because nothing consumes these modules
+yet. The first two must be closed in the web-routes phase, not after it.
+
+- **MEDIUM — `JobRegistry.get()` collapses three different answers into `None`**:
+  unknown id, expired job, and another user's job are indistinguishable, and the
+  docstring promises an `expired` status that does not exist. A user whose job
+  aged out should be told to re-run, not shown "not found".
+- **MEDIUM — the job ownership check is opt-in** (`owner=None` default). Any
+  future caller that forgets to pass `owner` gets unrestricted read and cancel.
+  Make owner required at the boundary the routes use.
+- **LOW — two failure contracts meet at the resolver**: the hosted clients raise
+  typed errors, `OllamaClient` returns `None`. The route that calls
+  `ResolvedLLM.client.summarize_paper()` has to handle both (P22).
+- **LOW — a vacuous assertion** in `tests/web/test_crypto.py`
+  (`assert monkeypatch.delenv(...) is None` is always true). A test line that
+  cannot fail (P27).
+- **LOW — `mask()` / `last4()` have no caller yet**; expected at this phase, but
+  they must be wired by the LLM-settings route or deleted (P21).
+
 ## Two Python environments with different dependency versions
 
 `/opt/homebrew/bin/pytest` (the command CLAUDE.md documents) runs **Python 3.11**
