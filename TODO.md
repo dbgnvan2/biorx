@@ -3,6 +3,19 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the N2 gate (`docs/cycles/2026-09-16_n2-qa-gate.md`) — APPROVED at fix-loop 1
+
+- **Network guard limits.** It cannot see network use from a subprocess (a
+  fresh interpreter), from code that captured socket functions at import time,
+  or from a library with its own resolver (dnspython, aiohttp). None of those is
+  reachable in this repo today — its only network path is requests/urllib3 — but
+  say so in the guard's docstring so nobody over-trusts it.
+- **`_OUR_BUGS` is broader than its name**: `ImportError` can also mean an
+  optional dependency is missing rather than a defect in this code.
+- **Adjacent to N2**: `pdf_url()` falls back to `best_oa_url`, which for PMC is
+  an HTML page, so a summary job first downloads a web page as though it were a
+  PDF before recovery runs. Wasted work, not a wrong result.
+
 ## From the N1 gate (`docs/cycles/2026-09-16_n1-qa-gate.md`) — APPROVED
 
 - **F1 (low)** — the N1 rebuild recreates `papers` from its CREATE statement, so

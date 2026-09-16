@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-16 — recovering a missing abstract (N2)
+
+### Fixed
+- **A summary no longer fails just because the search record lacked an
+  abstract.** Before giving up, the web app now looks for one — Europe PMC by
+  DOI, PMC full text, Crossref, OpenAlex, then the paper's own pages — and
+  stores what it finds with the paper. The paper that exposed this, an open-
+  access article on PMC with no DOI, now recovers its full abstract.
+- The desktop app's abstract lookup had the same gaps: it skipped PMC for any
+  paper without a DOI, and reported "not available" as though it were the
+  abstract. Both apps now share one lookup.
+- A correction, erratum or retraction notice with no text is refused with a
+  message saying so. The list of notice titles is in `llm_config.yaml`.
+- Every source is held to a minimum abstract length, so a short error string
+  or page tagline is never accepted as an abstract.
+
+### Tests
+- The whole suite now fails any test that tries to reach the internet, even if
+  the code under test catches the error. It found one test that had been
+  making live calls and failing intermittently.
+
 ## 2026-09-16 — papers without a DOI (N1)
 
 ### Fixed
