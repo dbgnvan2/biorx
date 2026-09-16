@@ -76,6 +76,51 @@ def test_the_lifespan_shuts_the_job_pool_and_database_down(app):
     assert ctx.jobs._pool._shutdown is True
 
 
+def test_shutdown_waits_for_a_running_worker_before_the_database_closes(ctx):
+    """
+    Closing the database while a worker is mid-write is a segmentation fault,
+    not an exception — reproduced once in five full-suite runs before the drain
+    existed. Shutdown must therefore report whether it actually drained, and
+    the caller must not close anything until it has.
+    """
+    import threading
+    import time as _time
+
+    release = threading.Event()
+    touched = []
+
+    def slow(job):
+        _time.sleep(0.05)
+        touched.append(ctx.db.conn.execute("SELECT 1").fetchone()[0])
+        release.set()
+        return "done"
+
+    ctx.jobs.submit("search", "u1", slow)
+    drained = ctx.jobs.shutdown(wait=True, timeout=5)
+
+    assert drained is True
+    assert release.is_set(), "shutdown returned before the worker finished"
+    assert touched == [1]
+
+
+def test_shutdown_reports_failure_when_a_worker_will_not_stop(ctx, caplog):
+    """The honest answer when a job ignores cancellation — so the caller leaves
+    the connections alone rather than closing them under a live thread."""
+    import threading
+
+    hold = threading.Event()
+    try:
+        ctx.jobs.submit("search", "u1", lambda j: hold.wait(timeout=30))
+        import time as _time
+        _time.sleep(0.05)
+        with caplog.at_level("ERROR"):
+            drained = ctx.jobs.shutdown(wait=True, timeout=0.2)
+        assert drained is False
+        assert any("did not drain" in r.getMessage() for r in caplog.records)
+    finally:
+        hold.set()
+
+
 def test_the_orchestrator_is_built_lazily(ctx):
     """Constructing it imports every adapter; doing that at startup would let an
     unrelated source stop the app from booting."""

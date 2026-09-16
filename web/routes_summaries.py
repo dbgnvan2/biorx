@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# A ceiling on the request body itself, so an oversized paper is refused at the
+# boundary rather than truncated silently deep inside the prompt builder
+# (security S2: validate at the entry point).
+MAX_PAPER_BYTES = 200_000
+
+
 class SummaryRequest(BaseModel):
     paper: Dict[str, Any] = Field(default_factory=dict)
 
@@ -52,10 +58,16 @@ def _resolve_for(ctx: AppContext, user_id: str):
     resolved = resolve_client(user_provider=provider, user_key=key,
                               config=ctx.llm_config)
 
+    usage_id = None
     if resolved.billed_to_owner:
         cap = summary_daily_cap(ctx.llm_config)
-        used = user_store.owner_usage_today(ctx.db, user_id)
-        if used >= cap:
+        # Reserve the slot here, atomically. Reading the count now and writing
+        # the usage row after the job finishes is a check-then-act race: a burst
+        # of requests all observe the same count and all pass.
+        usage_id = user_store.reserve_owner_usage(
+            ctx.db, user_id, "summary", cap, resolved.provider, resolved.model
+        )
+        if usage_id is None:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=(
@@ -63,7 +75,7 @@ def _resolve_for(ctx: AppContext, user_id: str):
                     "Add your own API key in LLM settings to continue."
                 ),
             )
-    return resolved
+    return resolved, usage_id
 
 
 def _extract_text(ctx: AppContext, paper: Dict[str, Any]) -> str:
@@ -86,8 +98,10 @@ def _extract_text(ctx: AppContext, paper: Dict[str, Any]) -> str:
     return ""
 
 
-def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved):
+def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
+                 usage_id: Optional[int] = None):
     def work(job: Job) -> Dict[str, Any]:
+        provider_called = False
         try:
             job.phase = "Fetching the paper"
             full_text = _extract_text(ctx, paper)
@@ -98,6 +112,7 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved)
                 )
 
             job.phase = f"Summarizing with {resolved.provider}"
+            provider_called = True
             summary = resolved.client.summarize_paper(abstract, full_text)
 
             # OllamaClient returns None on failure while the hosted clients
@@ -119,8 +134,13 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved)
                     model_version=resolved.model,
                     created_by_user_id=user_id,
                 )
-            user_store.record_usage(ctx.db, user_id, "summary", resolved.provider,
-                                    resolved.model, resolved.key_source)
+            if usage_id is not None:
+                user_store.finalize_usage(ctx.db, usage_id, resolved.provider,
+                                          resolved.model)
+            else:
+                user_store.record_usage(ctx.db, user_id, "summary",
+                                        resolved.provider, resolved.model,
+                                        resolved.key_source)
             return {
                 "paper_id": paper_id,
                 "provider": resolved.provider,
@@ -128,6 +148,14 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved)
                 "key_source": resolved.key_source,
                 **summary,
             }
+        except BaseException:
+            # The slot was reserved at admission. Give it back only when the
+            # provider was never reached — a failure after the call may still
+            # have cost money, and a cap is a spend ceiling, not an attempt
+            # counter.
+            if usage_id is not None and not provider_called:
+                user_store.release_usage(ctx.db, usage_id)
+            raise
         finally:
             ctx.db.release()
 
@@ -142,8 +170,14 @@ def start_summary(body: SummaryRequest,
     if not body.paper:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="No paper supplied.")
+    import json as _json
+    if len(_json.dumps(body.paper)) > MAX_PAPER_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"That paper is larger than {MAX_PAPER_BYTES:,} bytes.",
+        )
     try:
-        resolved = _resolve_for(ctx, user_id)
+        resolved, usage_id = _resolve_for(ctx, user_id)
     except NoLLMCredentialError as e:
         # The "no key at all" case (D2): a clean, actionable error, not a crash
         # and not a job that fails opaquely a minute later.
@@ -154,7 +188,7 @@ def start_summary(body: SummaryRequest,
                             detail=str(e)) from e
 
     job = ctx.jobs.submit("summary", user_id,
-                          _run_summary(ctx, user_id, body.paper, resolved))
+                          _run_summary(ctx, user_id, body.paper, resolved, usage_id))
     payload = job.to_dict()
     payload["provider"] = resolved.provider
     payload["model"] = resolved.model

@@ -36,8 +36,16 @@ def create_app(ctx: AppContext = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(inner_app: FastAPI):
         yield
-        inner_app.state.ctx.jobs.shutdown(wait=False)
-        inner_app.state.ctx.db.close()
+        ctx_ = inner_app.state.ctx
+        drained = ctx_.jobs.shutdown(wait=True)
+        if drained:
+            ctx_.db.close()
+        else:
+            # A worker still holds a connection. Closing it under them
+            # segfaults the process; leaving the handles to the exiting
+            # process does not.
+            logger.error("Jobs did not drain — leaving database connections "
+                         "to be reclaimed at process exit")
 
     application = FastAPI(
         lifespan=lifespan,

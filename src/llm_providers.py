@@ -94,17 +94,30 @@ def _truncate(text: str, limit: int) -> str:
     return text[:limit]
 
 
+# The abstract's share of the budget. It comes from a request body, so it is
+# user-controlled: leaving it unbounded lets one crafted request send an
+# arbitrarily large prompt to a backend billed to the server owner.
+ABSTRACT_BUDGET_FRACTION = 0.25
+MIN_ABSTRACT_BUDGET = 2000
+
+
+def _abstract_budget(limit: int) -> int:
+    return max(MIN_ABSTRACT_BUDGET, int(limit * ABSTRACT_BUDGET_FRACTION))
+
+
 def _build_summary_prompt(abstract: str, full_text: str, limit: int,
                           max_findings: int = 3) -> str:
     """Build the summarization prompt. Pure — no network, so it is testable (L9).
 
     Paper content is delimited from the instructions so the model treats it as
-    data rather than as instructions (standards L5).
+    data rather than as instructions (standards L5). Both halves are budgeted:
+    the abstract is user-supplied and was previously unbounded.
     """
+    abstract = _truncate(abstract or "", _abstract_budget(limit))
     body = _truncate(full_text or "", limit)
     return (
         SUMMARY_INSTRUCTIONS.format(max_findings=max_findings)
-        + "\n\n<paper_abstract>\n" + (abstract or "").strip()
+        + "\n\n<paper_abstract>\n" + abstract.strip()
         + "\n</paper_abstract>\n\n<paper_text>\n" + body.strip() + "\n</paper_text>"
     )
 

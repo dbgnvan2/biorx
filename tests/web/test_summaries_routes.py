@@ -200,3 +200,29 @@ def test_one_user_cannot_read_anothers_summary_job(ctx, app, monkeypatch, no_pdf
 
         bob.post("/api/session", json={"access_code": ACCESS_CODE})
         assert bob.get(f"/api/summaries/{job_id}").status_code == 404
+
+
+def test_an_oversized_paper_is_refused_at_the_boundary(signed_in, monkeypatch, no_pdf):
+    """
+    The paper arrives in the request body, so its size is user-controlled.
+    Refuse it at the entry point rather than truncating it silently inside the
+    prompt builder (security S2).
+    """
+    from web.routes_summaries import MAX_PAPER_BYTES
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx_module = __import__("src.llm_config", fromlist=["x"])
+    huge = {"title": "t", "abstract": "a" * (MAX_PAPER_BYTES + 1000)}
+
+    r = signed_in.post("/api/summaries", json={"paper": huge})
+
+    assert r.status_code == 413
+    assert "larger than" in r.json()["detail"]
+
+
+def test_a_normal_sized_paper_is_accepted(signed_in, ctx, monkeypatch, no_pdf):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    with patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
+        r = signed_in.post("/api/summaries", json={"paper": PAPER})
+    assert r.status_code == 202

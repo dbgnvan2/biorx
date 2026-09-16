@@ -62,8 +62,11 @@ def ctx(tmp_path):
         cookie_secure=False,          # the test client speaks plain HTTP
     )
     yield context
-    context.jobs.shutdown()
-    context.db.close()
+    # Drain before closing: a worker mid-write holds a connection, and closing
+    # it from another thread is a segfault, not an exception.
+    drained = context.jobs.shutdown(wait=True)
+    if drained:
+        context.db.close()
 
 
 @pytest.fixture

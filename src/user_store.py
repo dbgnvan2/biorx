@@ -118,12 +118,63 @@ def get_llm_key(db, user_id: str) -> tuple:
 # ── Usage, for the owner-key spend cap ────────────────────────────────────────
 
 def record_usage(db, user_id: str, kind: str, provider: str, model: str,
-                 key_source: str) -> None:
+                 key_source: str) -> int:
     """Record one billable action. Never stores a key or part of one."""
-    db.conn.execute(
+    cur = db.conn.execute(
         "INSERT INTO usage_events (user_id, kind, provider, model, key_source) "
         "VALUES (?, ?, ?, ?, ?)",
         (user_id, kind, provider, model, key_source),
+    )
+    db.conn.commit()
+    return int(cur.lastrowid)
+
+
+def reserve_owner_usage(db, user_id: str, kind: str, cap: int,
+                        provider: str = "", model: str = "") -> Optional[int]:
+    """Claim one owner-key slot, atomically. Returns the row id, or None if the
+    cap is already reached.
+
+    Counting first and inserting afterwards is a check-then-act race: several
+    requests arriving together all read the same count, all find room, and all
+    proceed — which is exactly what a shared access code makes easy. A burst of
+    six requests against a cap of three was measured passing six times.
+
+    The insert and the count are therefore a single statement, so SQLite
+    evaluates them under one write lock and only the first `cap` writers win.
+    """
+    if cap <= 0:
+        return None
+    since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+    cur = db.conn.execute(
+        "INSERT INTO usage_events (user_id, kind, provider, model, key_source) "
+        "SELECT ?, ?, ?, ?, 'owner' WHERE ("
+        "    SELECT COUNT(*) FROM usage_events "
+        "    WHERE user_id = ? AND kind = ? AND key_source = 'owner' "
+        "      AND created_at >= ?"
+        ") < ?",
+        (user_id, kind, provider, model, user_id, kind, since, cap),
+    )
+    db.conn.commit()
+    if cur.rowcount != 1:
+        return None
+    return int(cur.lastrowid)
+
+
+def release_usage(db, usage_id: int) -> None:
+    """Give a reserved slot back.
+
+    Used when a job fails before the provider was ever called, so a server-side
+    problem does not consume a user's daily allowance.
+    """
+    db.conn.execute("DELETE FROM usage_events WHERE id = ?", (usage_id,))
+    db.conn.commit()
+
+
+def finalize_usage(db, usage_id: int, provider: str, model: str) -> None:
+    """Fill in which provider and model the reserved slot actually used."""
+    db.conn.execute(
+        "UPDATE usage_events SET provider = ?, model = ? WHERE id = ?",
+        (provider, model, usage_id),
     )
     db.conn.commit()
 

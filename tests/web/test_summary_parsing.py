@@ -134,3 +134,29 @@ def test_prompt_does_not_truncate_when_under_budget(caplog):
         prompt = _build_summary_prompt("a", "short", limit=1000)
     assert "short" in prompt
     assert not any("truncated" in r.getMessage() for r in caplog.records)
+
+
+# ── Both halves of the prompt are budgeted ────────────────────────────────────
+
+def test_a_huge_user_supplied_abstract_is_capped(caplog):
+    """
+    The abstract arrives in the request body, so it is user-controlled. Leaving
+    it unbounded lets one crafted request send an arbitrarily large prompt to a
+    backend billed to the server owner.
+    """
+    from src.llm_providers import _abstract_budget
+
+    huge = "a" * 500_000
+    with caplog.at_level("INFO"):
+        prompt = _build_summary_prompt(huge, "body", limit=12000)
+
+    budget = _abstract_budget(12000)
+    assert len(prompt) < budget + 5000
+    assert "a" * (budget + 1) not in prompt
+    assert any("truncated" in r.getMessage() for r in caplog.records)
+
+
+def test_a_normal_abstract_is_untouched():
+    abstract = "A study of interactive simulacra across 25 agents."
+    prompt = _build_summary_prompt(abstract, "body", limit=12000)
+    assert abstract in prompt

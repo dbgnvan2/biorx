@@ -243,8 +243,33 @@ class JobRegistry:
             logger.debug("Expired %d finished job(s)", len(stale))
         return len(stale)
 
-    def shutdown(self, wait: bool = False) -> None:
+    def shutdown(self, wait: bool = True, timeout: float = 10.0) -> bool:
+        """Cancel everything and wait for the workers to stop. Returns whether
+        they all stopped.
+
+        The caller must not tear down shared resources until this returns True.
+        Closing the database while a worker still holds a connection to it is
+        not an exception — it is a segmentation fault, and it was reproduced
+        here once in five runs before the wait existed.
+        """
         for job in list(self._jobs.values()):
             if job.status not in TERMINAL:
                 job.request_cancel()
-        self._pool.shutdown(wait=wait)
+        self._pool.shutdown(wait=False)
+        if not wait:
+            return False
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            running = [j for j in list(self._jobs.values()) if j.status not in TERMINAL]
+            if not running:
+                return True
+            time.sleep(0.01)
+
+        still = [j.id for j in list(self._jobs.values()) if j.status not in TERMINAL]
+        logger.error(
+            "Job registry did not drain within %.1fs; %d job(s) still running "
+            "(%s). Shared resources they hold must NOT be closed.",
+            timeout, len(still), ", ".join(still[:5]),
+        )
+        return False

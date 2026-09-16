@@ -132,3 +132,73 @@ def test_usage_rows_never_contain_a_key(ctx, signed_in, owner_key, no_pdf):
     for row in rows:
         blob = " ".join(str(v) for v in dict(row).values())
         assert "sk-" not in blob
+
+
+# ── The cap must hold under a burst, not only in sequence ─────────────────────
+
+def test_the_cap_holds_against_simultaneous_requests(app, owner_key, no_pdf):
+    """
+    Regression for a proven check-then-act race: the cap was read at submission
+    but usage was written only when the job finished, so requests arriving
+    together all observed the same count and all passed. Measured: cap of 3,
+    six rapid requests, six acceptances.
+    """
+    import threading
+
+    from fastapi.testclient import TestClient
+    from tests.web.conftest import ACCESS_CODE
+
+    client = TestClient(app)
+    client.post("/api/session", json={"access_code": ACCESS_CODE})
+
+    codes = []
+    codes_lock = threading.Lock()
+    start = threading.Event()
+
+    def fire():
+        start.wait(timeout=5)
+        r = client.post("/api/summaries", json={"paper": PAPER})
+        with codes_lock:
+            codes.append(r.status_code)
+
+    with patch("src.llm_providers.build_client", return_value=_ok_client()):
+        threads = [threading.Thread(target=fire) for _ in range(8)]
+        for t in threads:
+            t.start()
+        start.set()
+        for t in threads:
+            t.join(timeout=10)
+
+    accepted = codes.count(202)
+    refused = codes.count(429)
+    assert accepted == 3, f"cap of 3 admitted {accepted} (codes: {sorted(codes)})"
+    assert refused == 5
+
+
+def test_a_slot_is_returned_when_the_job_fails_before_the_provider(
+    ctx, signed_in, owner_key
+):
+    """
+    A failure that never reached the provider cost nothing, so it must not
+    consume the user's allowance.
+    """
+    with patch("web.routes_summaries._extract_text", return_value=""):
+        with patch("src.llm_providers.build_client", return_value=_ok_client()):
+            r = signed_in.post("/api/summaries",
+                               json={"paper": {"title": "t", "abstract": ""}})
+            _await(signed_in, r.json()["job_id"])
+
+    assert signed_in.get("/api/me").json()["owner_summaries_remaining"] == 3
+
+
+def test_a_slot_is_kept_when_the_provider_itself_failed(ctx, signed_in, owner_key,
+                                                        no_pdf):
+    """A call that reached the provider may have cost money; the cap is a spend
+    ceiling, so that attempt still counts."""
+    failing = MagicMock()
+    failing.summarize_paper.side_effect = RuntimeError("provider exploded")
+    with patch("src.llm_providers.build_client", return_value=failing):
+        r = signed_in.post("/api/summaries", json={"paper": PAPER})
+        _await(signed_in, r.json()["job_id"])
+
+    assert signed_in.get("/api/me").json()["owner_summaries_remaining"] == 2
