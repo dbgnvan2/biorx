@@ -6,54 +6,51 @@
 # mount. The platform mounts its own directory over /data — usually owned by
 # root — and the first write then fails with PermissionError at startup.
 #
-# The decision is a function so it can be exercised by a test rather than
-# inferred from reading it: source this file with ENTRYPOINT_SOURCE_ONLY=1 and
-# call needs_chown yourself.
+# Kept deliberately flat. Three earlier attempts at this file each introduced a
+# new defect in the same ten lines: a guard that asked about root instead of the
+# app user, so the chown ran only when it was pointless; and an `exec` of a
+# shell function, which no shell can do (exit 127). The only indirection left is
+# needs_chown, which exists so a test can call it.
+#
+# Source with ENTRYPOINT_SOURCE_ONLY=1 to get the functions without running.
 set -e
 
 DATA_DIR="${DATA_DIR:-/data}"
 APP_USER="${APP_USER:-biorx}"
 
-run_as_app() {
-    gosu "$APP_USER" "$@"
+fatal() {
+    echo "entrypoint: FATAL $1" >&2
+    echo "entrypoint: mount the volume writable by $APP_USER." >&2
+    exit 1
 }
 
 # True when APP_USER cannot write DATA_DIR.
 #
-# The test must run AS THE TARGET USER. An earlier version asked `[ -O dir ] &&
-# [ -w dir ]`, which tests the *current* user — root — who owns and can write a
-# root-owned volume, so the chown was skipped in exactly the case it existed
-# for, and ran only when it was already unnecessary.
+# The test runs AS THE TARGET USER. Asking `[ -O ]`/`[ -w ]` here would ask
+# about the current user — root — who owns and can write a root-owned volume,
+# which is the one case this whole script exists to fix.
 needs_chown() {
-    ! run_as_app test -w "$DATA_DIR" 2>/dev/null
+    ! gosu "$APP_USER" test -w "$DATA_DIR" 2>/dev/null
 }
 
 main() {
-    if [ "$(id -u)" = "0" ]; then
-        mkdir -p "$DATA_DIR"
-        if needs_chown; then
-            echo "entrypoint: $APP_USER cannot write $DATA_DIR — taking ownership"
-            if ! chown -R "$APP_USER" "$DATA_DIR"; then
-                echo "entrypoint: FATAL could not give $APP_USER ownership of $DATA_DIR." >&2
-                echo "entrypoint: mount the volume writable by uid $(id -u "$APP_USER")." >&2
-                exit 1
-            fi
-            if needs_chown; then
-                echo "entrypoint: FATAL $DATA_DIR is still not writable by $APP_USER." >&2
-                exit 1
-            fi
-        fi
-        exec run_as_app "$@"
+    if [ "$(id -u)" != "0" ]; then
+        # The platform enforces a uid; nothing can be chowned from here. Fail
+        # early and clearly rather than at the first database write.
+        [ -w "$DATA_DIR" ] || fatal "$DATA_DIR is not writable by uid $(id -u)."
+        exec "$@"
     fi
 
-    # Already unprivileged, because the platform enforces a uid. Nothing can be
-    # chowned from here, so fail early and clearly rather than at the first write.
-    if [ ! -w "$DATA_DIR" ]; then
-        echo "entrypoint: FATAL $DATA_DIR is not writable by uid $(id -u)." >&2
-        echo "entrypoint: mount the volume writable by that uid." >&2
-        exit 1
+    mkdir -p "$DATA_DIR"
+    if needs_chown; then
+        echo "entrypoint: $APP_USER cannot write $DATA_DIR — taking ownership"
+        chown -R "$APP_USER" "$DATA_DIR" || fatal "could not chown $DATA_DIR."
+        needs_chown && fatal "$DATA_DIR is still not writable by $APP_USER."
     fi
-    exec "$@"
+
+    # A real command, never a shell function: `exec` replaces the process image
+    # and cannot call a function.
+    exec gosu "$APP_USER" "$@"
 }
 
 [ "${ENTRYPOINT_SOURCE_ONLY:-}" = "1" ] || main "$@"

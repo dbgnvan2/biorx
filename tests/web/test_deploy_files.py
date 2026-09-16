@@ -88,9 +88,11 @@ def test_the_app_process_does_not_run_as_root():
     assert script.exists(), "the entrypoint script named in the Dockerfile is missing"
     body = script.read_text()
     assert "gosu" in body, "the entrypoint does not drop privileges"
-    # The drop goes through run_as_app, which is gosu.
-    assert 'exec run_as_app "$@"' in body
-    assert 'gosu "$APP_USER" "$@"' in body
+    # `exec` replaces the process image and cannot call a shell function; an
+    # earlier version execed one and exited 127 before the app ever started.
+    # This asserted that broken form and blessed it — so the check now names
+    # what must be true, and the end-to-end test below proves it.
+    assert 'exec gosu "$APP_USER" "$@"' in body
 
 
 ENTRYPOINT = ROOT / "docker-entrypoint.sh"
@@ -163,18 +165,10 @@ def test_the_entrypoint_tests_writability_as_the_target_user_not_as_root():
     """
     body = ENTRYPOINT.read_text()
     guard = body[body.index("needs_chown() {"):body.index("main() {")]
-    assert "run_as_app test -w" in guard
+    assert 'gosu "$APP_USER" test -w' in guard, \
+        "the writability test does not run as the target user"
     assert "[ ! -O " not in guard
-
-
-def test_the_entrypoint_fails_loudly_rather_than_starting_unwritable(tmp_path):
-    """
-    A container that starts and then dies on the first database write is far
-    worse to diagnose than one that refuses to start and says why.
-    """
-    body = ENTRYPOINT.read_text()
-    assert body.count("FATAL") >= 3
-    assert "exit 1" in body
+    assert "[ ! -w " not in guard
 
 
 def test_the_entrypoint_is_copied_and_made_executable():
@@ -362,3 +356,88 @@ def test_the_app_refuses_an_unwritable_data_directory_with_a_clear_message(tmp_p
         assert "writable" in message
     finally:
         locked.chmod(0o700)
+
+
+# ── The root branch, run end to end ───────────────────────────────────────────
+
+def _run_root_branch(tmp_path, *, writable_before_chown, chown_succeeds=True,
+                     chown_fixes_it=True):
+    """Run the entrypoint's root branch with id, gosu and chown stubbed.
+
+    This is the test that was missing. Three successive fixes to this script
+    each shipped a new defect — a guard asking about the wrong user, and an
+    `exec` of a shell function — while the suite stayed green, because nothing
+    ran the path a deployment actually takes (learnings P26: the fix commit is
+    the least-reviewed code in a change).
+    """
+    import os
+    import subprocess
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(exist_ok=True)
+    marker = tmp_path / "chowned"
+
+    (bin_dir / "id").write_text("#!/bin/sh\necho 0\n")
+
+    if writable_before_chown:
+        gosu_test = "exit 0"
+    elif chown_fixes_it:
+        gosu_test = f'[ -f "{marker}" ]; exit $?'
+    else:
+        gosu_test = "exit 1"
+    (bin_dir / "gosu").write_text(
+        "#!/bin/sh\nshift\n"
+        f'if [ "$1" = "test" ]; then {gosu_test}; fi\n'
+        'exec "$@"\n'
+    )
+
+    if chown_succeeds:
+        (bin_dir / "chown").write_text(f'#!/bin/sh\ntouch "{marker}"\nexit 0\n')
+    else:
+        (bin_dir / "chown").write_text("#!/bin/sh\nexit 1\n")
+
+    for name in ("id", "gosu", "chown"):
+        (bin_dir / name).chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["DATA_DIR"] = str(data_dir)
+    return subprocess.run(
+        ["sh", str(ENTRYPOINT), "echo", "APP-STARTED"],
+        capture_output=True, text=True, env=env, timeout=20,
+    )
+
+
+def test_the_root_branch_starts_the_app_when_the_volume_is_already_right(tmp_path):
+    result = _run_root_branch(tmp_path, writable_before_chown=True)
+    assert result.returncode == 0, result.stderr
+    assert "APP-STARTED" in result.stdout
+    assert "taking ownership" not in result.stdout      # no pointless chown
+
+
+def test_the_root_branch_chowns_a_root_owned_volume_then_starts_the_app(tmp_path):
+    """The deploy path: the platform mounts a volume the app user cannot write."""
+    result = _run_root_branch(tmp_path, writable_before_chown=False)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "taking ownership" in result.stdout
+    assert "APP-STARTED" in result.stdout, (
+        "the entrypoint fixed the volume and then failed to start the app"
+    )
+
+
+def test_the_root_branch_refuses_to_start_when_the_chown_fails(tmp_path):
+    result = _run_root_branch(tmp_path, writable_before_chown=False,
+                              chown_succeeds=False)
+    assert result.returncode == 1
+    assert "APP-STARTED" not in result.stdout
+    assert "could not chown" in result.stderr
+
+
+def test_the_root_branch_refuses_to_start_if_the_chown_did_not_help(tmp_path):
+    result = _run_root_branch(tmp_path, writable_before_chown=False,
+                              chown_succeeds=True, chown_fixes_it=False)
+    assert result.returncode == 1
+    assert "APP-STARTED" not in result.stdout
+    assert "still not writable" in result.stderr
