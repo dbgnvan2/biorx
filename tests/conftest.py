@@ -22,12 +22,37 @@ import pytest
 # A class-level patch in a test (gui_module.Database) can be defeated by a
 # second import spelling (src.db.Database). Fingerprinting the real artifacts
 # catches any escape regardless of how it occurred (P28/P6).
+#
+# We fingerprint ~/preprints/ as a whole directory tree so that:
+#   - biorxiv.db WAL/SHM side files are covered (not just the main file, P6)
+#   - source_cache.db and PDFs are covered (P5 sibling writes)
+# Repo-root files (filters.json, biorxiv.log) use __file__-relative paths so the
+# guard resolves the same file the app writes regardless of CWD (P19).
 
-_REAL_DB      = Path("~/preprints/biorxiv.db").expanduser()
-_REAL_FILTERS = Path(__file__).parent.parent / "filters.json"
+_REPO_ROOT      = Path(__file__).parent.parent
+_REAL_PREPRINTS = Path("~/preprints").expanduser()
+_REAL_FILTERS   = _REPO_ROOT / "filters.json"
 
 
-def _fingerprint(path: Path):
+def _fingerprint_dir(path: Path) -> dict:
+    """Snapshot {relative_path: (mtime_ns, size)} for every file in a directory tree."""
+    if not path.exists():
+        return {}
+    out: dict = {}
+    try:
+        for p in sorted(path.rglob("*")):
+            if p.is_file():
+                try:
+                    s = p.stat()
+                    out[str(p.relative_to(path))] = (s.st_mtime_ns, s.st_size)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return out
+
+
+def _fingerprint_file(path: Path):
     try:
         s = path.stat()
         return (s.st_mtime_ns, s.st_size)
@@ -37,13 +62,13 @@ def _fingerprint(path: Path):
 
 @pytest.fixture(scope="session", autouse=True)
 def _guard_real_artifacts(tmp_path_factory):
-    """Redirect BIORX_DB_PATH to a temp DB and fail if the real artifacts change."""
+    """Redirect BIORX_DB_PATH to a temp DB and fail if any real artifact changes."""
     tmp_db = tmp_path_factory.mktemp("db") / "test.db"
     prev = os.environ.get("BIORX_DB_PATH")
     os.environ["BIORX_DB_PATH"] = str(tmp_db)
 
-    before_db      = _fingerprint(_REAL_DB)
-    before_filters = _fingerprint(_REAL_FILTERS)
+    before_preprints = _fingerprint_dir(_REAL_PREPRINTS)
+    before_filters   = _fingerprint_file(_REAL_FILTERS)
 
     yield
 
@@ -52,14 +77,16 @@ def _guard_real_artifacts(tmp_path_factory):
     else:
         os.environ["BIORX_DB_PATH"] = prev
 
-    after_db      = _fingerprint(_REAL_DB)
-    after_filters = _fingerprint(_REAL_FILTERS)
+    after_preprints = _fingerprint_dir(_REAL_PREPRINTS)
+    after_filters   = _fingerprint_file(_REAL_FILTERS)
 
     escapes = []
-    if before_db != after_db:
-        escapes.append(f"production DB was modified during the test run: {_REAL_DB}")
+    if before_preprints != after_preprints:
+        changed = set(after_preprints) - set(before_preprints)
+        changed |= {k for k in before_preprints if before_preprints[k] != after_preprints.get(k)}
+        escapes.append(f"~/preprints/ was modified (files: {sorted(changed)})")
     if before_filters != after_filters:
-        escapes.append(f"filters.json was modified during the test run: {_REAL_FILTERS}")
+        escapes.append(f"filters.json was modified: {_REAL_FILTERS}")
     if escapes:
         pytest.fail(
             "a test escaped artifact isolation (class-level patch bypassed?):\n"
