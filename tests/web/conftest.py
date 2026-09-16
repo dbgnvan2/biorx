@@ -49,6 +49,24 @@ def _isolated_env(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
 
 
+@pytest.fixture(autouse=True)
+def _abstract_recovery_is_offline_by_default():
+    """Summary jobs call recover_abstract() whenever a paper has no text, and it
+    reaches Europe PMC, Crossref, OpenAlex and publisher pages. Default every web
+    test to "nothing found" so none of them depends on the network by accident;
+    tests about recovery patch it explicitly, which takes precedence.
+
+    Found by the N2 gate: test_a_paper_with_no_text_at_all_is_an_error made real
+    lookups and raced its 5-second wait. The suite-wide guard in
+    tests/conftest.py now fails any test that tries.
+    """
+    from unittest.mock import patch
+    from src.paper_meta import AbstractRecovery
+    with patch("web.routes_summaries.recover_abstract",
+               return_value=AbstractRecovery(tried=["stubbed"])):
+        yield
+
+
 ACCESS_CODE = "shared-code-for-tests"
 
 

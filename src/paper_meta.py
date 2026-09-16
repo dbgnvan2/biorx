@@ -211,6 +211,9 @@ def fetch_openalex_abstract(doi: str) -> str:
 
 # ── Recovering a missing abstract ─────────────────────────────────────────────
 
+# Exceptions that mean a bug in this code rather than a failing service.
+_OUR_BUGS = (NameError, TypeError, AttributeError, ImportError, SyntaxError)
+
 _PMCID_IN_URL = re.compile(r"\b(PMC\d+)\b", re.IGNORECASE)
 
 
@@ -295,8 +298,22 @@ def recover_abstract(paper: Dict[str, Any]) -> AbstractRecovery:
         result.tried.append(name)
         try:
             text = (fn() or "").strip()
+        except _OUR_BUGS as e:
+            # Isolation is for unreliable services, not for defects in this
+            # code: a NameError or TypeError here must be visible, with a
+            # traceback, rather than read as "the source had nothing".
+            logger.error("Abstract recovery: %s raised a programming error: %s",
+                         name, e, exc_info=True)
+            return False
         except Exception as e:
             logger.info("Abstract recovery: %s failed: %s", name, e)
+            return False
+        if text and len(text) < MIN_ABSTRACT_CHARS:
+            # A few words from a structured source are an error string or a
+            # tagline, not an abstract — the scrape path already applied this
+            # floor internally; now every source does (N2 gate, F3).
+            logger.info("Abstract recovery: %s returned only %d chars — ignored",
+                        name, len(text))
             return False
         if text:
             result.text, result.source = text, name

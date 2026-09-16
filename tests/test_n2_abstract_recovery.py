@@ -30,6 +30,13 @@ from src.paper_meta import AbstractRecovery, pmcid_of, recover_abstract
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pmc13572605_fulltext.xml"
 
+def _abstract(label: str) -> str:
+    """A stub long enough to be an abstract (the recovery chain ignores anything
+    under paper_meta.MIN_ABSTRACT_CHARS), tagged so a test can tell sources apart."""
+    return (f"[{label}] We recruited 240 participants across two sites and "
+            "measured stress responses over twelve weeks; results are reported below.")
+
+
 # The record exactly as the Europe PMC adapter normalised it on 2026-09-16.
 FLAMING_PAPER = {
     "title": "Interparental conflict and adolescent online flaming: the chain "
@@ -94,24 +101,24 @@ def test_n2_the_record_pmcid_wins_over_one_in_a_link():
 # ── The chain ─────────────────────────────────────────────────────────────────
 
 def test_n2_a_doi_paper_tries_europe_pmc_first(no_network):
-    no_network.get_by_id.return_value = {"abstractText": "From Europe PMC search."}
+    no_network.get_by_id.return_value = {"abstractText": _abstract("europepmc")}
     result = recover_abstract({"doi": "10.1/x"})
-    assert (result.text, result.source) == ("From Europe PMC search.", "europepmc")
+    assert (result.text, result.source) == (_abstract("europepmc"), "europepmc")
 
 
 def test_n2_the_pmcid_found_by_the_doi_lookup_is_used(no_network):
     no_network.get_by_id.return_value = {"abstractText": "", "pmcid": "PMC77"}
     no_network.fetch_abstract_from_fulltext.side_effect = \
-        lambda p: "From full text." if p == "PMC77" else ""
+        lambda p: _abstract("pmc") if p == "PMC77" else ""
     assert recover_abstract({"doi": "10.1/x"}).source == "pmc_fulltext"
 
 
 def test_n2_falls_through_crossref_then_openalex_then_scrape(no_network):
-    with patch("src.paper_meta._crossref_abstract", return_value="From Crossref."):
+    with patch("src.paper_meta._crossref_abstract", return_value=_abstract("crossref")):
         assert recover_abstract({"doi": "10.1/x"}).source == "crossref"
-    with patch("src.paper_meta.fetch_openalex_abstract", return_value="From OpenAlex."):
+    with patch("src.paper_meta.fetch_openalex_abstract", return_value=_abstract("openalex")):
         assert recover_abstract({"doi": "10.1/x"}).source == "openalex"
-    with patch("src.paper_meta.scrape_abstract_from_url", return_value="From the page."):
+    with patch("src.paper_meta.scrape_abstract_from_url", return_value=_abstract("scrape")):
         assert recover_abstract({"doi": "10.1/x"}).source == "scrape"
 
 
@@ -126,7 +133,7 @@ def test_n2_the_open_access_page_is_scraped_when_nothing_else_works(no_network):
 def test_n2_a_source_that_raises_does_not_stop_the_chain(no_network, caplog):
     """One flaky source must not hide an abstract another source has (P5)."""
     no_network.get_by_id.side_effect = ConnectionError("Europe PMC down")
-    with patch("src.paper_meta.fetch_openalex_abstract", return_value="From OpenAlex."), \
+    with patch("src.paper_meta.fetch_openalex_abstract", return_value=_abstract("openalex")), \
          caplog.at_level("INFO"):
         result = recover_abstract({"doi": "10.1/x"})
     assert result.source == "openalex"
@@ -235,3 +242,57 @@ def test_n2_detail_dialog_fetches_whenever_there_is_something_to_look_up(paper, 
         dialog = gui.PaperDetailDialog(paper)
     assert fetch.called is should_fetch
     dialog.deleteLater()
+
+
+# ── From the N2 gate ──────────────────────────────────────────────────────────
+
+def test_n2_both_front_ends_import_the_one_recovery_function():
+    """
+    Identity, not equivalence (gate F2): a copy in either front end would drift,
+    exactly as the filter logic did before it was shared.
+    """
+    pytest.importorskip("PyQt6.QtWidgets")
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import gui
+    from web import routes_summaries
+    assert gui.recover_abstract is paper_meta.recover_abstract
+    assert routes_summaries.recover_abstract is paper_meta.recover_abstract
+
+
+def test_n2_the_web_route_imports_the_one_recovery_function():
+    """The same identity check where PyQt6 is not installed."""
+    from web import routes_summaries
+    assert routes_summaries.recover_abstract is paper_meta.recover_abstract
+
+
+@pytest.mark.parametrize("junk", ["Error", "Not available.", "Abstract", "N/A", "See full text."])
+def test_n2_a_too_short_result_is_not_accepted_as_an_abstract(no_network, junk):
+    """Gate F3: every source, not only the scraper, is held to the length floor."""
+    no_network.get_by_id.return_value = {"abstractText": junk}
+    with patch("src.paper_meta.fetch_openalex_abstract",
+               return_value="A real abstract long enough to count, describing methods, "
+                            "participants and the main result in a full sentence."):
+        result = recover_abstract({"doi": "10.1/x"})
+    assert result.source == "openalex", f"{junk!r} was accepted as an abstract"
+
+
+def test_n2_a_programming_error_in_a_source_is_logged_loudly(no_network, caplog):
+    """
+    Per-source isolation exists for flaky services. It must not turn a bug in our
+    own code into a quiet "source failed" at INFO — which is how a NameError in
+    these very tests went unnoticed while they were being written.
+    """
+    no_network.get_by_id.side_effect = NameError("name 'helper' is not defined")
+    with caplog.at_level("INFO"):
+        recover_abstract({"doi": "10.1/x"})
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert errors, "a NameError in a source was logged below ERROR"
+    assert errors[0].exc_info is not None, "no traceback for a programming error"
+
+
+def test_n2_a_network_failure_in_a_source_stays_quiet(no_network, caplog):
+    no_network.get_by_id.side_effect = ConnectionError("Europe PMC down")
+    with caplog.at_level("INFO"):
+        recover_abstract({"doi": "10.1/x"})
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
