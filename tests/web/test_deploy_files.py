@@ -441,3 +441,18 @@ def test_the_root_branch_refuses_to_start_if_the_chown_did_not_help(tmp_path):
     assert result.returncode == 1
     assert "APP-STARTED" not in result.stdout
     assert "still not writable" in result.stderr
+
+
+def test_downloaded_pdfs_go_to_the_data_volume(monkeypatch, tmp_path):
+    """
+    Every other write path is environment-driven. PDFHandler was not, so in a
+    container PDFs landed in the ephemeral home rather than the mounted volume,
+    contradicting what the Dockerfile and README say about persistence.
+    """
+    from src.pdf_handler import DEFAULT_PDF_DIR, default_pdf_dir
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    assert default_pdf_dir() == str(tmp_path / "pdfs")
+
+    monkeypatch.delenv("DATA_DIR")
+    assert default_pdf_dir() == DEFAULT_PDF_DIR      # the desktop location

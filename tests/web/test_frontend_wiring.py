@@ -129,6 +129,7 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/searches/{param}",
         "/api/searches/{param}/results",
         "/api/summaries",
+        "/api/summaries/lookup",
         "/api/summaries/{param}",
     }
 

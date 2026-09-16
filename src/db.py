@@ -107,6 +107,20 @@ class Database:
         self._conns_lock = threading.Lock()
         self._init_db()
 
+    def _rollback_quietly(self) -> None:
+        """Abandon the current transaction after a failed write.
+
+        Without this, a failed INSERT leaves the connection inside a
+        transaction holding SQLite's write lock, and every other writer blocks
+        until the busy timeout expires. Harmless in the single-threaded desktop
+        app, which is why it went unnoticed; in the web app it presents as a
+        job that hangs on "Saving" and then fails for no visible reason.
+        """
+        try:
+            self.conn.rollback()
+        except sqlite3.Error as e:
+            logger.debug("Rollback after a failed write also failed: %s", e)
+
     @staticmethod
     def _ensure_writable_directory(directory: Path) -> None:
         """Create the database's directory and confirm we can write to it.
@@ -428,9 +442,11 @@ class Database:
             self.conn.commit()
             return cursor.lastrowid
         except sqlite3.IntegrityError:
+            self._rollback_quietly()
             logger.debug(f"Paper with DOI {doi} already exists")
             return None
         except sqlite3.Error as e:
+            self._rollback_quietly()
             logger.error(f"Database error inserting paper: {e}")
             return None
 
@@ -481,6 +497,7 @@ class Database:
             self.conn.commit()
             return cursor.lastrowid
         except sqlite3.Error as e:
+            self._rollback_quietly()
             logger.error(f"Database error inserting summary: {e}")
             return None
 
@@ -565,6 +582,7 @@ class Database:
             self.conn.commit()
             return True
         except sqlite3.Error as e:
+            self._rollback_quietly()
             logger.error(f"Database error updating paper path: {e}")
             return False
 
@@ -607,6 +625,7 @@ class Database:
             self.conn.commit()
             return True
         except sqlite3.Error as e:
+            self._rollback_quietly()
             logger.error(f"Database error bookmarking paper: {e}")
             return False
 
@@ -645,6 +664,7 @@ class Database:
             self.conn.commit()
             return cursor.lastrowid
         except sqlite3.Error as e:
+            self._rollback_quietly()
             logger.error(f"Error creating reference list: {e}")
             return None
 
@@ -660,6 +680,7 @@ class Database:
             self.conn.commit()
             return cursor.rowcount > 0
         except sqlite3.Error as e:
+            self._rollback_quietly()
             logger.error(f"Error adding to reference list: {e}")
             return False
 
@@ -699,6 +720,7 @@ class Database:
             self.conn.commit()
             return True
         except sqlite3.Error as e:
+            self._rollback_quietly()
             logger.error(f"Error deleting reference list: {e}")
             return False
 
@@ -710,6 +732,7 @@ class Database:
             self.conn.commit()
             return True
         except sqlite3.Error as e:
+            self._rollback_quietly()
             logger.error(f"Error removing item from reference list: {e}")
             return False
 

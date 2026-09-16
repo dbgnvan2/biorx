@@ -226,3 +226,85 @@ def test_a_normal_sized_paper_is_accepted(signed_in, ctx, monkeypatch, no_pdf):
     with patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
         r = signed_in.post("/api/summaries", json={"paper": PAPER})
     assert r.status_code == 202
+
+
+# ── Cold-review findings ──────────────────────────────────────────────────────
+
+def test_a_summary_is_saved_even_when_the_paper_is_already_in_the_database(
+    ctx, signed_in, monkeypatch, no_pdf
+):
+    """
+    insert_paper() returns None for a DOI already stored — the normal case when
+    a colleague has saved the paper already. Treating that as failure meant the
+    summary was computed, billed and displayed, then silently not saved.
+    """
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+
+    # The paper is already there, as if someone had run a search that saved it.
+    first_id = ctx.db.insert_paper(PAPER)
+    assert first_id is not None
+    assert ctx.db.insert_paper(PAPER) is None, "the premise of this test changed"
+
+    with patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
+        job_id = signed_in.post("/api/summaries", json={"paper": PAPER}).json()["job_id"]
+        body = _await(signed_in, job_id)
+
+    assert body["status"] == "done"
+    stored = ctx.db.get_summary(first_id)
+    assert stored is not None, "the summary was billed but never saved"
+    assert stored["conclusions"] == SUMMARY["conclusions"]
+
+
+def test_an_ollama_summary_with_empty_fields_is_an_error_not_a_blank_card(
+    ctx, signed_in, monkeypatch, no_pdf
+):
+    """
+    OllamaClient does no validation: its text parser returns a dict of empty
+    fields when the model answers in a shape it does not recognise. The hosted
+    clients reject that; every provider must.
+    """
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+
+    blank = {"key_findings": [], "methodology": "", "conclusions": ""}
+    with patch("src.llm_providers.build_client", return_value=_client_returning(blank)):
+        job_id = signed_in.post("/api/summaries", json={"paper": PAPER}).json()["job_id"]
+        body = _await(signed_in, job_id)
+
+    assert body["status"] == "error"
+    assert ctx.db.conn.execute("SELECT COUNT(*) FROM summaries").fetchone()[0] == 0
+
+
+def test_an_existing_summary_is_returned_without_running_the_model(
+    ctx, signed_in, monkeypatch, no_pdf
+):
+    """
+    Summaries are shared per paper. Re-running one costs a model call for an
+    answer already stored — and, on the owner key, a slot from the daily cap.
+    """
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+
+    with patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
+        job_id = signed_in.post("/api/summaries", json={"paper": PAPER}).json()["job_id"]
+        _await(signed_in, job_id)
+
+    client = MagicMock()
+    with patch("src.llm_providers.build_client", return_value=client):
+        found = signed_in.post("/api/summaries/lookup", json={"paper": PAPER})
+
+    assert found.status_code == 200
+    assert found.json()["conclusions"] == SUMMARY["conclusions"]
+    client.summarize_paper.assert_not_called()
+
+
+def test_lookup_is_404_for_a_paper_nobody_has_summarized(signed_in):
+    r = signed_in.post("/api/summaries/lookup",
+                       json={"paper": {"doi": "10.9999/never-seen"}})
+    assert r.status_code == 404
+
+
+def test_lookup_is_404_for_a_paper_with_no_doi(signed_in):
+    assert signed_in.post("/api/summaries/lookup",
+                          json={"paper": {"title": "no doi"}}).status_code == 404

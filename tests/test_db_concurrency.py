@@ -343,3 +343,48 @@ def test_search_worker_releases_its_connection_even_when_the_search_raises():
     worker.run()        # error is emitted on a signal, not raised
 
     database.release.assert_called_once()
+
+
+# ── A failed write must not hold the lock (found by the cold review) ──────────
+
+def test_a_failed_insert_does_not_block_another_writer(db):
+    """
+    A failed INSERT left the connection inside a transaction holding SQLite's
+    write lock, so every other writer blocked until the busy timeout expired.
+    Invisible in the single-threaded desktop app; in the web app it presented
+    as a summary job hanging on "Saving" and then failing for no visible reason.
+    """
+    paper = {"doi": "10.1/dup", "title": "First", "authors": "A",
+             "abstract": "x", "date": "2026-01-01"}
+    assert db.insert_paper(paper) is not None
+    assert db.insert_paper(paper) is None, "the duplicate was not rejected"
+
+    finished = threading.Event()
+    errors = []
+
+    def other_writer():
+        try:
+            db.insert_paper({"doi": "10.1/other", "title": "Other", "authors": "B",
+                             "abstract": "y", "date": "2026-01-01"})
+            finished.set()
+        except Exception as e:      # surfaced, not swallowed
+            errors.append(e)
+            finished.set()
+
+    t = threading.Thread(target=other_writer)
+    t.start()
+    # Far below the 10s busy timeout: if the lock is still held this fails.
+    completed = finished.wait(timeout=2.0)
+    t.join(timeout=5)
+
+    assert completed, "a second writer was blocked by the failed insert's lock"
+    assert errors == [], f"the second write raised: {errors}"
+    assert db.conn.execute("SELECT COUNT(*) FROM papers").fetchone()[0] == 2
+
+
+def test_the_connection_is_not_left_in_a_transaction_after_a_failed_write(db):
+    paper = {"doi": "10.1/dup2", "title": "T", "authors": "A", "abstract": "x",
+             "date": "2026-01-01"}
+    db.insert_paper(paper)
+    db.insert_paper(paper)          # fails
+    assert db.conn.in_transaction is False

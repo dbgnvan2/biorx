@@ -12,10 +12,29 @@ import re
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_PDF_DIR = "~/preprints/PDFs"
+
+
+def default_pdf_dir() -> str:
+    """Where downloaded PDFs go: DATA_DIR/pdfs, else the desktop location.
+
+    Every other path this app writes is environment-driven; this one was not,
+    so in a container PDFs landed in the ephemeral home directory rather than on
+    the mounted volume — quietly contradicting what the Dockerfile and README
+    say about persistence.
+    """
+    import os
+
+    data_dir = os.environ.get("DATA_DIR")
+    if data_dir:
+        return str(Path(data_dir) / "pdfs")
+    return DEFAULT_PDF_DIR
+
+
 class PDFHandler:
     """Handle PDF download and text extraction."""
 
-    def __init__(self, output_dir: str = "~/preprints/PDFs"):
+    def __init__(self, output_dir: str = DEFAULT_PDF_DIR):
         """
         Initialize PDF handler.
 

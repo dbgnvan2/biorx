@@ -367,6 +367,24 @@ async function startSummary(paper, button) {
   $("summary-meta").textContent = "Starting…";
   $("summary-body").textContent = "";
 
+  // Ask whether someone has already summarized this paper. Summaries are shared
+  // per paper, so re-running one costs a model call for an answer we have.
+  try {
+    const stored = await api("POST", "/api/summaries/lookup", { paper });
+    renderStoredSummary(stored);
+    button.disabled = false;
+    button.textContent = "Summarize";
+    return;
+  } catch (e) {
+    if (e.status !== 404) {
+      notice(e.message);
+      button.disabled = false;
+      button.textContent = "Summarize";
+      return;
+    }
+    // 404 is the normal case: nothing stored yet, so run one.
+  }
+
   let job;
   try {
     job = await api("POST", "/api/summaries", { paper });
@@ -399,6 +417,23 @@ async function startSummary(paper, button) {
     }
   }, POLL_MS);
 }
+
+function renderStoredSummary(stored) {
+  let findings = [];
+  try { findings = JSON.parse(stored.key_findings || "[]"); }
+  catch (e) { findings = []; }
+  renderSummary(null, {
+    provider: "stored",
+    model: stored.model_version || "",
+    key_source: "none",
+    key_findings: findings,
+    methodology: stored.methodology,
+    conclusions: stored.conclusions,
+  });
+  $("summary-meta").textContent =
+    `Already summarized with ${stored.model_version || "an earlier model"} — not re-run.`;
+}
+
 
 function renderSummary(job, result) {
   const body = $("summary-body");

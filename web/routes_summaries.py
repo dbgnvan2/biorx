@@ -17,7 +17,8 @@ from src.crypto import KeyEncryptionUnavailable
 from src.jobs import Job, JobLookup
 from src.llm_config import summary_daily_cap
 from src.llm_providers import (
-    LLMError, NoLLMCredentialError, ProviderResponseError, resolve_client,
+    LLMError, NoLLMCredentialError, ProviderResponseError, _coerce_summary,
+    resolve_client,
 )
 from src.paper_meta import pdf_url
 
@@ -80,13 +81,13 @@ def _resolve_for(ctx: AppContext, user_id: str):
 
 def _extract_text(ctx: AppContext, paper: Dict[str, Any]) -> str:
     """Get text to summarize: the PDF if we can fetch it, else the abstract."""
-    from src.pdf_handler import PDFHandler
+    from src.pdf_handler import PDFHandler, default_pdf_dir
 
     url = pdf_url(paper)
     if not url:
         return ""
     try:
-        handler = PDFHandler()
+        handler = PDFHandler(default_pdf_dir())
         path = handler.download_pdf(url, paper.get("title", ""), paper.get("doi", ""))
         if path:
             return handler.extract_text(path) or ""
@@ -96,6 +97,30 @@ def _extract_text(ctx: AppContext, paper: Dict[str, Any]) -> str:
         logger.info("Could not extract PDF text for %s: %s",
                     paper.get("doi") or paper.get("canonical_id"), e)
     return ""
+
+
+def _paper_row_id(ctx: AppContext, paper: Dict[str, Any]) -> Optional[int]:
+    """The paper's row id, inserting it if it is new.
+
+    insert_paper() returns None for a paper already in the table — a duplicate
+    DOI is not an error, it is the normal case for anyone summarizing a paper a
+    colleague already saved. Treating None as failure meant the summary was
+    computed, billed and displayed, and then silently not stored.
+    """
+    paper_id = ctx.db.insert_paper(paper)
+    if paper_id:
+        return paper_id
+
+    doi = (paper.get("doi") or "").strip()
+    if doi:
+        existing = ctx.db.get_paper_by_doi(doi)
+        if existing:
+            return existing["id"]
+    logger.warning(
+        "Could not store or find the paper row for %s — the summary will not "
+        "be saved", paper.get("canonical_id") or paper.get("title", "")[:60],
+    )
+    return None
 
 
 def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
@@ -121,9 +146,15 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
                 raise ProviderResponseError(
                     f"{resolved.provider} returned no summary."
                 )
+            # And it does no validation of what it did return. Its text parser
+            # yields a dict of empty fields when the model answers in a shape it
+            # does not recognise, which would be stored as a successful summary
+            # and shown as a blank card. Put every provider through the same
+            # check the hosted ones use.
+            summary = _coerce_summary(summary)
 
             job.phase = "Saving"
-            paper_id = ctx.db.insert_paper(paper)
+            paper_id = _paper_row_id(ctx, paper)
             if paper_id:
                 ctx.db.insert_summary(
                     paper_id,
@@ -210,6 +241,31 @@ def summary_status(job_id: str,
     payload = job.to_dict()
     payload["result"] = job.result
     return payload
+
+
+@router.post("/api/summaries/lookup")
+def lookup_summary(body: SummaryRequest,
+                   ctx: AppContext = Depends(get_context),
+                   user_id: str = Depends(current_user)):
+    """Return an existing summary for this paper, or 404.
+
+    Summaries were being stored and never read back, so every Summarize re-ran
+    the model and re-billed a key for a paper someone had already done. One
+    summary per paper is shared by design (§2.5), so this is a straight saving.
+    """
+    doi = (body.paper.get("doi") or "").strip()
+    if not doi:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="No stored summary.")
+    existing = ctx.db.get_paper_by_doi(doi)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="No stored summary.")
+    summary = ctx.db.get_summary(existing["id"])
+    if not summary:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="No stored summary.")
+    return {"paper_id": existing["id"], **summary}
 
 
 @router.get("/api/papers/{paper_id}/summary")
