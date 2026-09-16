@@ -1,6 +1,6 @@
 # Implementation plan — the backlog after the web-app build
 
-**Status:** APPROVED 2026-09-16 with all §5 recommendations. N1 in progress.
+**Status:** APPROVED 2026-09-16 with all §5 recommendations. N1 done (d278e8d, gate APPROVED). Next: N2.
 **Source:** `TODO.md`, the six gate files in `docs/cycles/`, and the live smoke
 test run on 2026-09-16.
 

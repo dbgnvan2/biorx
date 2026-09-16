@@ -1,5 +1,19 @@
 # TODO
 
+> Items from 2026-09-15 are being reconciled and worked through in
+> `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
+
+## From the N1 gate (`docs/cycles/2026-09-16_n1-qa-gate.md`) — APPROVED
+
+- **F1 (low)** — the N1 rebuild recreates `papers` from its CREATE statement, so
+  any trigger, view, or explicit index on `papers` would be silently dropped.
+  None exists in this repo (the canonical_id index is created after the
+  rebuild), so no real database can hit it. If one is ever added, make the
+  rebuild refuse, or recreate them.
+- **Adjacent to N1** — `reference_list_items` deduplicates on `(list_id, doi)`;
+  NULLs are distinct, so a DOI-less paper can be added to the same reference
+  list more than once. Key it on `canonical_id` instead.
+
 Deferred items, with the reason each was not fixed when found. Nothing here is a
 blocker; each should land with a test.
 

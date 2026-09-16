@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-16 — papers without a DOI (N1)
+
+### Fixed
+- **Papers without a DOI can now be stored.** `papers.doi` was `NOT NULL`, so
+  every arXiv record and many PubMed and PsyArXiv records silently failed to
+  save — in the web app their summaries were paid for and lost, and in the
+  desktop app "save to database" skipped them. Identity is now `canonical_id`,
+  with a unique index; a paper with neither identifier is refused with a
+  warning.
+- Looking up an existing summary finds DOI-less papers, so re-opening an arXiv
+  summary no longer re-runs (and re-bills) the model.
+
+### Migration
+Existing databases are rebuilt once, on first open, to drop `NOT NULL` from
+`doi`. It runs in a single transaction with a row-count check, preserves every
+column and the id counter, and refuses to run on a table definition it does not
+recognise. Rehearsed on a copy of the live database (2,623 papers): identical
+content, 0.04s.
+
 ## 2026-09-16 — the web client and deployment
 
 ### Added
