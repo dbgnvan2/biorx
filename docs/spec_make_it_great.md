@@ -1,18 +1,35 @@
 # Making biorx GREAT — Differentiation Spec
 
-Status: proposal, revision 2 (review corrections applied). Date: 2026-09-16.
+Status: proposal, revision 3. Date: 2026-09-16.
 Audience: the coding agent + Dave.
 
 Thesis: biorx does not win by out-S2-ing Semantic Scholar (more papers, more
-citations). It wins by combining three things S2 structurally cannot offer —
+citations). It wins by combining things S2 structurally cannot offer —
 (a) native per-source search precision, (b) identity resolution across the
-preprint↔published divide, and (c) personalization (saved filters, monitoring,
-per-user summaries, full-text search over *your own* library). This spec is
-organized around the identity foundation, then those three pillars.
+preprint↔published divide, and (c) a personal research tool that runs on the
+user's own machine: saved filters, monitoring, summaries with the user's own
+model or key, and full-text search over *their own* library.
 
-**Naming.** Phases are `G0`–`G6` and items `G1.2` etc. They are deliberately not
-`P…`, which is the failure-pattern catalogue in `~/.claude/standards/learnings.md`.
-References to that catalogue below are written "learnings P35".
+**Naming.** Phases are `GL` and `G0`–`G6`; items are `G1.2` etc. They are
+deliberately not `P…`, which is the failure-pattern catalogue in
+`~/.claude/standards/learnings.md`. References to that catalogue are written
+"learnings P35".
+
+---
+
+## Decisions recorded (2026-09-16)
+
+| # | Decision |
+|---|---|
+| D1 | **Single-user, local.** Each person runs their own copy; all data stays on their machine. Not a multi-user cloud service. |
+| D2 | **Front end: the web UI, served locally** on `127.0.0.1` and opened in the user's browser. The PyQt GUI (`gui.py`) is frozen and retired once the web UI reaches parity (GL.5). |
+| D3 | **Platforms: macOS and Windows.** |
+| D4 | **Retire the Railway deployment** and the multi-user code: access code, session users, per-user encrypted keys in the database, owner-key spend cap, Dockerfile, `railway.json`, `docker-entrypoint.sh`. |
+| D5 | Europe PMC "both" field defaults to title/abstract; full-text search is an explicit option (G0.1). |
+| D6 | Scheduled runs never call a paid LLM automatically (G3.2). |
+
+Revision 2's G2 (per-user scoping) is removed: with one user per install there
+is nothing to scope.
 
 ---
 
@@ -24,14 +41,14 @@ Confirmed:
 
 - **OpenAlex is not a search adapter.** `src/sources/config.py` lists it with
   `enabled: False` and `SOURCE_LABELS` names it, but there is no
-  `src/sources/openalex.py`. OpenAlex *is* already called for one thing:
-  `src/paper_meta.py:fetch_openalex_abstract` (abstract recovery, N2).
+  `src/sources/openalex.py`. OpenAlex *is* already called for abstract recovery
+  (`src/paper_meta.py:fetch_openalex_abstract`, N2).
 - **Dedup is hand-rolled** in `src/sources/dedup.py`. Identity precedence is
-  normalized DOI → PMID → PMCID → title + first-author surname + year. The title
-  key does no Unicode (NFKC) normalization. There is no arXiv-id index.
+  normalized DOI → PMID → PMCID → title + first-author surname + year. No NFKC
+  normalization; no arXiv-id index.
 - **Ranking has no citation signal and no relevance signal.**
   `orchestrator._rank()` is trust weight + DOI + abstract + OA − retraction
-  penalty. The source's own relevance order is not an input.
+  penalty.
 - **No citation graph, no related-papers, no "cited by".**
 - **`psyarxiv.py` and `socarxiv.py` are near-identical** (diff: docstrings,
   class name, provider slug).
@@ -39,38 +56,40 @@ Confirmed:
 Corrections to revision 1:
 
 - **`canonical_id` is not "`doi:`-or-nothing".** `make_canonical_id`
-  (`src/sources/schema.py:153`) already falls back DOI → PMID → PMCID →
-  title hash, and the arXiv adapter sets `arxiv:<id>`. Since N1 (`d278e8d`),
-  `canonical_id` is the unique database identity of a paper. Revision 1's plan to
-  replace it with an OpenAlex id "when available" is withdrawn — see G1.1.
-- **Europe PMC is not searched "as abstracts only".** It is already searched
-  across full text, unintentionally. The query builder sends the "both" field as
-  bare terms (`query_builder.py:55`, whose comment claims bare terms match title
-  or abstract). Live check, 2026-09-16:
+  (`src/sources/schema.py:153`) falls back DOI → PMID → PMCID → title hash; the
+  arXiv adapter sets `arxiv:<id>`. Since N1 (`d278e8d`) it is the unique database
+  identity of a paper. Replacing it with an external id is withdrawn (G1.1).
+- **Europe PMC is already searched across full text, unintentionally.** The
+  query builder sends the "both" field as bare terms (`query_builder.py:55`,
+  whose comment claims title-or-abstract). Live check, 2026-09-16:
   `ketamine AND "default mode network"` → **1,577** hits;
-  `TITLE_ABS:(ketamine AND "default mode network")` → **54** hits.
-  Revision 1's "add a full-text toggle" is inverted; the real work is G0.1.
-- **The app is not per-user below the filter level.** `papers`, `bookmarks`,
-  `reference_lists` and `reference_list_items` have no `user_id`.
-  `summaries.paper_id` is `UNIQUE`: one summary per paper for everyone, replaced
-  by a later run (`created_by_user_id` records whose run is current). "Private
-  summaries" and "your own library" need G2 before they are true.
+  `TITLE_ABS:(ketamine AND "default mode network")` → **54**.
 - **The retrieval layer is locked by a test.** `tests/web/test_no_retrieval_drift.py`
   fails on any change to the orchestrator, dedup, query builder, schema and
-  adapters since baseline `a3769ef` (plan 2026-09-15, W1.a). Several items here
-  change those files. See §4.
-- **Ollama is not available to the deployed web app.** `llm_config.yaml` points
-  Ollama at `localhost:11434`, which does not exist inside the Railway container.
-- **Nothing stores extracted PDF text.** `pdf_handler.extract_text` runs on
-  demand; there is no text table.
+  adapters since baseline `a3769ef`. See §4.
+- **Nothing stores extracted PDF text.** `pdf_handler.extract_text` runs on demand.
+
+Facts that shape the local conversion:
+
+- **The web UI does not yet do what the desktop GUI does.** Web routes today:
+  filters CRUD, searches (start/poll/results/cancel), summaries
+  (start/poll/lookup/get), session and LLM key. Desktop-only: paper detail view
+  (abstract, discussion, open PDF/page, load local PDF), PDF download (single,
+  selected, all, stop), saved reference lists (save selection, view, remove,
+  delete list), Excel export, filter editor extras (OR groups, test filter,
+  save-as), run-selected / run-all-enabled.
+- **Two filter stores exist.** Desktop: `filters.json`. Web: the `user_filters`
+  table.
+- **Data location** defaults to `~/preprints/` (`src/db.py:26`,
+  `src/pdf_handler.py:15`), overridable by `BIORX_DB_PATH` / `DATA_DIR`.
 
 To verify before building on it (not checked):
 
-- **OpenAlex access terms.** Revision 1 said "no key, generous limits". OpenAlex
-  may since have moved to keyed access with a free daily allowance. Check the
-  current docs before G1.3/G5.1.
+- **OpenAlex access terms.** It may now require an API key with a free daily
+  allowance. Check before G1.3/G5.1.
 - **Which preprint servers are still on OSF.** ChemRxiv, EarthArXiv and engrXiv
-  may have left OSF. Use the live list at `https://api.osf.io/v2/preprint_providers/`.
+  may have left. Use `https://api.osf.io/v2/preprint_providers/`.
+- **SQLite FTS5 in the Windows Python build.** Expected present; confirm in CI.
 
 ---
 
@@ -82,17 +101,16 @@ Add a link to each row before this section is cited anywhere else.
 
 | # | Complaint | Source (unlinked) | biorx's answer |
 |---|---|---|---|
-| C1 | Rate limits are a bottleneck — ~1 req/s with a key; projects hit 429s and add a second provider | GitHub issue, SakanaAI/AI-Scientist | Use S2/OpenAlex for sparse lookups only, never the search path |
-| C2 | Weak coverage of social sciences vs Google Scholar | Reddit r/research | biorx already queries PsyArXiv/SocArXiv natively; add more OSF servers (G4.1) |
-| C3 | Older, highly cited papers dominate results. (S2's default sort is relevance, not citation count; the complaint is that citations weigh heavily in it.) | blog post, Quora | Citations as one bounded signal, recency as another, never alone (G5.1) |
+| C1 | Rate limits — ~1 req/s with a key; projects hit 429s | GitHub issue, SakanaAI/AI-Scientist | S2/OpenAlex for sparse lookups only, never the search path |
+| C2 | Weak social-science coverage vs Google Scholar | Reddit r/research | Native PsyArXiv/SocArXiv; more OSF servers (G4.1) |
+| C3 | Older, highly cited papers dominate. (S2's default sort is relevance; the complaint is that citations weigh heavily in it.) | blog post, Quora | Citations as one bounded signal, with recency (G5.1) |
 | C4 | Fewer results than Google Scholar / nothing relevant | Reddit r/academia | Native multi-source + `sources_failed` transparency; library search (G5.3) |
 | C5 | UI complaints | Reddit r/research | Product decision, not code |
-| C6 | Retrieval returns metadata, not full text | Reddit r/Rag | biorx downloads PDFs and extracts text locally (already does) |
+| C6 | Retrieval returns metadata, not full text | Reddit r/Rag | Local PDF download and text extraction (already does) |
 | C7 | No saved-search monitoring or personalization | (absence) | Saved filters + monitoring with deltas (G3) |
 
-The main observation stands regardless of the individual rows: **S2 has no
-notion of "you".** biorx remembers what a user is looking for and can tell them
-when something new appears.
+**S2 has no notion of "you".** biorx remembers what a user is looking for, keeps
+their library on their machine, and tells them when something new appears.
 
 ---
 
@@ -101,33 +119,43 @@ when something new appears.
 1. **Native source queries** — Lucene with species clauses (Europe PMC/PubMed),
    date-windowed streams (bioRxiv/medRxiv).
 2. **Source-trust ranking** with retraction penalty.
-3. **Local summarization** (Ollama on the desktop; DeepSeek/Anthropic as paid
-   providers, which is what the web app uses).
+3. **Local-first summarization** — Ollama on the user's machine; DeepSeek or
+   Anthropic with the user's own key.
 4. **PDF download + local full-text extraction.**
-5. **Saved filters + monitoring** (`agents/monitor.py`, cron-driven).
+5. **Saved filters + monitoring.**
 6. **Transparency** — `sources_failed`, "empty ≠ quiet week", retraction flags.
 7. **Stable paper identity** — a stored paper keeps its `canonical_id` (N1).
+8. **The user's data stays on the user's machine.** No telemetry, no hosted copy.
 
 ---
 
-## 3. Prerequisite: the approved backlog
+## 3. Prerequisite: the approved backlog, re-scoped by D1–D4
 
-`docs/implementation_plan_2026-09-16_backlog.md` is approved and in progress
-(N1, N2 done; batch H next). Batches C and D change the same adapters this spec
-changes. **Finish backlog batches H, A, D and C before G1.** Batches B, E, F, G
-and I are independent and can interleave.
+`docs/implementation_plan_2026-09-16_backlog.md` is approved and in progress (N1,
+N2 done; batch H next). D1–D4 change some of its batches. The backlog plan must
+be amended (a separate commit, with Dave's approval) as follows:
+
+| Batch | Effect of D1–D4 |
+|---|---|
+| H (CI) | Matrix becomes `macos-latest` + `windows-latest`. Contact-address item unchanged. |
+| A (dead code) | `crypto.mask()` removal becomes part of GL.4, which removes `crypto.py`. Rest unchanged. |
+| B (desktop `llm.py`) | Unchanged — the legacy summarizer is still used by `agents/`. |
+| C, D (adapters, arXiv, monitor CLI) | Unchanged. |
+| E (tests) | Constant-time access-code test is dropped with the access code (GL.3). Env-var test unchanged. |
+| F (container and access) | Entrypoint hint, session rate limit and "created_by_user_id" decision are dropped. CSP header is kept (still useful on localhost). Per-user job cap becomes a global job cap. |
+| G (desktop threading) | Dropped once `gui.py` is retired; do only if the GUI stays in use for long before parity. |
+| I (standards repo) | Unchanged. |
+
+**Finish backlog H, A, D and C before G1** — D and C change the same adapters.
 
 ---
 
 ## 4. The retrieval lock
 
 Items marked **[unlocks W1.a]** change files protected by
-`tests/web/test_no_retrieval_drift.py`. For each such item, the commit:
-
-- updates `BASELINE` in that test to the new commit's parent, and
-- says in the commit message which protected file changed and why.
-
-The lock stays in place; it is re-baselined deliberately, one item at a time,
+`tests/web/test_no_retrieval_drift.py`. For each such item, the commit updates
+`BASELINE` in that test to the new commit's parent and says in its message which
+protected file changed and why. The lock is re-baselined one item at a time,
 never removed.
 
 ---
@@ -137,214 +165,287 @@ never removed.
 ### G0 — Search precision bug (small, do first)
 
 **G0.1 Europe PMC "both" field searches full text by accident.** [unlocks W1.a]
-Send "both" terms as `TITLE_ABS:` in `_group_to_lucene`, and fix the comment.
-Offer full-text search as an explicit per-filter option (`search_full_text`,
-default off) that sends bare terms, so the high-recall behaviour is kept for
-users who want it.
-- Existing saved filters change behaviour (fewer hits). Announce it in the
-  changelog and README; do not migrate filters silently.
-- Check the PubMed adapter, which shares `build_europepmc_query`, for the same
-  field semantics.
-- Acceptance: a query-builder test asserting `TITLE_ABS:` for the default and a
-  bare term with `search_full_text`; a recorded live hit-count comparison noted
-  in the gate file (integration-only, flagged as such).
+Per D5: send "both" terms as `TITLE_ABS:` in `_group_to_lucene`, fix the comment,
+and add a per-filter `search_full_text` option (default off) that sends bare
+terms.
+- Existing saved filters return fewer hits. Announce it in the changelog and
+  README; do not change saved filters silently.
+- Check the PubMed adapter, which shares `build_europepmc_query`.
+- Acceptance: `test_g0_1_both_field_uses_title_abs_by_default`;
+  `test_g0_1_full_text_option_sends_bare_terms`; live hit-count comparison
+  recorded in the gate file (integration-only, flagged as such).
+
+### GL — Local single-user app (D1–D4)
+
+**GL.1 Local launcher.** One command (`biorx`, plus a double-clickable launcher
+per OS, GL.6) starts the server on `127.0.0.1`, picks a free port if the default
+is taken, and opens the browser.
+- Prints the effective URL, port, data directory and database path on startup
+  (learnings P16).
+- Data directory: if `~/preprints/` exists, keep using it (no data moves). Else
+  the OS-standard location (`platformdirs`: `~/Library/Application Support/biorx`
+  on macOS, `%LOCALAPPDATA%\biorx` on Windows). `BIORX_DB_PATH` / `DATA_DIR`
+  still override. All paths through `pathlib`; no hardcoded `/` or `~` strings.
+- A second launch while one is running opens the browser on the running
+  instance instead of starting another server on the same database.
+- Acceptance: `test_gl_1_existing_preprints_dir_is_kept`;
+  `test_gl_1_platform_default_when_absent` (both OS branches, patched);
+  `test_gl_1_port_in_use_picks_another_and_reports_it`;
+  `test_gl_1_second_launch_reuses_running_instance`.
+
+**GL.2 Local-server security (replaces the access code).** A server on localhost
+without a login is reachable by any web page the user visits, through their
+browser (cross-site requests, DNS rebinding). So:
+- Bind `127.0.0.1` only, never `0.0.0.0`.
+- Reject requests whose `Host` header is not `127.0.0.1:<port>` or
+  `localhost:<port>`.
+- A random token is generated per launch, put in the URL the launcher opens,
+  exchanged for a `SameSite=Strict`, `HttpOnly` cookie, and required on every
+  `/api` route. No CORS headers.
+- Acceptance: `test_gl_2_foreign_host_header_is_refused`;
+  `test_gl_2_api_without_token_is_401` (every protected route, exact route count
+  as in the existing route-auth test); `test_gl_2_server_binds_loopback_only`.
+
+**GL.3 Remove the multi-user and cloud code.**
+- Delete `Dockerfile`, `railway.json`, `docker-entrypoint.sh`,
+  `tests/web/test_deploy_files.py`, and the README deploy section.
+- Remove the access code, `/api/session` user creation, display names, and the
+  owner-key spend cap (`usage_events` counting against a cap). Keep an optional
+  local record of LLM calls if useful for the user's own cost tracking — a
+  decision for the plan, not required.
+- Schema: no destructive migration. Existing `user_id` columns stay; the code
+  uses one fixed `LOCAL_USER_ID`. Rows written under any earlier web user id are
+  reassigned to it once, with counts logged before and after.
+- Acceptance: `test_gl_3_no_access_code_setting_remains` (config/env scan by
+  parsed settings, not substring); `test_gl_3_existing_user_rows_are_reassigned`
+  (populated DB, exact counts); the removed routes return 404.
+
+**GL.4 API keys in the OS credential store.** Store DeepSeek/Anthropic keys with
+`keyring` (macOS Keychain, Windows Credential Manager). Environment variables
+still take precedence. No key, and no part of one beyond the last 4 characters
+for display, is stored in the database.
+- Migration: if a key is stored encrypted in the database and the secret to
+  decrypt it is available, move it into `keyring` and clear the column; otherwise
+  clear the column and ask the user to re-enter the key, saying why.
+- Then remove `src/crypto.py` and its tests.
+- If `keyring` has no usable backend, say so and fall back to env vars only —
+  never to plaintext on disk.
+- Acceptance: `test_gl_4_key_is_saved_to_keyring_not_db`;
+  `test_gl_4_env_var_overrides_keyring`; `test_gl_4_db_key_migrates_and_column_is_cleared`;
+  `test_gl_4_no_backend_does_not_write_plaintext`.
+
+**GL.5 Feature parity, then retire `gui.py`.** Build the desktop-only features
+(§0) into the web UI. The plan must contain a parity table with one row per
+feature and a test per row, asserting the front end actually passes each control
+through to the backend (learnings P25).
+- Unify filters: one store (the database). On first launch, import
+  `filters.json` once, reporting "imported N of M"; duplicates by name are kept
+  and renamed, not dropped.
+- Reference lists: fix `reference_list_items UNIQUE(list_id, doi)`, which allows
+  unlimited duplicates of papers without a DOI (the N1 class); key on
+  `canonical_id`.
+- `gui.py` stays runnable and frozen (bug fixes only) until every parity row is
+  done, then is removed with `run_gui.sh` and PyQt from requirements.
+- Acceptance: the parity table's tests; `test_gl_5_filters_json_imported_once`
+  (dirty state: second launch imports nothing);
+  `test_gl_5_doi_less_paper_added_twice_is_one_item`.
+
+**GL.6 Install and launch on macOS and Windows.** Scripted install per OS
+(`install.sh`, `install.ps1`) that installs a pinned Python environment, the
+dependencies and a launcher (a `.command` file on macOS, a Start-menu/desktop
+shortcut on Windows). Optional Ollama is detected and explained, not required.
+- A packaged app (PyInstaller `.app`/`.exe`, signing, notarization) is out of
+  scope for this revision; see §7 open decision O1.
+- Acceptance: CI job per OS runs the install script on a clean runner, launches
+  the server, and calls a health route (integration); written install
+  instructions tested once by hand on each OS (human review).
+
+**GL.7 CI on both platforms.** GitHub Actions matrix `macos-latest` and
+`windows-latest` running the full suite (amends backlog batch H). Every check
+lives in the suite, not the workflow.
 
 ### G1 — Identity foundation
 
-**G1.1 Keep `canonical_id` stable; store other ids beside it.**
-Add nullable columns `arxiv_id` and `openalex_id` to `papers` via
-`_add_column_if_missing`, with indexes. `canonical_id` is set once when a paper
-is first stored and never rewritten by enrichment. Lookups (summaries, lists)
-may resolve through any stored id.
-- Rule: identity must not depend on whether an external call succeeded
-  (learnings P1). A failed OpenAlex lookup leaves the paper exactly as it was.
+**G1.1 Keep `canonical_id` stable; store other ids beside it.** Add nullable
+`arxiv_id` and `openalex_id` columns to `papers` via `_add_column_if_missing`,
+indexed. `canonical_id` is set once when a paper is first stored and never
+rewritten by enrichment. Lookups may resolve through any stored id.
+- Identity must not depend on whether an external call succeeded (learnings P1).
 - Acceptance: `test_g1_1_canonical_id_unchanged_after_enrichment`;
-  `test_g1_1_lookup_by_arxiv_id_finds_doi_keyed_paper`; a dirty-state test on a
+  `test_g1_1_lookup_by_arxiv_id_finds_doi_keyed_paper`; dirty-state test on a
   populated DB (learnings P8).
 
-**G1.2 Dedup additions within one search.** [unlocks W1.a]
-In `dedup.py`: add an arXiv-id index after PMCID (normalize `arXiv:2106.12345v2`
-→ `2106.12345`), and NFKC-normalize `_norm_title`. **No ±1-year tolerance** — it
-merges corrections, errata and conference abstracts with their articles.
+**G1.2 Dedup additions within one search.** [unlocks W1.a] Add an arXiv-id index
+after PMCID (normalize `arXiv:2106.12345v2` → `2106.12345`) and NFKC-normalize
+`_norm_title`. **No ±1-year tolerance** — it merges corrections, errata and
+conference abstracts with their articles.
 - Acceptance: `test_g1_2_arxiv_prefix_and_version_dedup`;
   `test_g1_2_nfkc_title_match`; adversarial
   `test_g1_2_correction_notice_does_not_merge_with_article`.
 
 **G1.3 Link preprints to published versions; do not merge them.** [unlocks W1.a]
-A preprint and its published article stay separate records. Add a
-`paper_links` table (`from_canonical_id`, `to_canonical_id`, `relation`
-= `published_as`, `source`, `found_at`). The UI shows "Published as …" /
-"Preprint version …" on each.
+Add a `paper_links` table (`from_canonical_id`, `to_canonical_id`, `relation` =
+`published_as`, `source`, `found_at`). The UI shows "Published as …" /
+"Preprint version …".
 - Why not merge: `_merge` makes `is_preprint` sticky, so a merged article would
-  be labelled a preprint; and the two versions can differ in content.
-- Sources, cheapest and most deterministic first:
-  1. bioRxiv/medRxiv API `published` field (DOI of the published version).
-  2. Crossref `relation.is-preprint-of` / `has-preprint`.
-  3. OpenAlex, only if 1–2 give nothing, and only after its terms are verified (§0).
-- A failed lookup records nothing and is retryable; it is never stored as
-  "no published version" (learnings P1).
-- Acceptance: `test_g1_3_biorxiv_published_doi_creates_link` (real recorded
-  bioRxiv response fixture); `test_g1_3_linked_versions_remain_two_rows`;
+  be labelled a preprint; the versions can also differ in content.
+- Sources, cheapest first: (1) bioRxiv/medRxiv API `published` field;
+  (2) Crossref `relation.is-preprint-of` / `has-preprint`; (3) OpenAlex, only if
+  1–2 give nothing and its terms are verified.
+- A failed lookup records nothing and stays retryable; never "no published
+  version" (learnings P1).
+- Acceptance: `test_g1_3_biorxiv_published_doi_creates_link` (recorded real
+  response); `test_g1_3_linked_versions_remain_two_rows`;
   `test_g1_3_lookup_failure_writes_no_link`.
-
-### G2 — Per-user scoping (prerequisite for every "your library" feature)
-
-**G2.1 Decide the sharing model.** Needs a decision from Dave before planning:
-- (a) Papers stay a shared catalogue; bookmarks, reference lists and summaries
-  become per-user. (Recommended — papers are public metadata.)
-- (b) Everything per-user.
-- Summaries under (a): per-user rows (`UNIQUE(paper_id, user_id)`), or shared
-  summaries with a per-user "mine" view. Summaries cost money on the owner key,
-  so sharing them saves spend; per-user matches the "private" claim.
-
-**G2.2 Implement the chosen model.** Add `user_id` to `bookmarks`,
-`reference_lists` (items inherit through `list_id`), and summaries per G2.1, via
-additive migration. Existing rows (desktop, no user) get a fixed `local` user id.
-- Fix in the same change: `reference_list_items` has `UNIQUE(list_id, doi)`,
-  which allows unlimited duplicates of DOI-less papers (the N1 class). Key it on
-  `canonical_id`.
-- Acceptance: `test_g2_2_user_a_cannot_see_user_b_list` (web route);
-  `test_g2_2_doi_less_paper_added_twice_is_one_item`; migration test on a
-  populated DB with exact before/after row counts.
 
 ### G3 — Monitoring (the differentiator; attacks C7)
 
-**G3.1 New-since-last-run.** Store, per filter, the set of `canonical_id`s its
-last run produced, plus that run's `complete` flag (true only if no source
-failed) and the id-scheme version.
-- If the previous run was incomplete, or this run is incomplete, report results
-  as "new since last complete run" against the last complete baseline, and say
-  so. Never report a paper as new only because the baseline could not be read,
-  and never treat a paper missing from an incomplete run as removed
-  (learnings P35, P31).
-- If the id-scheme version changed (any G1 change to how ids are derived), the
-  first run after it re-baselines and reports "baseline reset", not N new papers.
+**G3.1 New-since-last-run.** Store, per filter, the `canonical_id`s its last run
+produced, that run's `complete` flag (true only if no source failed), and the
+id-scheme version.
+- If either run is incomplete, compare against the last *complete* run and say
+  so. Never report a paper as new only because the baseline could not be read;
+  never treat a paper missing from an incomplete run as removed (learnings P35,
+  P31).
+- If the id-scheme version changed (any G1 change), the first run after it
+  reports "baseline reset", not N new papers.
 - A preprint whose published version appears is reported as "now published",
-  not as a new paper (uses G1.3).
+  not as new (uses G1.3).
 - Acceptance: `test_g3_1_failed_source_does_not_inflate_new_count`;
   `test_g3_1_first_run_after_id_change_reports_reset`;
   `test_g3_1_second_run_reports_only_additions` (dirty state).
 
-**G3.2 Scheduled searches in the web app.** Per-user schedules persisted in a
-`filter_schedules` table (`filter_id`, `cadence`, `last_run_at`, `next_run_at`).
-An in-process scheduler reads that table at startup, so a redeploy delays a run
-but does not lose it; a run missed during downtime runs once on startup.
-- Results appear in an in-app "new since last run" feed. There is no email:
-  there are no accounts (§6), so a user sees alerts only when they visit.
-- Assumes one container. If Railway is ever scaled to more than one replica,
-  runs duplicate; a row-level claim (`UPDATE … WHERE next_run_at = ?`) guards it.
-- Scheduled runs never call a paid LLM automatically.
-- Acceptance: `test_g3_2_schedule_survives_restart`;
-  `test_g3_2_missed_run_executes_once`; `test_g3_2_scheduled_run_spends_nothing`.
+**G3.2 Scheduled searches on a machine that is not always on.** Schedules live in
+a `filter_schedules` table (`filter_id`, `cadence`, `last_run_at`,
+`next_run_at`). Two triggers, one code path:
+1. **On launch:** any schedule that is due runs once (catch-up), in the
+   background, with progress shown.
+2. **Optional OS scheduler:** the user can turn on a background entry — a
+   launchd agent on macOS, a Task Scheduler task on Windows — that runs a
+   headless `biorx run-due` command while the app is closed. Turning it off
+   removes the entry.
+- Both triggers claim a run with a conditional database update
+  (`UPDATE … WHERE next_run_at = ?`), so the app and the OS task never run the
+  same schedule twice.
+- Results appear in the in-app "new since last run" feed. An OS notification
+  ("3 new papers for <filter>") is optional.
+- Per D6, scheduled runs never call a paid LLM.
+- Acceptance: `test_g3_2_due_schedule_runs_once_on_launch`;
+  `test_g3_2_concurrent_triggers_run_once`;
+  `test_g3_2_scheduled_run_calls_no_llm`;
+  `test_g3_2_os_entry_install_and_remove` (command construction per OS, patched;
+  the real registration is integration-only).
 
-**G3.3 Summarize the new arrivals.** One click on the feed summarizes the N new
-papers through the existing providers and spend cap. Depends on G2 for whose
-summaries they are.
-- Acceptance: `test_g3_3_batch_summary_respects_owner_cap` (the (N+1)th is
-  refused, not billed).
+**G3.3 Summarize the new arrivals.** One action on the feed summarizes the N new
+papers with the user's chosen provider. Before running, show N, the provider and
+model, and — for paid providers — that N calls will be billed to the user's key;
+the user confirms.
+- Acceptance: `test_g3_3_batch_requires_confirmation_for_paid_provider`;
+  `test_g3_3_one_failure_does_not_stop_the_batch_and_is_reported`.
 
-**G3.4 Citation export.** BibTeX, RIS and CSL-JSON from a reference list.
-Depends on G2.2.
-- Papers without a DOI export with their other ids (arXiv, PMID) or URL; none is
-  silently skipped. Report "exported N of M" if any cannot be written.
-- Acceptance: round-trip test parsing each exported format back and comparing
-  entry count to list size (learnings P19); `test_g3_4_doi_less_paper_exports`.
+**G3.4 Citation export.** BibTeX, RIS and CSL-JSON from a reference list,
+alongside the existing Excel export.
+- Papers without a DOI export with arXiv id, PMID or URL; none is silently
+  skipped. Report "exported N of M" if any cannot be written.
+- Acceptance: round-trip test parsing each format back, entry count equals list
+  size (learnings P19); `test_g3_4_doi_less_paper_exports`.
 
 ### G4 — Coverage (attacks C2)
 
-**G4.1 One OSF adapter, parameterized by provider.** [unlocks W1.a]
-Replace `psyarxiv.py` and `socarxiv.py` with `osf.py` taking a provider slug;
-keep the `psyarxiv` / `socarxiv` source names so saved filters still work.
-Enable additional servers from the verified OSF provider list (§0), one config
-entry each.
-- OSF has no server-side text search: adapters page by date and filter client
-  side. Each extra server multiplies pages fetched. Log "fetched N pages, kept M
-  of K records" per server, and apply the existing page cap per server with the
-  drop announced (learnings P9).
-- Acceptance: the existing PsyArXiv/SocArXiv adapter tests pass unchanged against
+**G4.1 One OSF adapter, parameterized by provider.** [unlocks W1.a] Replace
+`psyarxiv.py` and `socarxiv.py` with `osf.py` taking a provider slug; keep the
+`psyarxiv` / `socarxiv` source names so saved filters still work. Enable more
+servers from the verified OSF list, one config entry each.
+- OSF has no server-side text search; adapters page by date and filter client
+  side. Log "fetched N pages, kept M of K records" per server and announce any
+  page cap (learnings P9).
+- Acceptance: existing PsyArXiv/SocArXiv adapter tests pass unchanged against
   `osf.py`; `test_g4_1_saved_filter_with_psyarxiv_still_runs`.
 
 ### G5 — Relevance & discovery (attacks C3, C4, C6)
 
 **G5.1 Citation count and recency in ranking.** [unlocks W1.a]
-Define the score before building it:
-- Relevance input: each record's position in its source's own result order
-  (normalized per source), since `_rank()` currently has none.
-- Citations: `log1p(cited_by_count)`, capped in weight. A record whose lookup
-  failed has citations = unknown and receives the neutral value, not zero
-  (learnings P1/P35).
-- Recency: exponential decay by age, with half-life in config.
-- All weights in `sources_config.yaml`, not code. Retraction penalty stays larger
-  than any positive signal.
-- Citation lookups are batched (OpenAlex filter with piped DOIs, up to its
-  per-request limit), cached via `src/sources/cache.py`, and time-boxed; ranking
-  proceeds without them if they fail.
-- Acceptance: adversarial `test_g5_1_old_highly_cited_irrelevant_paper_ranks_below_recent_relevant`;
+- Relevance input: each record's position in its source's own result order,
+  normalized per source.
+- Citations: `log1p(cited_by_count)`, capped in weight. A failed lookup is
+  unknown and gets the neutral value, not zero (learnings P1/P35).
+- Recency: exponential decay by age, half-life in config.
+- All weights in `sources_config.yaml`. Retraction penalty stays larger than any
+  positive signal.
+- Citation lookups are batched, cached via `src/sources/cache.py`, and
+  time-boxed; ranking proceeds without them if they fail.
+- Acceptance: adversarial
+  `test_g5_1_old_highly_cited_irrelevant_paper_ranks_below_recent_relevant`;
   `test_g5_1_failed_lookup_is_neutral_not_zero`;
   `test_g5_1_retracted_paper_ranks_last_regardless_of_citations`;
   `test_g5_1_weights_come_from_config`.
 
-**G5.2 "Cited by" and "Related".** Lazy, per-paper lookups when a paper is
-opened (OpenAlex `cited_by` / `related_works`, or S2 recommendations), cached.
-No crawling. A failed lookup shows "couldn't load", never "no citations".
+**G5.2 "Cited by" and "Related".** Lazy, cached per-paper lookups when a paper is
+opened (OpenAlex `cited_by` / `related_works`, or S2 recommendations). A failed
+lookup shows "couldn't load", never "no citations".
 - Acceptance: `test_g5_2_lookup_failure_is_distinct_from_empty`.
 
-**G5.3 Search within the saved library.** Two steps:
-1. Persist extracted text: a `paper_text` table (`paper_id`, `text`,
-   `extracted_at`, `pages`), written when a PDF is extracted. Index it and
-   abstracts with SQLite FTS5 for keyword search. Works in both desktop and web.
-2. Semantic search with embeddings — **desktop only** unless an embedding
-   provider is added to the web deployment. On the desktop, `nomic-embed-text`
-   via Ollama, vectors in SQLite, brute-force cosine. No vector database.
-- Scoped to the user's library as defined by G2.
+**G5.3 Search within the library.**
+1. Persist extracted text in a `paper_text` table (`paper_id`, `text`,
+   `extracted_at`, `pages`), written when a PDF is extracted, and index it with
+   abstracts in SQLite FTS5. Works for every user.
+2. Semantic search, available when Ollama is installed: `nomic-embed-text`
+   embeddings stored in SQLite, brute-force cosine. Without Ollama the option is
+   shown as unavailable with the reason. No vector database.
 - Acceptance: `test_g5_3_extracted_text_is_persisted`;
-  `test_g5_3_fts_finds_term_only_in_full_text`; step 2 flagged integration-only.
+  `test_g5_3_fts_finds_term_only_in_full_text`;
+  `test_g5_3_semantic_search_reports_missing_ollama`; embedding quality is
+  integration-only, flagged.
 
 ### G6 — Hardening
 
-**G6.1 Backups.** A nightly job copies `biorxiv.db` to object storage (R2/S3)
-using SQLite's backup API or `VACUUM INTO` — never a raw file copy of a live
-database. Optionally `PDFs/`. Write restore instructions and test a restore.
-- The database holds users' encrypted LLM keys. The encryption key must not be
-  stored in the backup bucket or its credentials.
-- Retention and failure alerting in config; a failed backup is logged as an
-  error and visible on a health/status route.
-- Acceptance: `test_g6_1_backup_of_db_under_write_is_consistent`
-  (open the copy, `PRAGMA integrity_check`, row counts match);
-  `test_g6_1_backup_contains_no_encryption_key`; restore drill recorded
-  (human review).
+**G6.1 Local backups.** Back up the database to a folder the user chooses (which
+may be a synced folder such as iCloud Drive or OneDrive), on launch when the last
+backup is older than a configured number of days, and on demand.
+- Use SQLite's backup API or `VACUUM INTO`, never a raw file copy of a live
+  database. PDFs optional (they can be re-downloaded).
+- Keep the last N backups (config). A failed backup is shown in the UI, not only
+  logged.
+- After GL.4 the database holds no API keys; the test below guards that.
+- Restore: a documented, tested "restore from backup" action.
+- Acceptance: `test_g6_1_backup_during_writes_is_consistent`
+  (`PRAGMA integrity_check`, exact row counts);
+  `test_g6_1_backup_contains_no_api_key`; `test_g6_1_restore_round_trip`;
+  `test_g6_1_retention_keeps_n`.
 
 ---
 
 ## 6. What is deliberately *not* in this spec
 
-- **Full S2 corpus replacement.** biorx needs the right papers for this user,
-  not 214M papers.
-- **Accounts/SSO/permissions.** Out of scope (README). A shared access code plus
-  opaque user ids fits a few colleagues. Consequence: no email alerts (G3.2).
-- **A vector database.** G5.3 ships on SQLite.
-- **Merging preprints with published versions.** They are linked (G1.3).
-- **Replacing `canonical_id`** with an external id (G1.1).
-- **Becoming Google Scholar.** biorx's value is known sources, reproducible
-  queries, and honest "I found nothing."
+- **Hosting, multi-user access, accounts.** D1, D4.
+- **Sync or sharing between colleagues.** Each install is independent. Sharing a
+  filter or reference list by exporting a file is a possible later item.
+- **A packaged, signed installer.** Open decision O1.
+- **Full S2 corpus replacement**, **a vector database**, **merging preprints with
+  published versions**, **replacing `canonical_id`**, **becoming Google Scholar.**
 
 ---
 
-## 7. Build order
+## 7. Open decisions
+
+| # | Question | Recommendation |
+|---|---|---|
+| O1 | Install method for colleagues: scripted install (GL.6), or a packaged `.app`/`.exe` | Scripted install first. A packaged app needs code signing (Apple Developer account, Windows certificate) to avoid OS security warnings; do it only if colleagues cannot manage the script. |
+| O2 | Keep the legacy CLI agents (`agents/search_agent.py`, `summarization_agent.py`, `monitor.py`) or fold them into `biorx run-due` and friends | Fold `monitor.py` into `biorx run-due` (G3.2); decide the other two in the plan. |
+| O3 | Record the user's own LLM calls locally for cost tracking (GL.3) | Yes, as a simple history with no cap. |
+
+---
+
+## 8. Build order
 
 | # | Item | Why here |
 |---|---|---|
-| 1 | Backlog H, A, D, C | Approved and in progress; D/C touch the same adapters (§3) |
-| 2 | G0.1 | A live precision bug in every Europe PMC/PubMed search |
-| 3 | G1.1, G1.2, G1.3 | Identity must be settled before deltas depend on it |
-| 4 | G2.1 decision, G2.2 | Every "your library" feature depends on it |
-| 5 | G3.1, then G3.2 | The main differentiator; G3.1 needs G1 settled |
-| 6 | G6.1 | Before other users rely on scheduled data |
-| 7 | G5.1 | Visible improvement; needs OpenAlex terms verified |
-| 8 | G3.3, G3.4, G4.1, G5.2, G5.3 | As time allows |
-
-## 8. Decisions needed from Dave
-
-1. G2.1 — sharing model (a or b), and per-user vs shared summaries.
-2. G0.1 — confirm default "both" = title/abstract, with full text as an option.
-3. G3.2 — confirm no automatic paid summarization on scheduled runs.
+| 1 | Amend backlog plan (§3); backlog H (macOS + Windows CI), A, D, C | In progress; D/C touch the same adapters |
+| 2 | G0.1 | Live precision bug in every Europe PMC/PubMed search |
+| 3 | GL.1, GL.2, GL.3, GL.4 | The local app is the platform everything else ships on |
+| 4 | GL.5, GL.6 | Parity and install; then retire `gui.py` |
+| 5 | G1.1, G1.2, G1.3 | Identity settled before deltas depend on it |
+| 6 | G3.1, then G3.2 | The main differentiator |
+| 7 | G6.1 | Before users rely on accumulated data |
+| 8 | G5.1 | Needs OpenAlex terms verified |
+| 9 | G3.3, G3.4, G4.1, G5.2, G5.3 | As time allows |
