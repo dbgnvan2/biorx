@@ -308,3 +308,57 @@ def test_lookup_is_404_for_a_paper_nobody_has_summarized(signed_in):
 def test_lookup_is_404_for_a_paper_with_no_doi(signed_in):
     assert signed_in.post("/api/summaries/lookup",
                           json={"paper": {"title": "no doi"}}).status_code == 404
+
+
+# ── N1: papers without a DOI ──────────────────────────────────────────────────
+
+def _arxiv_paper():
+    """A real arXiv record, built by the adapter — its DOI is empty."""
+    from src.sources.arxiv import ArxivAdapter
+    return ArxivAdapter().normalize({
+        "arxiv_id_full": "2609.04321v1", "title": "Silicon samples revisited",
+        "abstract": "We revisit algorithmic fidelity in LLM survey responses.",
+        "authors": ["A. Argyle"], "published": "2026-09-12", "categories": ["cs.CL"],
+    }).to_dict()
+
+
+def test_n1_arxiv_summary_is_saved_and_looked_up(ctx, signed_in, monkeypatch, no_pdf):
+    """
+    Found by the 2026-09-16 smoke test: a DOI-less paper could never be stored,
+    so an arXiv summary was billed and lost, and the lookup — keyed on DOI —
+    could never find it, so every click paid again.
+    """
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    paper = _arxiv_paper()
+    assert paper["doi"] == ""
+
+    with patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
+        job_id = signed_in.post("/api/summaries", json={"paper": paper}).json()["job_id"]
+        body = _await(signed_in, job_id)
+
+    assert body["status"] == "done"
+    assert body["result"]["paper_id"] is not None, "the summary was not saved"
+
+    client = MagicMock()
+    with patch("src.llm_providers.build_client", return_value=client):
+        found = signed_in.post("/api/summaries/lookup", json={"paper": paper})
+    assert found.status_code == 200
+    assert found.json()["conclusions"] == SUMMARY["conclusions"]
+    client.summarize_paper.assert_not_called()
+
+
+def test_n1_resummarizing_a_stored_arxiv_paper_saves_to_the_same_row(
+    ctx, signed_in, monkeypatch, no_pdf
+):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    paper = _arxiv_paper()
+    existing_id = ctx.db.insert_paper(paper)
+
+    with patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
+        job_id = signed_in.post("/api/summaries", json={"paper": paper}).json()["job_id"]
+        body = _await(signed_in, job_id)
+
+    assert body["result"]["paper_id"] == existing_id
+    assert ctx.db.conn.execute("SELECT COUNT(*) FROM papers").fetchone()[0] == 1

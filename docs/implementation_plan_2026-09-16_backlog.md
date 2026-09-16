@@ -1,6 +1,6 @@
 # Implementation plan — the backlog after the web-app build
 
-**Status:** awaiting approval. No code written.
+**Status:** APPROVED 2026-09-16 with all §5 recommendations. N1 in progress.
 **Source:** `TODO.md`, the six gate files in `docs/cycles/`, and the live smoke
 test run on 2026-09-16.
 
@@ -216,6 +216,13 @@ ids (`claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5`). Current:
    keeps it for provenance either way.
 5. **Per-user limits** in batch F: 3 concurrent jobs, 10 new sessions per hour
    per IP. Change the numbers or accept.
+
+### Resolved 2026-09-16
+
+All five taken as recommended: (1) drop arXiv's query-time author clause;
+(2) declare Python 3.11+; (3) document 3.12 as the test interpreter;
+(4) strip `created_by_user_id` from shared-summary responses; (5) 3 concurrent
+jobs per user, 10 new sessions per hour per IP.
 
 ## 6. Out of scope
 

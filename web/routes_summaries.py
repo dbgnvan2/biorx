@@ -102,23 +102,19 @@ def _extract_text(ctx: AppContext, paper: Dict[str, Any]) -> str:
 def _paper_row_id(ctx: AppContext, paper: Dict[str, Any]) -> Optional[int]:
     """The paper's row id, inserting it if it is new.
 
-    insert_paper() returns None for a paper already in the table — a duplicate
-    DOI is not an error, it is the normal case for anyone summarizing a paper a
-    colleague already saved. Treating None as failure meant the summary was
-    computed, billed and displayed, and then silently not stored.
+    insert_paper() returns None for a paper already stored — the normal case for
+    anyone summarizing a paper a colleague already saved. Looks the row up by
+    DOI or canonical_id, because many papers (every arXiv record) have no DOI.
     """
     paper_id = ctx.db.insert_paper(paper)
     if paper_id:
         return paper_id
-
-    doi = (paper.get("doi") or "").strip()
-    if doi:
-        existing = ctx.db.get_paper_by_doi(doi)
-        if existing:
-            return existing["id"]
+    existing = ctx.db.find_paper(paper)
+    if existing:
+        return existing["id"]
     logger.warning(
         "Could not store or find the paper row for %s — the summary will not "
-        "be saved", paper.get("canonical_id") or paper.get("title", "")[:60],
+        "be saved", paper.get("canonical_id") or (paper.get("title") or "")[:60],
     )
     return None
 
@@ -253,11 +249,9 @@ def lookup_summary(body: SummaryRequest,
     the model and re-billed a key for a paper someone had already done. One
     summary per paper is shared by design (§2.5), so this is a straight saving.
     """
-    doi = (body.paper.get("doi") or "").strip()
-    if not doi:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail="No stored summary.")
-    existing = ctx.db.get_paper_by_doi(doi)
+    # By DOI or canonical_id: a lookup keyed on DOI alone could never find a
+    # summary of an arXiv paper, so every click re-ran the model.
+    existing = ctx.db.find_paper(body.paper)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No stored summary.")

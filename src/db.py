@@ -10,6 +10,7 @@ without blocking each other.
 """
 
 import itertools
+import re
 import os
 import sqlite3
 import json
@@ -214,7 +215,9 @@ class Database:
             """
             CREATE TABLE IF NOT EXISTS papers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                doi TEXT UNIQUE NOT NULL,
+                -- Nullable: arXiv and many PubMed/PsyArXiv records have no DOI.
+                -- Identity is canonical_id (unique index added in migrations).
+                doi TEXT UNIQUE,
                 title TEXT NOT NULL,
                 authors TEXT,
                 abstract TEXT,
@@ -363,10 +366,123 @@ class Database:
         for col, definition in new_cols:
             self._add_column_if_missing(cursor, "papers", col, definition)
 
+        # N1: papers without a DOI could never be stored. Relax the old
+        # constraint on existing databases, then make canonical_id the identity.
+        self._relax_doi_not_null()
+        self._ensure_canonical_id_index(cursor)
+
         # Provenance for a summary: who ran it, and which model produced it.
         # `summaries.paper_id` is UNIQUE, so one summary exists per paper and a
         # later run replaces it; these columns record whose run is current.
         self._add_column_if_missing(cursor, "summaries", "created_by_user_id", "TEXT")
+
+    # SQLite cannot change a column constraint in place, so relaxing NOT NULL
+    # means rebuilding the table. The rewrite targets exactly this declaration.
+    _DOI_NOT_NULL = re.compile(r"\bdoi\s+TEXT\s+UNIQUE\s+NOT\s+NULL\b", re.IGNORECASE)
+
+    def _relax_doi_not_null(self) -> None:
+        """Rebuild `papers` without NOT NULL on `doi`, if an old schema has it.
+
+        Spec:  docs/implementation_plan_2026-09-16_backlog.md#N1
+        Tests: tests/test_n1_doi_less_papers.py
+
+        The table's own CREATE statement is read back from sqlite_master and
+        rewritten, so every column the additive migrations have added over time
+        is carried across in its original order — nothing is re-declared from
+        memory. Ids are copied explicitly, so summaries and bookmarks stay
+        attached, and the AUTOINCREMENT high-water mark follows the rename.
+
+        All of it runs in one transaction with a row-count check before commit.
+        An unrecognised schema raises instead of guessing: a rebuild that
+        guesses is how data gets lost.
+        """
+        info = {row[1]: row for row in self.conn.execute("PRAGMA table_info(papers)")}
+        if "doi" not in info or info["doi"][3] == 0:
+            return                                    # already nullable
+
+        create_sql = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'papers'"
+        ).fetchone()[0]
+        if len(self._DOI_NOT_NULL.findall(create_sql)) != 1:
+            raise RuntimeError(
+                "Cannot migrate papers.doi to nullable: the table definition is not "
+                "the expected 'doi TEXT UNIQUE NOT NULL' shape. Refusing to rebuild "
+                "the table by guessing. Definition: " + create_sql[:300]
+            )
+        rebuilt_sql = self._DOI_NOT_NULL.sub("doi TEXT UNIQUE", create_sql)
+        rebuilt_sql = re.sub(r"^\s*CREATE\s+TABLE\s+\"?papers\"?",
+                             "CREATE TABLE papers_rebuild", rebuilt_sql,
+                             count=1, flags=re.IGNORECASE)
+        columns = ", ".join(f'"{name}"' for name in info)
+
+        before = self.conn.execute("SELECT COUNT(*) FROM papers").fetchone()[0]
+        # AUTOINCREMENT's high-water mark lives in sqlite_sequence, keyed by
+        # table name. Copying rows into a new table resets it to the highest
+        # SURVIVING id, so a paper deleted from the top of the range would have
+        # its id reused — and a new paper would inherit its summary or bookmark.
+        seq_row = self.conn.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'papers'"
+        ).fetchone()
+        high_water = seq_row[0] if seq_row else 0
+        logger.info("Migration N1: rebuilding papers (%d rows) to allow papers "
+                    "without a DOI", before)
+
+        previous_isolation = self.conn.isolation_level
+        self.conn.isolation_level = None               # explicit transaction control
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            self.conn.execute(rebuilt_sql)
+            self.conn.execute(
+                f"INSERT INTO papers_rebuild ({columns}) SELECT {columns} FROM papers"
+            )
+            self._verify_rebuild_counts(before)
+            self.conn.execute("DROP TABLE papers")
+            self.conn.execute("ALTER TABLE papers_rebuild RENAME TO papers")
+            self.conn.execute(
+                "UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'papers'",
+                (high_water,),
+            )
+            self.conn.execute("COMMIT")
+        except BaseException:
+            self.conn.execute("ROLLBACK")
+            logger.error("Migration N1 failed and was rolled back; papers is unchanged")
+            raise
+        finally:
+            self.conn.isolation_level = previous_isolation
+        logger.info("Migration N1: papers rebuilt, %d rows preserved", before)
+
+    def _verify_rebuild_counts(self, expected: int) -> None:
+        """Abort the rebuild unless every row reached the new table."""
+        copied = self.conn.execute("SELECT COUNT(*) FROM papers_rebuild").fetchone()[0]
+        if copied != expected:
+            raise RuntimeError(
+                f"Migration N1 aborted: copied {copied} of {expected} papers"
+            )
+
+    def _ensure_canonical_id_index(self, cursor) -> None:
+        """Make canonical_id the unique identity of a paper.
+
+        A unique index permits any number of NULLs, so legacy rows without a
+        canonical_id are unaffected. If existing rows already share an id, the
+        index cannot be built; that is reported rather than crashing startup,
+        and duplicates are still caught by the lookup in insert_paper.
+        """
+        duplicates = cursor.execute(
+            "SELECT COUNT(*) FROM (SELECT canonical_id FROM papers "
+            "WHERE canonical_id IS NOT NULL AND canonical_id <> '' "
+            "GROUP BY canonical_id HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
+        if duplicates:
+            logger.warning(
+                "Not adding a unique index on papers.canonical_id: %d id(s) are "
+                "shared by more than one row. Duplicates will be caught on insert "
+                "instead.", duplicates,
+            )
+            return
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_papers_canonical_id "
+            "ON papers(canonical_id)"
+        )
 
     @staticmethod
     def _add_column_if_missing(cursor, table: str, column: str, definition: str) -> None:
@@ -400,8 +516,22 @@ class Database:
         else:
             authors_str = str(authors or "")
 
-        doi = paper.get("doi") or ""
+        doi = (paper.get("doi") or "").strip()
         canonical_id = paper.get("canonical_id") or (f"doi:{doi}" if doi else "")
+
+        if not doi and not canonical_id:
+            logger.warning(
+                "Not storing %r: it has no DOI and no canonical_id, so a duplicate "
+                "could never be detected", (paper.get("title") or "")[:80],
+            )
+            return None
+
+        # The unique index on canonical_id normally rejects a duplicate. It can
+        # be absent on a legacy database whose rows already shared an id, so
+        # check explicitly rather than rely on it.
+        if not doi and self.find_paper({"canonical_id": canonical_id}) is not None:
+            logger.debug("Paper %s already exists", canonical_id)
+            return None
 
         try:
             cursor = self.conn.cursor()
@@ -443,7 +573,7 @@ class Database:
             return cursor.lastrowid
         except sqlite3.IntegrityError:
             self._rollback_quietly()
-            logger.debug(f"Paper with DOI {doi} already exists")
+            logger.debug("Paper %s already exists", doi or canonical_id)
             return None
         except sqlite3.Error as e:
             self._rollback_quietly()
@@ -527,6 +657,28 @@ class Database:
             papers.append(dict(row))
 
         return papers
+
+    def get_paper_by_canonical_id(self, canonical_id: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            "SELECT * FROM papers WHERE canonical_id = ?", (canonical_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def find_paper(self, paper: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """The stored row for a paper, by DOI first and canonical_id second.
+
+        Spec:  docs/implementation_plan_2026-09-16_backlog.md#N1
+        Tests: tests/test_n1_doi_less_papers.py::test_n1_find_paper_falls_back_to_canonical_id
+        """
+        doi = (paper.get("doi") or "").strip()
+        if doi:
+            found = self.get_paper_by_doi(doi)
+            if found:
+                return found
+        canonical_id = (paper.get("canonical_id") or "").strip()
+        if canonical_id:
+            return self.get_paper_by_canonical_id(canonical_id)
+        return None
 
     def get_paper_by_doi(self, doi: str) -> Optional[Dict[str, Any]]:
         """
