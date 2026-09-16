@@ -1,0 +1,48 @@
+# LLM provider configuration.
+#
+# Model ids and dialects live here, never in Python source (standards L1/L8):
+# adding a provider should be a config entry, and a model id that goes stale
+# should be a one-line edit rather than a code change.
+#
+# Dialects:
+#   anthropic → x-api-key, /v1/messages, official `anthropic` SDK
+#   openai    → Authorization: Bearer, /chat/completions (DeepSeek, OpenAI, …)
+#   ollama    → local /api/generate, no key
+
+default_provider: ollama          # overridden by the LLM_PROVIDER env var
+
+providers:
+  ollama:
+    dialect: ollama
+    base_url: http://localhost:11434
+    model: qwen:7b
+    timeout: 120
+    # No api_key_env: a local Ollama needs no credential.
+
+  deepseek:
+    dialect: openai
+    base_url: https://api.deepseek.com
+    model: deepseek-chat
+    model_env: DEEPSEEK_MODEL
+    api_key_env: DEEPSEEK_API_KEY
+    timeout: 120
+
+  anthropic:
+    dialect: anthropic
+    # Verified against the current model list, 2026-09-15. `claude-sonnet-4`
+    # does not exist; the current ids are claude-opus-5, claude-sonnet-5 and
+    # claude-haiku-4-5, with no date suffixes.
+    model: claude-sonnet-5
+    model_env: ANTHROPIC_MODEL
+    api_key_env: ANTHROPIC_API_KEY
+    timeout: 120
+
+# How much of a paper's extracted text is sent to the model. A budget, named and
+# configurable rather than an anonymous slice in the prompt builder, and the
+# amount dropped is logged (standards L7, learnings P9).
+max_text_chars: 12000
+
+# Summaries billed to the OWNER's key, per user per UTC day. A user on their own
+# key is not capped. The access code is shared, so this is the ceiling on what a
+# leaked code can spend.
+summary_daily_cap_per_user: 25

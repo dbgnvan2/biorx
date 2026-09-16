@@ -38,6 +38,21 @@ APPROVED at fix-loop 2, with three low findings carried rather than fixed:
 - `_release_connection` catches only `sqlite3.Error`. At interpreter shutdown a
   different exception could escape and print "Exception ignored".
 
+## Two Python environments with different dependency versions
+
+`/opt/homebrew/bin/pytest` (the command CLAUDE.md documents) runs **Python 3.11**
+with an older installed dependency set; the app itself runs **Python 3.12**.
+Measured 2026-09-15: requests 2.32.3 vs 2.31.0, fastapi 0.109.0 vs 0.115.5,
+anthropic 0.75.0 vs 0.78.0, cryptography 45.0.7 vs 46.0.6. 3.11 also has no
+PyQt6, so every GUI test is permanently skipped under the documented command.
+
+Consequences worth deciding on:
+- `requirements-web.txt` is pinned to the 3.12 set, which is what the app runs.
+- A test cannot meaningfully assert "pins match what is installed here".
+- CI on a blank machine is the only thing that proves the pins resolve, which is
+  an argument for adding `.github/workflows/tests.yml` (a standing rule in
+  `~/.claude/CLAUDE.md` for any repo with a suite pushed to GitHub).
+
 ## Adjacent classes noted while fixing the chunk-2 gate
 
 - **Hardcoded personal contact addresses remain in the retrieval layer**:

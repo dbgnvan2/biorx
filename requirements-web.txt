@@ -1,0 +1,23 @@
+# Dependencies for the FastAPI web app (agents + retrieval, no desktop GUI).
+#
+# Deliberately separate from requirements.txt: PyQt6 must never be installed in
+# the container. Versions are pinned (standards S7) to what this machine has
+# been verified against, so the container and the development host run the same
+# code — review the pins periodically rather than floating them.
+
+# Shared with the desktop app
+requests==2.31.0
+pdfplumber==0.10.3
+PyYAML==6.0.2
+
+# Web
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+itsdangerous==2.2.0
+
+# Credentials at rest
+cryptography==46.0.6
+
+# LLM backends. DeepSeek is reached over its OpenAI-compatible HTTP API with
+# `requests`, so it needs no SDK of its own.
+anthropic==0.78.0
