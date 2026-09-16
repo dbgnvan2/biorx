@@ -1,0 +1,30 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-web.txt
+
+      - name: Run test suite
+        run: pytest tests/ -v
+        env:
+          # No contact email set: tests that require one set it themselves via
+          # monkeypatch. This confirms the code does not fall back to a
+          # hardcoded address when the env var is absent.
+          BIORX_CONTACT_EMAIL: ""

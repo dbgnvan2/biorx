@@ -113,10 +113,17 @@ class SourceOrchestrator:
             )
 
         if is_source_enabled(self.config, "unpaywall"):
-            from .unpaywall import UnpaywallAdapter
-            self._unpaywall = UnpaywallAdapter(
-                email=get_unpaywall_email(self.config)
-            )
+            email = get_unpaywall_email(self.config)
+            if email:
+                from .unpaywall import UnpaywallAdapter
+                self._unpaywall = UnpaywallAdapter(email=email)
+            else:
+                # Unpaywall requires a real address. Say so rather than send a
+                # placeholder or skip quietly (learnings P2).
+                logger.warning(
+                    "Unpaywall open-access lookup is off: no contact email. Set "
+                    "BIORX_CONTACT_EMAIL (or contact_email in sources_config.yaml)."
+                )
 
     # ── Public search API ─────────────────────────────────────────────────────
 

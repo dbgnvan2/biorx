@@ -36,8 +36,8 @@ publication_sources:
   pmc_oa:
     enabled: false
 
-# Contact email for Unpaywall API (required)
-unpaywall_email: davegalloway@me.com
-
-# User-Agent string for Crossref polite pool
-crossref_user_agent: "ResearchTool/1.0 (mailto:davegalloway@me.com)"
+# Your contact email. Sent to Crossref, OpenAlex and arXiv so they can reach
+# you about traffic, and required by Unpaywall (open-access lookup is off
+# without it). Leave empty here and set BIORX_CONTACT_EMAIL instead if you do
+# not want it in this file; the environment variable wins.
+contact_email: ""

@@ -6,6 +6,7 @@ Reads sources_config.yaml and exposes feature-flag helpers.
 from pathlib import Path
 from typing import Dict, Any, List
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +23,14 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
         "unpaywall":        {"enabled": True},
         "pmc_oa":           {"enabled": False},
     },
-    "unpaywall_email": "davegalloway@me.com",
-    "crossref_user_agent": "ResearchTool/1.0 (mailto:davegalloway@me.com)",
+    # The user's own address for the polite pools (Crossref, OpenAlex, arXiv)
+    # and Unpaywall, which requires one. Empty by default: each user runs their
+    # own copy, so a shipped address would speak for someone else.
+    "contact_email": "",
 }
+
+CONTACT_EMAIL_ENV = "BIORX_CONTACT_EMAIL"
+USER_AGENT_PRODUCT = "biorx/1.0"
 
 # Sources that are search-capable (shown in picker)
 _SEARCH_SOURCES = ["europepmc", "pubmed", "psyarxiv", "socarxiv", "biorxiv_medrxiv", "arxiv", "openalex"]
@@ -84,12 +90,42 @@ def get_default_selected_sources(config: Dict[str, Any]) -> List[str]:
     ]
 
 
+def get_contact_email(config: Dict[str, Any]) -> str:
+    """
+    Purpose: The user's contact address: environment, then config, else empty.
+    Spec:    docs/implementation_plan_2026-09-16_backlog.md#batch-h
+    Tests:   tests/test_h_environment.py::test_h_contact_email_env_wins_over_config
+
+    `unpaywall_email` is the key older copies of sources_config.yaml used; it is
+    still read so an existing file keeps working. Never falls back to a
+    placeholder address: an empty result lets callers say what is missing.
+    """
+    env = os.environ.get(CONTACT_EMAIL_ENV, "").strip()
+    if env:
+        return env
+    for key in ("contact_email", "unpaywall_email"):
+        value = str(config.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def polite_user_agent(config: Dict[str, Any]) -> str:
+    """
+    Purpose: User-Agent for API polite pools, with mailto only when an address is set.
+    Spec:    docs/implementation_plan_2026-09-16_backlog.md#batch-h
+    Tests:   tests/test_h_environment.py::test_h_user_agent_has_mailto_only_when_an_address_is_set
+    """
+    email = get_contact_email(config)
+    return f"{USER_AGENT_PRODUCT} (mailto:{email})" if email else USER_AGENT_PRODUCT
+
+
 def get_unpaywall_email(config: Dict[str, Any]) -> str:
-    return config.get("unpaywall_email", "davegalloway@me.com")
+    return get_contact_email(config)
 
 
 def get_crossref_user_agent(config: Dict[str, Any]) -> str:
-    return config.get("crossref_user_agent", "ResearchTool/1.0 (mailto:davegalloway@me.com)")
+    return polite_user_agent(config)
 
 
 def is_source_enabled(config: Dict[str, Any], source: str) -> bool:

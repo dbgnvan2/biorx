@@ -15,6 +15,8 @@ import xml.etree.ElementTree as ET
 
 import requests
 
+from .config import polite_user_agent
+
 # Allow import when run standalone
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -111,7 +113,7 @@ class ArxivAdapter:
         }
 
         headers = {
-            "User-Agent": "biorx/1.0 (mailto:davegalloway@me.com)",
+            "User-Agent": polite_user_agent({}),
         }
 
         attempts = 0

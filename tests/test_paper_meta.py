@@ -158,20 +158,27 @@ def test_openalex_returns_empty_on_error_missing_index_or_exception():
         assert fetch_openalex_abstract("10.1/x") == ""
 
 
-def test_openalex_sets_a_timeout_and_identifies_itself():
+def test_openalex_sets_a_timeout_and_identifies_itself(monkeypatch):
+    monkeypatch.setenv("BIORX_CONTACT_EMAIL", "ops@example.org")
     with patch("src.paper_meta.requests.get",
                return_value=_json_resp({"abstract_inverted_index": {"a": [0]}})) as g:
         fetch_openalex_abstract("10.1/x")
     assert g.call_args.kwargs["timeout"] == paper_meta.OPENALEX_TIMEOUT
-    assert "mailto:" in g.call_args.kwargs["headers"]["User-Agent"]
+    assert g.call_args.kwargs["headers"]["User-Agent"] == "biorx/1.0 (mailto:ops@example.org)"
 
 
 def test_openalex_contact_comes_from_the_environment(monkeypatch):
-    """A contact address is deployment config, not a source literal."""
+    """
+    A contact address is the user's configuration, not a source literal.
+
+    Batch H (backlog §6): with no address the header carries no mailto. The
+    previous version asserted a placeholder address was sent instead, which
+    told OpenAlex a contact existed when none did.
+    """
     monkeypatch.setenv("BIORX_CONTACT_EMAIL", "ops@example.org")
-    assert paper_meta.openalex_user_agent() == "ResearchTool/1.0 (mailto:ops@example.org)"
+    assert paper_meta.openalex_user_agent() == "biorx/1.0 (mailto:ops@example.org)"
     monkeypatch.delenv("BIORX_CONTACT_EMAIL")
-    assert paper_meta.DEFAULT_CONTACT_EMAIL in paper_meta.openalex_user_agent()
+    assert paper_meta.openalex_user_agent() == "biorx/1.0"
 
 
 def test_no_personal_email_is_hardcoded_in_this_module():
