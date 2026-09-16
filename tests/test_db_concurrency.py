@@ -3,6 +3,7 @@ Tests for src/db.py — threading, path resolution, and the web-app schema.
 
 Spec: docs/implementation_plan_2026-09-15.md#1.6, #2.5, #2.6
 """
+import gc
 import os
 import sqlite3
 import sys
@@ -118,10 +119,9 @@ def test_connections_of_finished_threads_are_released(db):
     A per-thread connection that is never given back is a leaked file
     descriptor. The GUI starts a thread per search/download/summarize.
 
-    This asserts the connections were CLOSED, not that a registry dict stayed
-    small: CPython reuses thread idents, so a dict keyed by ident stays small
-    while silently dropping unclosed handles (learnings P30 — validate against
-    the quantity that actually costs something).
+    This asserts the connections were CLOSED — the quantity that actually costs
+    something (learnings P30's corollary) — not that a registry dict stayed
+    small, which stays small anyway because CPython reuses thread idents.
     """
     handed_out = []
     for _ in range(12):
@@ -130,26 +130,63 @@ def test_connections_of_finished_threads_are_released(db):
         t.join()
 
     assert len(handed_out) == 12
-    db._reap_dead_threads()
+    gc.collect()
     still_open = [c for c in handed_out if not _is_closed(c)]
     assert still_open == [], f"{len(still_open)} connections left open"
 
 
-def test_the_reaper_runs_when_a_new_connection_is_minted(db):
+def test_connection_is_released_when_a_QTHREAD_finishes(tmp_path):
     """
-    The reaper is lazy: it runs on the next mint, so at most the connections of
-    threads that died since the last mint linger. This asserts the trigger is
-    wired, not merely that the method works when called directly.
-    """
-    handed_out = []
-    for _ in range(4):
-        t = threading.Thread(target=lambda: handed_out.append(db.conn))
-        t.start(); t.join()
+    The regression test for the real production thread type.
 
-    # A fresh thread minting a connection must collect the earlier ones.
-    t = threading.Thread(target=lambda: db.conn)
-    t.start(); t.join()
-    assert all(_is_closed(c) for c in handed_out[:4])
+    The GUI runs every worker on a QThread. threading.current_thread() there
+    returns a _DummyThread whose is_alive() stays True forever, so any release
+    keyed on thread-object liveness collects nothing in the application that
+    churns threads hardest — while a threading.Thread test passes happily.
+    Release is therefore keyed on the lifetime of the thread-local holder, and
+    this asserts it with an actual QThread.
+    """
+    pytest.importorskip("PyQt6.QtCore")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtCore import QCoreApplication, QObject, QThread
+
+    app = QCoreApplication.instance() or QCoreApplication(sys.argv[:1])
+    database = Database(str(tmp_path / "qt.db"))
+    grabbed = {}
+
+    class Worker(QObject):
+        def run(self):
+            grabbed["conn"] = database.conn
+            grabbed["thread_type"] = type(threading.current_thread()).__name__
+
+    qthread = QThread()
+    worker = Worker()
+    worker.moveToThread(qthread)
+    qthread.started.connect(worker.run)
+    qthread.start()
+    qthread.wait(5000)
+    qthread.quit()
+    qthread.wait(5000)
+    gc.collect()
+
+    assert grabbed["thread_type"] == "_DummyThread", (
+        "PyQt no longer yields a _DummyThread; the hazard this guards may have "
+        "changed shape — re-check before relaxing this test"
+    )
+    assert _is_closed(grabbed["conn"]), "QThread's connection was never closed"
+    database.close()
+
+
+def test_release_closes_this_threads_connection(db):
+    conn = db.conn
+    assert conn in db._conns.values()
+
+    db.release()
+    gc.collect()
+
+    assert conn not in db._conns.values(), "released connection still registered"
+    assert _is_closed(conn), "release() did not close the connection"
+    assert db.conn is not conn       # a later call transparently reconnects
 
 
 def test_release_is_safe_when_this_thread_never_connected(db):
@@ -163,8 +200,8 @@ def test_release_is_safe_when_this_thread_never_connected(db):
     assert done == [True]
 
 
-def test_a_live_threads_connection_is_not_reaped(db):
-    """The reaper must only collect connections whose owner has exited."""
+def test_a_live_threads_connection_is_not_released(db):
+    """A running thread must keep its connection while it is still using it."""
     started, may_finish, seen = threading.Event(), threading.Event(), {}
 
     def worker():
@@ -174,7 +211,7 @@ def test_a_live_threads_connection_is_not_reaped(db):
 
     t = threading.Thread(target=worker); t.start()
     started.wait(timeout=5)
-    for _ in range(3):               # churn other threads to drive the reaper
+    for _ in range(3):               # churn other threads
         x = threading.Thread(target=lambda: db.conn.execute("SELECT 1"))
         x.start(); x.join()
     _ = db.conn
@@ -262,3 +299,47 @@ def test_add_column_if_missing_raises_on_a_real_failure(db):
     cursor = db.conn.cursor()
     with pytest.raises(sqlite3.Error):
         db._add_column_if_missing(cursor, "no_such_table", "c", "TEXT")
+
+
+# ── The GUI actually calls release (P21/P25: a method with no caller is dead) ──
+
+def test_search_worker_releases_its_connection_when_it_finishes():
+    """
+    SearchWorker runs on its own QThread and takes a connection on it. Asserting
+    the call arrives at the boundary, not that the code contains a line.
+    """
+    pytest.importorskip("PyQt6.QtWidgets")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import gui
+    from unittest.mock import MagicMock
+
+    orchestrator = MagicMock()
+    orchestrator.search.return_value = []
+    database = MagicMock()
+
+    worker = gui.SearchWorker(
+        orchestrator, {"text_groups": [], "authors": []},
+        save_to_db=False, db=database,
+    )
+    worker.run()
+
+    database.release.assert_called_once()
+
+
+def test_search_worker_releases_its_connection_even_when_the_search_raises():
+    pytest.importorskip("PyQt6.QtWidgets")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import gui
+    from unittest.mock import MagicMock
+
+    orchestrator = MagicMock()
+    orchestrator.search.side_effect = RuntimeError("source exploded")
+    database = MagicMock()
+
+    worker = gui.SearchWorker(
+        orchestrator, {"text_groups": [], "authors": []},
+        save_to_db=False, db=database,
+    )
+    worker.run()        # error is emitted on a signal, not raised
+
+    database.release.assert_called_once()

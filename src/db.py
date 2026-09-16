@@ -14,6 +14,7 @@ import os
 import sqlite3
 import json
 import threading
+import weakref
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -22,6 +23,34 @@ import logging
 logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "~/preprints/biorxiv.db"
+
+
+class _ConnectionHolder:
+    """Owns one thread's connection. Its death is the signal to close it.
+
+    The holder lives in threading.local storage, which CPython releases when the
+    owning thread exits — for *any* kind of thread. That matters: the GUI runs
+    its workers on QThreads, where threading.current_thread() returns a
+    _DummyThread whose is_alive() stays True forever. Liveness detection based
+    on the thread object therefore never fires in the application that needs it
+    most. The holder's lifetime does not have that problem.
+    """
+
+    __slots__ = ("conn", "__weakref__")
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+
+def _release_connection(conn, conns, lock, key) -> None:
+    """Close a connection whose owning thread has gone. Module-level so the
+    finalizer does not keep the Database alive."""
+    with lock:
+        conns.pop(key, None)
+    try:
+        conn.close()
+    except sqlite3.Error:
+        pass
 
 DEFAULT_BUSY_TIMEOUT_MS = 10000
 
@@ -67,20 +96,12 @@ class Database:
         self.db_path = Path(db_path or default_db_path()).expanduser()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
-        # key -> (thread, connection), used to close the connections of threads
-        # that have since exited: a per-thread connection that is never released
-        # is a file descriptor and a page cache held for the life of the process
-        # (learnings P30 — handing a resource out per thread is not the same as
-        # giving it back).
-        #
-        # The key is a counter, not threading.get_ident(). CPython reuses idents
-        # after a thread exits, so an ident-keyed registry could let a new thread
-        # overwrite a dead thread's entry and drop the handle without closing it.
-        # Today the reaper always runs immediately before registration, so that
-        # overwrite is not reachable and no test can distinguish the two keys —
-        # the counter removes the dependency on that ordering rather than
-        # fixing an observable bug. Stated here because an assertion would be a
-        # test that cannot fail (learnings P27).
+        # key -> connection, so close() can shut every outstanding handle. Each
+        # entry is removed by its own finalizer when the owning thread exits, so
+        # a per-thread connection is not a file descriptor held for the life of
+        # the process (learnings P30 — handing a resource out per thread is not
+        # the same as giving it back). The key is a counter, since CPython reuses
+        # thread idents after a thread exits.
         self._conns: Dict[int, Any] = {}
         self._conn_keys = itertools.count()
         self._conns_lock = threading.Lock()
@@ -113,54 +134,16 @@ class Database:
             logger.warning("Could not enable WAL on %s: %s", self.db_path, e)
         return conn
 
-    def _reap_dead_threads(self) -> int:
-        """Close connections whose owning thread has exited. Returns how many.
-
-        Called whenever a new connection is minted, so the number of open
-        connections tracks the number of *live* threads rather than the number
-        of threads there have ever been. The GUI starts a QThread per search,
-        download, summarize and abstract fetch, so without this a long session
-        accumulates one connection per operation.
-
-        Collection is lazy: a thread that has just exited keeps its connection
-        until the next mint. That bounds the surplus to the threads that died
-        since the last mint, not the whole history. Callers that know when a
-        worker ends should call release() for immediate hand-back.
-        """
-        closed = 0
-        with self._conns_lock:
-            dead = [key for key, (thread, _) in self._conns.items()
-                    if not thread.is_alive()]
-            for key in dead:
-                _, conn = self._conns.pop(key)
-                try:
-                    conn.close()
-                    closed += 1
-                except sqlite3.Error as e:
-                    logger.debug("Error closing connection for dead thread: %s", e)
-        if closed:
-            logger.debug("Released %d connection(s) from finished threads", closed)
-        return closed
-
     def release(self) -> None:
-        """Close and forget this thread's connection.
+        """Close and forget this thread's connection, now.
 
-        Optional: the reaper above collects abandoned connections anyway. Use
-        this where a worker's end is known (a job runner, a request handler) so
-        the handle goes back immediately rather than at the next connect.
+        Dropping the holder takes its refcount to zero, which runs the finalizer
+        immediately on CPython. Release happens automatically when the thread
+        exits; call this where a worker's end is known (a GUI worker, a job
+        runner, a request handler) so a pooled thread does not hold a handle
+        between tasks.
         """
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            return
-        key = getattr(self._local, "key", None)
-        self._local.conn = None
-        self._local.key = None
-        with self._conns_lock:
-            self._conns.pop(key, None)
-        try:
-            conn.close()
-        except sqlite3.Error as e:
-            logger.debug("Error closing connection on release: %s", e)
+        self._local.holder = None
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -169,16 +152,20 @@ class Database:
         Exposed as a property so the ~30 existing ``self.conn.cursor()`` call
         sites keep working unchanged while each thread gets its own handle.
         """
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            self._reap_dead_threads()
+        holder = getattr(self._local, "holder", None)
+        if holder is None:
             conn = self._new_connection()
             key = next(self._conn_keys)
-            self._local.conn = conn
-            self._local.key = key
+            holder = _ConnectionHolder(conn)
+            self._local.holder = holder
             with self._conns_lock:
-                self._conns[key] = (threading.current_thread(), conn)
-        return conn
+                self._conns[key] = conn
+            # When the holder dies — because the thread exited, or because
+            # release() dropped it — the connection is closed and unregistered.
+            weakref.finalize(
+                holder, _release_connection, conn, self._conns, self._conns_lock, key
+            )
+        return holder.conn
 
     def _init_db(self):
         """Create tables if they don't exist."""
@@ -705,7 +692,7 @@ class Database:
     def close(self):
         """Close every connection this Database has handed out."""
         with self._conns_lock:
-            conns = [conn for _, conn in self._conns.values()]
+            conns = list(self._conns.values())
             self._conns = {}
         for conn in conns:
             try:

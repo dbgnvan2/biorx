@@ -181,6 +181,12 @@ class SearchWorker(QObject):
             self.finished.emit(self._all_matched)
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            # This worker runs on its own QThread and took a database
+            # connection on it. Give it back now rather than waiting for the
+            # thread to be torn down (src/db.py — Database.release).
+            if self.db:
+                self.db.release()
 
 
 class SummarizationWorker(QObject):
