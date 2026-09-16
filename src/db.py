@@ -94,7 +94,7 @@ class Database:
             db_path: Path to SQLite database file. Defaults to default_db_path().
         """
         self.db_path = Path(db_path or default_db_path()).expanduser()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_writable_directory(self.db_path.parent)
         self._local = threading.local()
         # key -> connection, so close() can shut every outstanding handle. Each
         # entry is removed by its own finalizer when the owning thread exits, so
@@ -106,6 +106,30 @@ class Database:
         self._conn_keys = itertools.count()
         self._conns_lock = threading.Lock()
         self._init_db()
+
+    @staticmethod
+    def _ensure_writable_directory(directory: Path) -> None:
+        """Create the database's directory and confirm we can write to it.
+
+        Without this, an unwritable directory — the usual symptom of a volume
+        mounted with the wrong ownership — surfaces later as a bare sqlite
+        "unable to open database file", which says nothing about the cause.
+        """
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except PermissionError as e:
+            raise PermissionError(
+                f"Cannot create the data directory {directory}: {e}. "
+                "If this is a container, the mounted volume must be writable "
+                "by the user the app runs as."
+            ) from e
+
+        if not os.access(directory, os.W_OK):
+            raise PermissionError(
+                f"The data directory {directory} is not writable by uid "
+                f"{os.getuid()}. If this is a container, mount the volume "
+                "writable by that user."
+            )
 
     # ── Connection handling ───────────────────────────────────────────────────
 

@@ -88,41 +88,93 @@ def test_the_app_process_does_not_run_as_root():
     assert script.exists(), "the entrypoint script named in the Dockerfile is missing"
     body = script.read_text()
     assert "gosu" in body, "the entrypoint does not drop privileges"
-    assert 'exec gosu "$APP_USER"' in body
+    # The drop goes through run_as_app, which is gosu.
+    assert 'exec run_as_app "$@"' in body
+    assert 'gosu "$APP_USER" "$@"' in body
 
 
-def _entrypoint_commands() -> str:
-    """The entrypoint script with comments and echoed messages stripped.
+ENTRYPOINT = ROOT / "docker-entrypoint.sh"
 
-    The first version of the check below matched the word "chown" inside the
-    script's own warning message, so deleting the actual command left it green
-    (learnings P19's corollary).
+
+def _run_entrypoint_guard(target_user_can_write: bool, tmp_path) -> str:
+    """Source the entrypoint and ask it whether it would chown.
+
+    Runs the real decision with a stubbed `gosu`, rather than grepping the
+    script for the word "chown". The previous version of this test did grep,
+    and stayed green while the guard was inverted — it tested whether ROOT
+    could write the directory, which root always can, so the chown fired only
+    when it was already unnecessary (learnings P26: the fix commit is the
+    least-reviewed code in a change).
     """
-    import re as _re
-    body = (ROOT / "docker-entrypoint.sh").read_text()
-    body = _re.sub(r"^\s*#.*$", "", body, flags=_re.MULTILINE)
-    body = _re.sub(r"^\s*echo .*$", "", body, flags=_re.MULTILINE)
-    return body
+    import os
+    import subprocess
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    gosu = bin_dir / "gosu"
+    gosu.write_text(
+        "#!/bin/sh\n"
+        "shift\n"                       # drop the username argument
+        'if [ "$1" = "test" ] && [ "$2" = "-w" ]; then\n'
+        '  [ "${GOSU_TEST_WRITABLE:-0}" = "1" ]\n'
+        "  exit $?\n"
+        "fi\n"
+        'exec "$@"\n'
+    )
+    gosu.chmod(0o755)
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(exist_ok=True)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["GOSU_TEST_WRITABLE"] = "1" if target_user_can_write else "0"
+    env["DATA_DIR"] = str(data_dir)
+
+    script = (
+        "ENTRYPOINT_SOURCE_ONLY=1 . " + str(ENTRYPOINT) + "\n"
+        "if needs_chown; then echo CHOWN; else echo SKIP; fi\n"
+    )
+    result = subprocess.run(["sh", "-c", script], capture_output=True, text=True,
+                            env=env, timeout=20)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
 
 
-def test_the_entrypoint_makes_the_mounted_volume_writable():
+def test_the_entrypoint_chowns_when_the_app_user_cannot_write(tmp_path):
     """
-    The finding this exists for: a build-time `chown /data` does not survive a
-    runtime volume mount, so the first write fails with PermissionError.
+    The case this exists for: the platform mounts a root-owned volume over
+    /data, so the unprivileged user cannot write it.
     """
-    import re as _re
-    commands = _entrypoint_commands()
-    assert _re.search(r'chown\s+-R\s+"\$APP_USER"\s+"\$DATA_DIR"', commands), \
-        "the entrypoint does not actually chown the data directory"
-    assert 'mkdir -p "$DATA_DIR"' in commands
+    assert _run_entrypoint_guard(target_user_can_write=False, tmp_path=tmp_path) \
+        == "CHOWN"
 
 
-def test_the_comment_and_echo_stripper_works():
-    """Guard-the-guard: if stripping over-reaches, the check above goes blind."""
-    commands = _entrypoint_commands()
-    assert "#" not in commands.replace("$#", "")
-    assert "WARNING" not in commands          # echoed text is gone
-    assert "gosu" in commands                 # real commands survive
+def test_the_entrypoint_skips_the_chown_when_the_volume_is_already_right(tmp_path):
+    """chown -R on every start would be wasted work once PDFs accumulate."""
+    assert _run_entrypoint_guard(target_user_can_write=True, tmp_path=tmp_path) \
+        == "SKIP"
+
+
+def test_the_entrypoint_tests_writability_as_the_target_user_not_as_root():
+    """
+    The specific inversion that made the previous fix useless: asking `-O`/`-w`
+    about the *current* user answers a question about root.
+    """
+    body = ENTRYPOINT.read_text()
+    guard = body[body.index("needs_chown() {"):body.index("main() {")]
+    assert "run_as_app test -w" in guard
+    assert "[ ! -O " not in guard
+
+
+def test_the_entrypoint_fails_loudly_rather_than_starting_unwritable(tmp_path):
+    """
+    A container that starts and then dies on the first database write is far
+    worse to diagnose than one that refuses to start and says why.
+    """
+    body = ENTRYPOINT.read_text()
+    assert body.count("FATAL") >= 3
+    assert "exit 1" in body
 
 
 def test_the_entrypoint_is_copied_and_made_executable():
@@ -242,3 +294,71 @@ def test_readme_says_the_volume_is_required():
     """The single most costly thing to get wrong: no volume, no persistence."""
     text = README.read_text().lower()
     assert "volume" in text and "/data" in text
+
+
+def test_the_entrypoint_refuses_to_start_on_an_unwritable_volume(tmp_path):
+    """
+    The non-root branch, run for real. Some platforms enforce a uid, so the
+    entrypoint cannot chown anything; it must say why instead of starting and
+    dying at the first database write.
+    """
+    import os
+    import subprocess
+
+    unwritable = tmp_path / "locked"
+    unwritable.mkdir()
+    unwritable.chmod(0o500)          # readable, not writable
+    try:
+        env = dict(os.environ)
+        env["DATA_DIR"] = str(unwritable)
+        result = subprocess.run(
+            ["sh", str(ENTRYPOINT), "echo", "started"],
+            capture_output=True, text=True, env=env, timeout=20,
+        )
+        assert result.returncode == 1, (
+            f"the entrypoint started anyway: {result.stdout!r}"
+        )
+        assert "started" not in result.stdout
+        assert "not writable" in result.stderr
+        assert str(unwritable) in result.stderr
+    finally:
+        unwritable.chmod(0o700)
+
+
+def test_the_entrypoint_starts_the_app_on_a_writable_volume(tmp_path):
+    """The other half: it must not refuse a volume that is fine."""
+    import os
+    import subprocess
+
+    data = tmp_path / "ok"
+    data.mkdir()
+    env = dict(os.environ)
+    env["DATA_DIR"] = str(data)
+    result = subprocess.run(
+        ["sh", str(ENTRYPOINT), "echo", "started"],
+        capture_output=True, text=True, env=env, timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "started" in result.stdout
+
+
+def test_the_app_refuses_an_unwritable_data_directory_with_a_clear_message(tmp_path):
+    """
+    The last line of defence, for platforms where the entrypoint cannot fix
+    ownership. A bare sqlite "unable to open database file" names no cause.
+    """
+    import pytest as _pytest
+
+    from src.db import Database
+
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    try:
+        with _pytest.raises(PermissionError) as excinfo:
+            Database(str(locked / "biorxiv.db"))
+        message = str(excinfo.value)
+        assert str(locked) in message
+        assert "writable" in message
+    finally:
+        locked.chmod(0o700)
