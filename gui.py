@@ -1975,10 +1975,7 @@ class MainWindow(QMainWindow):
         sources_config = load_sources_config()
         self.orchestrator = SourceOrchestrator(sources_config)
 
-        # Surface any startup conditions (e.g. Unpaywall disabled — no contact email).
-        for msg in self.orchestrator.warnings:
-            logger.warning("Startup: %s", msg)
-            self.statusBar().showMessage(f"⚠ {msg}", 0)  # 0 = persistent
+        self._show_startup_warnings(self.orchestrator.warnings)
 
         tabs = QTabWidget()
 
@@ -1999,6 +1996,11 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(tabs)
         logger.info("Application started with sources: %s",
                     self.orchestrator.get_enabled_sources())
+
+    def _show_startup_warnings(self, warnings: list) -> None:
+        for msg in warnings:
+            logger.warning("Startup: %s", msg)
+            self.statusBar().showMessage(f"⚠ {msg}", 0)  # 0 = persistent
 
     def closeEvent(self, event):
         self.db.close()

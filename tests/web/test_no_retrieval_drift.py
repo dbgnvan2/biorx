@@ -48,12 +48,10 @@ PROTECTED = [
 ]
 
 
-def _git(*args, allow_fail: bool = False) -> str:
+def _git(*args) -> str:
     result = subprocess.run(["git", *args], cwd=ROOT, capture_output=True,
                             text=True, timeout=30)
     if result.returncode != 0:
-        if allow_fail:
-            return ""
         # A skip here would hide a bad BASELINE silently (P27/P35).
         pytest.fail(f"git command failed: {result.stderr.strip()}")
     return result.stdout
@@ -104,7 +102,7 @@ def test_the_guard_would_notice_a_change():
         pytest.skip("no commits since baseline — empty range, guard not needed")
     probe = non_protected[0].strip()
     result = _git("diff", "--name-only", f"{BASELINE}..HEAD", "--", probe)
-    assert probe in result, (
+    assert probe in result.splitlines(), (
         f"git diff with -- filter did not return {probe!r} even though it "
         "appeared in the unfiltered diff — the filter mechanism is broken"
     )

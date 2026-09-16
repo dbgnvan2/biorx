@@ -191,44 +191,43 @@ def test_h_contact_email_registers_unpaywall_with_it(monkeypatch):
 
 # ── GUI wiring (P21/P25) ─────────────────────────────────────────────────────
 
-def test_h_gui_shows_orchestrator_warnings_in_status_bar(monkeypatch):
+def test_h_gui_calls_show_startup_warnings_with_orchestrator_warnings(monkeypatch):
     """
-    The GUI surfaces orch.warnings in the status bar (P21 — not dead at the UI).
+    MainWindow.__init__ passes orch.warnings to _show_startup_warnings (P21/P25).
+
+    Tests the call, not a copy of the implementation: patching _show_startup_warnings
+    and asserting it is called with the right argument means deleting the call in
+    __init__ will make this test red (mutation-provable per P27).
+
     Requires PyQt6; skipped in CI where requirements-web.txt omits it (GUI is
-    desktop-only; integration-only path per testing rules).
+    desktop-only; integration-only per testing rules).
     """
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    PyQt6 = pytest.importorskip("PyQt6.QtWidgets")
+    QtWidgets = pytest.importorskip("PyQt6.QtWidgets")
 
-    from unittest.mock import MagicMock, patch, call
+    from unittest.mock import MagicMock, patch
 
     fake_orch = MagicMock()
     fake_orch.warnings = ["Open-access lookup is off: no contact email."]
     fake_orch.get_enabled_sources.return_value = []
 
-    shown = []
-
-    class FakeStatusBar:
-        def showMessage(self, msg, timeout=0):
-            shown.append(msg)
-
     import gui as gui_module
+    captured = []
+
+    def fake_show(self, warnings):
+        captured.extend(warnings)
+
     with patch.object(gui_module, "SourceOrchestrator", return_value=fake_orch), \
          patch.object(gui_module, "load_sources_config", return_value={}), \
-         patch.object(gui_module, "Database", return_value=MagicMock()):
+         patch.object(gui_module, "Database", return_value=MagicMock()), \
+         patch.object(gui_module.MainWindow, "_show_startup_warnings", fake_show):
 
-        app = PyQt6.QApplication.instance() or PyQt6.QApplication([])
-        win = gui_module.MainWindow.__new__(gui_module.MainWindow)
-        # Patch statusBar before __init__ runs so we capture calls
-        win.statusBar = lambda: FakeStatusBar()
-        # Manually trigger just the warnings block to avoid full __init__
-        win.orchestrator = fake_orch
-        for msg in win.orchestrator.warnings:
-            win.statusBar().showMessage(f"⚠ {msg}", 0)
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        win = gui_module.MainWindow()
 
-    assert any("Open-access lookup" in m for m in shown), (
-        "GUI did not surface orchestrator.warnings in the status bar"
+    assert captured == fake_orch.warnings, (
+        "MainWindow.__init__ did not call _show_startup_warnings with orchestrator.warnings"
     )
 
 
