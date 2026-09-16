@@ -1,7 +1,7 @@
 # Implementation plan — Making biorx GREAT
 
 **Spec:** `docs/spec_make_it_great.md` (APPROVED 2026-09-16, revision 5)
-**Status:** DRAFT — awaiting Dave's approval. No implementation code written.
+**Status:** APPROVED 2026-09-16 with PD1–PD5. Implementation proceeding: amended backlog first.
 **Runs after:** the amended backlog, `docs/implementation_plan_2026-09-16_backlog.md` §6
 (order H → A → D → C → E → F reduced → I).
 

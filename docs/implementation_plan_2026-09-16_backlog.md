@@ -1,7 +1,7 @@
 # Implementation plan — the backlog after the web-app build
 
 **Status:** APPROVED 2026-09-16 with all §5 recommendations. N1 done (d278e8d, gate APPROVED). N2 done (d391e4f + 01e2dea, gate APPROVED at fix-loop 1). Next: batch H (CI).
-**Amended:** 2026-09-16 by `docs/spec_make_it_great.md` decisions D1–D7 (local single-user app). See §6; §6 overrides earlier sections where they conflict. Amendment pending Dave's approval.
+**Amended:** 2026-09-16 by `docs/spec_make_it_great.md` decisions D1–D7 (local single-user app). See §6; §6 overrides earlier sections where they conflict. Amendment APPROVED 2026-09-16.
 **Source:** `TODO.md`, the six gate files in `docs/cycles/`, and the live smoke
 test run on 2026-09-16.
 
