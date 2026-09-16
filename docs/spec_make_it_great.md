@@ -1,6 +1,6 @@
 # Making biorx GREAT — Differentiation Spec
 
-Status: APPROVED 2026-09-16 (revision 4: LLM key primary, Ollama optional).
+Status: APPROVED 2026-09-16 (revision 5: O1–O4 accepted; setup guides added).
 Audience: the coding agent + Dave.
 
 Thesis: biorx does not win by out-S2-ing Semantic Scholar (more papers, more
@@ -278,11 +278,36 @@ one minimal call and reports success or the provider's error in plain words
 - Ollama is listed under "Advanced", with a note that it must already be
   installed and running; "Test" checks it the same way.
 - Model per provider stays in `llm_config.yaml`, editable in settings (O4).
+- Screen names and result messages match the user guides (GL.9): Settings →
+  Summaries; "Key works", "Key not accepted", "No credit", "Could not reach
+  the service"; Ollama: "Ollama works", "Ollama is not running", "Model not
+  found".
 - Acceptance: `test_gl_8_no_provider_disables_summaries_with_reason`;
   `test_gl_8_test_key_reports_invalid_key` (patched provider response);
   `test_gl_8_default_provider_is_not_ollama`;
   `test_gl_8_search_download_export_work_with_no_provider`; the live key test is
   integration-only, flagged.
+
+**GL.9 Plain-language setup guides.** Two guides for users who are not
+technical, written 2026-09-16:
+- `docs/guides/getting_an_api_key.md` — choosing DeepSeek or Anthropic, creating
+  an account, adding prepaid credit, creating and copying a key, pasting and
+  testing it in biorx, keeping it safe, what is sent.
+- `docs/guides/installing_ollama.md` — whether to bother, system requirements,
+  installing from ollama.com, downloading a model sized to the computer's
+  memory, connecting it in biorx, removing it.
+Each guide starts with maintainer notes recording what was verified and what
+was not (provider screens behind sign-in were not seen).
+- The settings screen links to the relevant guide, served by the local app so
+  it works offline; README links to both.
+- Acceptance: `test_gl_9_settings_links_to_both_guides` (rendered page, link
+  resolves to a 200);
+  `test_gl_9_guide_messages_match_the_app` (every quoted result message in the
+  guides exists in the app's message table, and the reverse);
+  `test_gl_9_guide_model_ids_match_llm_config` (parsed from the guide's
+  command blocks, not substring). **Human review:** before each release, a
+  person follows both guides on a fresh account/machine, on macOS and Windows,
+  and records the result; provider button names are corrected then.
 
 **GL.7 CI on both platforms.** GitHub Actions matrix `macos-latest` and
 `windows-latest` running the full suite (amends backlog batch H). Every check
@@ -454,21 +479,21 @@ backup is older than a configured number of days, and on demand.
 - **Hosting, multi-user access, accounts.** D1, D4.
 - **Sync or sharing between colleagues.** Each install is independent. Sharing a
   filter or reference list by exporting a file is a possible later item.
-- **A packaged, signed installer.** Open decision O1.
+- **A packaged, signed installer.** Decided against for now (O1).
 - **Requiring Ollama for anything.** D7.
 - **Full S2 corpus replacement**, **a vector database**, **merging preprints with
   published versions**, **replacing `canonical_id`**, **becoming Google Scholar.**
 
 ---
 
-## 7. Open decisions
+## 7. Decisions O1–O4 (accepted as recommended, 2026-09-16)
 
-| # | Question | Recommendation |
+| # | Question | Decision |
 |---|---|---|
-| O1 | Install method for colleagues: scripted install (GL.6), or a packaged `.app`/`.exe` | Scripted install first. A packaged app needs code signing (Apple Developer account, Windows certificate) to avoid OS security warnings; do it only if colleagues cannot manage the script. |
-| O2 | Keep the legacy CLI agents (`agents/search_agent.py`, `summarization_agent.py`, `monitor.py`) or fold them into `biorx run-due` and friends | Fold `monitor.py` into `biorx run-due` (G3.2); decide the other two in the plan. |
+| O1 | Install method for colleagues: scripted install (GL.6), or a packaged `.app`/`.exe` | Scripted install. A packaged app needs code signing (Apple Developer account, Windows certificate) to avoid OS security warnings; do it only if colleagues cannot manage the script. |
+| O2 | Keep the legacy CLI agents (`agents/search_agent.py`, `summarization_agent.py`, `monitor.py`) or fold them into `biorx run-due` and friends | Fold `monitor.py` into `biorx run-due` (G3.2). `search_agent.py` and `summarization_agent.py` are decided in the implementation plan. |
 | O3 | Record the user's own LLM calls locally for cost tracking (GL.3) | Yes, as a simple history with no cap. |
-| O4 | Default model per provider for a key-paying user | A cheaper model by default (e.g. `deepseek-chat`, `claude-haiku-4-5`), the stronger model selectable; verify ids and prices against current provider docs during planning. |
+| O4 | Default model per provider for a key-paying user | A cheaper model by default, the stronger one selectable. Checked against provider docs 2026-09-16: DeepSeek `deepseek-flash` (default; `deepseek-chat` in `llm_config.yaml` is no longer listed) and `deepseek-v4-pro`; Anthropic `claude-haiku-4-5-20251001` (default) and `claude-sonnet-5`. `deepseek-flash` defaults to thinking mode, which adds billed output tokens; summaries turn it off unless a test shows quality needs it. |
 
 ---
 
@@ -478,7 +503,7 @@ backup is older than a configured number of days, and on demand.
 |---|---|---|
 | 1 | Amend backlog plan (§3); backlog H (macOS + Windows CI), A, D, C | In progress; D/C touch the same adapters |
 | 2 | G0.1 | Live precision bug in every Europe PMC/PubMed search |
-| 3 | GL.1, GL.2, GL.3, GL.4, GL.8 | The local app is the platform everything else ships on |
+| 3 | GL.1, GL.2, GL.3, GL.4, GL.8, GL.9 | The local app is the platform everything else ships on |
 | 4 | GL.5, GL.6 | Parity and install; then retire `gui.py` |
 | 5 | G1.1, G1.2, G1.3 | Identity settled before deltas depend on it |
 | 6 | G3.1, then G3.2 | The main differentiator |

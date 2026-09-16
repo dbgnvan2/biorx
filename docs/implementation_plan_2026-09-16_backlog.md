@@ -1,6 +1,7 @@
 # Implementation plan — the backlog after the web-app build
 
 **Status:** APPROVED 2026-09-16 with all §5 recommendations. N1 done (d278e8d, gate APPROVED). N2 done (d391e4f + 01e2dea, gate APPROVED at fix-loop 1). Next: batch H (CI).
+**Amended:** 2026-09-16 by `docs/spec_make_it_great.md` decisions D1–D7 (local single-user app). See §6; §6 overrides earlier sections where they conflict. Amendment pending Dave's approval.
 **Source:** `TODO.md`, the six gate files in `docs/cycles/`, and the live smoke
 test run on 2026-09-16.
 
@@ -229,3 +230,27 @@ jobs per user, 10 new sessions per hour per IP.
 From the cold review, features rather than defects: persisting search results
 beyond the one-hour job TTL, and surfacing the existing bookmarks and search
 history tables in the web client. Worth a spec of their own.
+
+---
+
+## 6. Amendment — local single-user app (2026-09-16)
+
+`docs/spec_make_it_great.md` (approved 2026-09-16) makes biorx a single-user app
+that each person runs on their own macOS or Windows machine, retires the Railway
+deployment and the multi-user code, and makes an LLM API key the primary
+summary path. Effect on the batches above:
+
+| Batch | Change |
+|---|---|
+| H (CI) | Matrix is `macos-latest` + `windows-latest`, Python 3.12 (the version the install scripts pin, spec GL.6). Adds a check that SQLite FTS5 is available on both (spec G5.3). Contact-address item unchanged. The "two local interpreters" decision is answered: 3.12. |
+| A (dead code) | `crypto.mask()` is not deleted separately: all of `src/crypto.py` goes in spec GL.4. `_source_label`, `AppContext._extras`, `jobs_for()` and the `TODO.md` pruning are unchanged. |
+| B (desktop `llm.py`) | **Superseded** by make-it-great plan chunk 7 (CLI consolidation), which removes the legacy Ollama-only `src/llm.py` path and routes the CLI through the provider layer. Fixing code that is about to be deleted is not done. |
+| C (`utcnow`) | Unchanged. |
+| D (arXiv, monitor CLI) | Unchanged. `monitor.py` exit-code and duplicate-name fixes carry into `biorx run-due` (spec G3.2, O2). |
+| E (tests) | The constant-time access-code test is dropped (the access code is removed, spec GL.3). The env-var documentation test is unchanged. |
+| F (container, access) | Entrypoint hint and session rate limit: **dropped** (no container, no sessions). "`created_by_user_id` in responses" decision: **dropped** (one user). CSP header: **kept**. Per-user concurrent job cap becomes a global cap (default 3). |
+| G (desktop threading) | **Dropped** — `gui.py` is frozen and then removed (spec GL.5). If a GUI threading bug is hit before removal, it is fixed as a bug, not as this batch. |
+| I (standards repo) | Unchanged. |
+
+Order after this amendment: H → A → D → C → E → F (reduced) → I. Then
+`docs/implementation_plan_2026-09-16_make_it_great.md`.
