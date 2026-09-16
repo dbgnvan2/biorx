@@ -23,11 +23,11 @@ import pytest
 ROOT = Path(__file__).parent.parent.parent
 
 # The last commit that intentionally touched retrieval-layer files.
-# Updated from a3769ef → ad2818e by Batch H (contact-email hygiene):
-#   src/sources/arxiv.py   — User-Agent built via polite_user_agent()
-#   src/sources/orchestrator.py — Unpaywall guard added when no email is set
-# These are W1.a-flagged exceptions: hygiene changes, not retrieval-logic changes.
-BASELINE = "ad2818e"
+# Updated from a3769ef → ad2818e (Batch H: User-Agent hygiene + Unpaywall guard)
+# Updated from ad2818e → 531b24f (test-qa fix: orch.warnings added to orchestrator.py
+#   to surface startup conditions to callers — an interface addition, not retrieval logic)
+# Each advance is a W1.a-flagged exception documented here and in the commit message.
+BASELINE = "531b24f"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
@@ -48,11 +48,14 @@ PROTECTED = [
 ]
 
 
-def _git(*args) -> str:
+def _git(*args, allow_fail: bool = False) -> str:
     result = subprocess.run(["git", *args], cwd=ROOT, capture_output=True,
                             text=True, timeout=30)
     if result.returncode != 0:
-        pytest.skip(f"git unavailable or baseline missing: {result.stderr.strip()}")
+        if allow_fail:
+            return ""
+        # A skip here would hide a bad BASELINE silently (P27/P35).
+        pytest.fail(f"git command failed: {result.stderr.strip()}")
     return result.stdout
 
 
@@ -77,20 +80,31 @@ def test_retrieval_modules_unchanged_since_the_web_work_began():
 
 
 def test_the_baseline_commit_is_reachable():
-    """Guard-the-guard: a bad baseline makes the diff empty for the wrong reason."""
-    subject = _git("log", "-1", "--format=%s", BASELINE).strip()
-    assert subject, "the baseline commit could not be read"
+    """Guard-the-guard: a bad baseline makes the diff empty for the wrong reason.
+    Uses subprocess directly (not _git) so an unreachable BASELINE fails, not skips."""
+    result = subprocess.run(
+        ["git", "log", "-1", "--format=%s", BASELINE],
+        cwd=ROOT, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0 and result.stderr == "", (
+        f"BASELINE {BASELINE!r} is not reachable: {result.stderr.strip()}"
+    )
+    assert result.stdout.strip(), f"BASELINE {BASELINE!r} returned an empty subject"
 
 
 def test_the_guard_would_notice_a_change():
     """
-    Proves the diff mechanism works by checking a file that changed IN the
-    baseline commit itself (BASELINE~1..BASELINE). src/sources/arxiv.py is
-    correct: it was the Batch H change that advanced the baseline here.
+    Proves the -- filter in the drift check works by using the same range
+    (BASELINE..HEAD) and a file proven to have changed in that range.
+    Skips when BASELINE == HEAD (empty range; nothing to guard against).
     """
-    changed = _git("diff", "--name-only", f"{BASELINE}~1..{BASELINE}", "--",
-                   "src/sources/arxiv.py")
-    assert "src/sources/arxiv.py" in changed, (
-        "the diff reports no change to src/sources/arxiv.py in the baseline "
-        "commit — check that BASELINE points at the right commit"
+    all_changed = _git("diff", "--name-only", f"{BASELINE}..HEAD").splitlines()
+    non_protected = [f for f in all_changed if f.strip() and f.strip() not in PROTECTED]
+    if not non_protected:
+        pytest.skip("no commits since baseline — empty range, guard not needed")
+    probe = non_protected[0].strip()
+    result = _git("diff", "--name-only", f"{BASELINE}..HEAD", "--", probe)
+    assert probe in result, (
+        f"git diff with -- filter did not return {probe!r} even though it "
+        "appeared in the unfiltered diff — the filter mechanism is broken"
     )

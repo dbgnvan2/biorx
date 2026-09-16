@@ -1975,6 +1975,11 @@ class MainWindow(QMainWindow):
         sources_config = load_sources_config()
         self.orchestrator = SourceOrchestrator(sources_config)
 
+        # Surface any startup conditions (e.g. Unpaywall disabled — no contact email).
+        for msg in self.orchestrator.warnings:
+            logger.warning("Startup: %s", msg)
+            self.statusBar().showMessage(f"⚠ {msg}", 0)  # 0 = persistent
+
         tabs = QTabWidget()
 
         self.search_tab  = SearchBrowseTab(self.db, self.orchestrator)
