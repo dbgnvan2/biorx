@@ -218,9 +218,14 @@ def test_h_gui_calls_show_startup_warnings_with_orchestrator_warnings(monkeypatc
     def fake_show(self, warnings):
         captured.extend(warnings)
 
+    # SummarizationAgent binds src.db.Database directly (not gui_module.Database),
+    # so we must patch it here or MainWindow.__init__ reaches the real production DB.
+    # load_filters / FILTERS_PATH reads the real filters.json — patch those too (P34).
     with patch.object(gui_module, "SourceOrchestrator", return_value=fake_orch), \
          patch.object(gui_module, "load_sources_config", return_value={}), \
          patch.object(gui_module, "Database", return_value=MagicMock()), \
+         patch.object(gui_module, "SummarizationAgent", return_value=MagicMock()), \
+         patch.object(gui_module, "load_filters", return_value=[]), \
          patch.object(gui_module.MainWindow, "_show_startup_warnings", fake_show):
 
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -228,6 +233,36 @@ def test_h_gui_calls_show_startup_warnings_with_orchestrator_warnings(monkeypatc
 
     assert captured == fake_orch.warnings, (
         "MainWindow.__init__ did not call _show_startup_warnings with orchestrator.warnings"
+    )
+
+
+def test_h_show_startup_warnings_renders_to_status_bar_and_logger(caplog):
+    """
+    _show_startup_warnings body: showMessage receives f"⚠ {msg}" with timeout 0,
+    and logger.warning is called (P19 — patching away the method in the prior test
+    proves only the call site, not the rendering).
+
+    Tests the method directly via __new__ so MainWindow.__init__ is never invoked.
+    """
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PyQt6.QtWidgets")
+    from unittest.mock import MagicMock, patch
+    import gui as gui_module
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    win = gui_module.MainWindow.__new__(gui_module.MainWindow)
+
+    mock_bar = MagicMock()
+    with patch.object(win, "statusBar", return_value=mock_bar), \
+         caplog.at_level(logging.WARNING):
+        win._show_startup_warnings(["Open-access lookup is off."])
+
+    mock_bar.showMessage.assert_called_once_with("⚠ Open-access lookup is off.", 0)
+    assert any(
+        "Startup" in r.getMessage() and "Open-access" in r.getMessage()
+        for r in caplog.records
     )
 
 
