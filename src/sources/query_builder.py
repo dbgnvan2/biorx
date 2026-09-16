@@ -15,6 +15,8 @@ Wildcard: term ending in '*' = prefix match (works natively in Europe PMC Lucene
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
+from ..filtering import normalize_authors
+
 
 # ── Internal helpers ────────────────────────────────────────────────────────────
 
@@ -171,3 +173,95 @@ def get_date_range(filter_dict: Dict[str, Any]) -> tuple:
         (datetime.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
     )
     return start_date, end_date
+
+
+def build_arxiv_query(filter_dict: Dict[str, Any]) -> str:
+    """
+    Build an arXiv query string from a filter_dict.
+
+    arXiv query syntax:
+    - Field prefixes: ti: (title), abs: (abstract), all: (both), au: (author)
+    - Phrases: "exact phrase"
+    - Boolean: AND, OR, NOT
+    - Date: submittedDate:[YYYYMMDDHHmm TO YYYYMMDDHHmm]
+
+    Returns a query string ready for the arXiv API's search_query param.
+    """
+    groups = filter_dict.get("text_groups", [])
+    if not groups and filter_dict.get("keywords"):
+        groups = [{"title": "", "abstract": "", "both": ", ".join(filter_dict["keywords"])}]
+
+    # Build text clauses from groups (OR-joined)
+    group_clauses: List[str] = []
+    for g in groups:
+        group_clause = _group_to_arxiv(g)
+        if group_clause:
+            group_clauses.append(group_clause)
+
+    # Authors, OR-joined and AND-ed with the text part. The filter's `authors`
+    # field is a list in the GUI's format and a comma-separated string in older
+    # hand-written filters; normalize_authors() is the single reader of both, so
+    # the query builder and the client-side filter cannot disagree about it.
+    author_terms = normalize_authors(filter_dict.get("authors"))
+    author_clauses = [
+        f'au:"{t}"' if " " in t else f"au:{t}" for t in author_terms
+    ]
+
+    # Build date range clause
+    start_date, end_date = get_date_range(filter_dict)
+    # arXiv date format: YYYYMMDDHHmm
+    start_ymd = start_date.replace("-", "") + "0000"
+    end_ymd = end_date.replace("-", "") + "2359"
+    date_clause = f"submittedDate:[{start_ymd} TO {end_ymd}]"
+
+    # Combine all parts
+    parts: List[str] = []
+
+    # Add text groups (OR-joined)
+    if group_clauses:
+        if len(group_clauses) > 1:
+            text_part = " OR ".join(f"({c})" for c in group_clauses)
+        else:
+            text_part = group_clauses[0]
+        parts.append(f"({text_part})")
+
+    # Add authors (OR-joined with text if present)
+    if author_clauses:
+        author_part = " OR ".join(author_clauses) if len(author_clauses) > 1 else author_clauses[0]
+        if parts:
+            parts.append(f"({author_part})")
+        else:
+            parts.append(author_part)
+
+    # Add date (always present)
+    parts.append(date_clause)
+
+    # Join all parts with AND
+    return " AND ".join(parts)
+
+
+def _group_to_arxiv(group: Dict[str, str]) -> str:
+    """Convert one text_group to an arXiv query clause (title/abstract/both)."""
+    title_terms = _split_terms(group.get("title", ""))
+    abstract_terms = _split_terms(group.get("abstract", ""))
+    both_terms = _split_terms(group.get("both", ""))
+
+    parts: List[str] = []
+
+    if title_terms:
+        clauses = [f'ti:"{t}"' if " " in t else f"ti:{t}" for t in title_terms]
+        parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
+
+    if abstract_terms:
+        clauses = [f'abs:"{t}"' if " " in t else f"abs:{t}" for t in abstract_terms]
+        parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
+
+    if both_terms:
+        # "both" = all: field in arXiv
+        clauses = [f'all:"{t}"' if " " in t else f"all:{t}" for t in both_terms]
+        parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
+
+    if not parts:
+        return ""
+
+    return " AND ".join(f"({p})" for p in parts) if len(parts) > 1 else parts[0]

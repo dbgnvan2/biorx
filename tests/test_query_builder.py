@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from src.sources.query_builder import build_europepmc_query, build_psyarxiv_query, _species_clause, _ANIMAL_ORGANISM_EXCLUSIONS
+from src.sources.query_builder import build_europepmc_query, build_psyarxiv_query, build_arxiv_query, _species_clause, _ANIMAL_ORGANISM_EXCLUSIONS
 
 
 def _q(text_groups=None, days_back=7, keywords=None):
@@ -148,6 +148,116 @@ def test_species_any_not_in_query():
     assert "ORGANISM" not in q
 
 
+# ── arXiv query builder ───────────────────────────────────────────────────────
+
+def test_arxiv_single_both_term():
+    q = build_arxiv_query(_q([{"title": "", "abstract": "", "both": "agent"}]))
+    assert "all:agent" in q
+    assert "submittedDate:[" in q
+
+
+def test_arxiv_phrase_quoting():
+    q = build_arxiv_query(_q([{"title": "", "abstract": "", "both": "multi-agent systems"}]))
+    # Multi-word phrase should be quoted
+    assert 'all:"multi-agent systems"' in q
+
+
+def test_arxiv_title_field():
+    q = build_arxiv_query(_q([{"title": "agent", "abstract": "", "both": ""}]))
+    assert "ti:agent" in q
+
+
+def test_arxiv_abstract_field():
+    q = build_arxiv_query(_q([{"title": "", "abstract": "LLM", "both": ""}]))
+    assert "abs:LLM" in q
+
+
+def test_arxiv_multiple_terms_in_field_or_joined():
+    q = build_arxiv_query(_q([{"title": "", "abstract": "", "both": "agent, simulation"}]))
+    assert "OR" in q
+    assert "all:agent" in q
+    assert "all:simulation" in q
+
+
+def test_arxiv_multiple_groups_or_joined():
+    groups = [
+        {"title": "", "abstract": "", "both": "agent"},
+        {"title": "", "abstract": "", "both": "simulation"},
+    ]
+    q = build_arxiv_query(_q(groups))
+    # Groups should be OR-joined
+    assert " OR " in q
+    assert "all:agent" in q
+    assert "all:simulation" in q
+
+
+def test_arxiv_and_between_fields():
+    q = build_arxiv_query(_q([{"title": "agent", "abstract": "LLM", "both": ""}]))
+    # Within a group, different fields should be AND-joined
+    assert "AND" in q
+    assert "ti:agent" in q
+    assert "abs:LLM" in q
+
+
+def test_arxiv_date_format():
+    q = build_arxiv_query({"text_groups": [], "days_back": 7})
+    # Date should be in YYYYMMDDHHmm format
+    assert "submittedDate:[" in q
+    assert "2359]" in q  # End of day
+
+
+def test_arxiv_date_only_no_text():
+    """Pure date-range query without text should be valid."""
+    q = build_arxiv_query({"text_groups": [], "days_back": 7})
+    assert "submittedDate:[" in q
+    assert "all:" not in q
+    assert "ti:" not in q
+
+
+def test_arxiv_authors_or_joined():
+    q = build_arxiv_query({
+        "text_groups": [],
+        "days_back": 7,
+        "authors": ["Smith", "Jones"],     # the shape filters.json actually uses
+    })
+    # Authors should be OR-joined
+    assert " OR " in q
+    assert 'au:Smith' in q or 'au:"Smith"' in q
+    assert 'au:Jones' in q or 'au:"Jones"' in q
+    assert "submittedDate:[" in q
+
+
+def test_arxiv_authors_and_ed_with_text():
+    """Authors should be AND-ed with text groups when both present."""
+    q = build_arxiv_query({
+        "text_groups": [{"title": "", "abstract": "", "both": "agent"}],
+        "days_back": 7,
+        "authors": ["Smith"],
+    })
+    assert "AND" in q
+    assert "all:agent" in q
+    assert "au:Smith" in q or 'au:"Smith"' in q
+
+
+def test_arxiv_ignores_unsupported_filters():
+    """species, paper_type, license, published should be ignored for arXiv."""
+    q = build_arxiv_query({
+        "text_groups": [{"title": "", "abstract": "", "both": "agent"}],
+        "days_back": 7,
+        "species": "Human studies only",
+        "paper_type": "article",
+        "license": "CC-BY",
+        "published": "2025-01-01",
+    })
+    # Should not have species/paper_type/license restrictions
+    assert "ANIMAL" not in q
+    assert "paper_type" not in q
+    assert "CC-BY" not in q
+    # But should have the text and date
+    assert "all:agent" in q
+    assert "submittedDate:[" in q
+
+
 # ── Date range override ───────────────────────────────────────────────────────
 
 def test_explicit_date_range_overrides_days_back():
@@ -166,3 +276,26 @@ def test_days_back_used_when_no_explicit_dates():
     q = build_europepmc_query({"text_groups": [], "days_back": 30})
     expected_start = (datetime.today() - timedelta(days=30)).strftime("%Y-%m-%d")
     assert expected_start in q
+
+
+def test_arxiv_authors_accepts_the_legacy_string_shape():
+    """Hand-written filters may still store authors as one comma-separated string."""
+    q = build_arxiv_query({"text_groups": [], "days_back": 7, "authors": "Smith, Jones"})
+    assert "au:Smith" in q and "au:Jones" in q
+
+
+def test_arxiv_query_builds_for_every_saved_filter():
+    """
+    Built against the real filters.json, not a hand-made dict: the `authors`
+    field is a list there, and a string-shaped assumption crashed the builder.
+    """
+    import json
+    from pathlib import Path as _P
+
+    data = json.loads((_P(__file__).parent.parent / "filters.json").read_text())
+    saved = data["filters"] if isinstance(data, dict) and "filters" in data else data
+    assert saved, "filters.json has no filters to check against"
+
+    for f in saved:
+        q = build_arxiv_query(f)           # must not raise on any real filter
+        assert "submittedDate:[" in q

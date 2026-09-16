@@ -82,26 +82,6 @@
       }
     },
     {
-      "name": "New Filter",
-      "enabled": true,
-      "category": "(any)",
-      "days_back": 7,
-      "start_date": "",
-      "end_date": "",
-      "text_groups": [],
-      "authors": [],
-      "institution": "",
-      "paper_type": "(any)",
-      "version": "(any)",
-      "published": "(any)",
-      "license": "(any)",
-      "species": "(any)",
-      "source_selection": {
-        "all": true,
-        "selected": []
-      }
-    },
-    {
       "name": "Psychological Stress and Inflammation",
       "enabled": true,
       "category": "(any)",
@@ -125,6 +105,249 @@
       "source_selection": {
         "all": true,
         "selected": []
+      }
+    },
+    {
+      "name": "Bowen and Marriage",
+      "enabled": true,
+      "category": "(any)",
+      "days_back": 0,
+      "start_date": "2020-04-01",
+      "end_date": "2026-04-08",
+      "text_groups": [
+        {
+          "title": "Bowen AND Marriage",
+          "abstract": "Bowen AND Marriage",
+          "both": ""
+        },
+        {
+          "title": "Bowen Family systems Theory",
+          "abstract": "Bowen Family Systems Theory",
+          "both": ""
+        }
+      ],
+      "authors": [],
+      "institution": "",
+      "paper_type": "(any)",
+      "version": "(any)",
+      "published": "(any)",
+      "license": "(any)",
+      "species": "(any)",
+      "source_selection": {
+        "all": true,
+        "selected": []
+      }
+    },
+    {
+      "name": "empty nest syndrome",
+      "enabled": true,
+      "category": "(any)",
+      "days_back": 7,
+      "start_date": "",
+      "end_date": "",
+      "text_groups": [
+        {
+          "title": "Empty Nest",
+          "abstract": "Empty Nest",
+          "both": ""
+        }
+      ],
+      "authors": [],
+      "institution": "",
+      "paper_type": "(any)",
+      "version": "(any)",
+      "published": "(any)",
+      "license": "(any)",
+      "species": "(any)",
+      "source_selection": {
+        "all": true,
+        "selected": []
+      }
+    },
+    {
+      "name": "New Filter",
+      "enabled": true,
+      "category": "(any)",
+      "days_back": 7,
+      "start_date": "",
+      "end_date": "",
+      "text_groups": [],
+      "authors": [],
+      "institution": "",
+      "paper_type": "(any)",
+      "version": "(any)",
+      "published": "(any)",
+      "license": "(any)",
+      "species": "(any)",
+      "source_selection": {
+        "all": true,
+        "selected": []
+      }
+    },
+    {
+      "name": "Multilevel Selection",
+      "enabled": false,
+      "category": "evolutionary biology",
+      "days_back": 0,
+      "start_date": "2020-06-01",
+      "end_date": "2026-06-08",
+      "text_groups": [
+        {
+          "title": "",
+          "abstract": "multilevel selection",
+          "both": ""
+        }
+      ],
+      "authors": [],
+      "institution": "",
+      "paper_type": "(any)",
+      "version": "(any)",
+      "published": "(any)",
+      "license": "(any)",
+      "species": "(any)",
+      "source_selection": {
+        "all": false,
+        "selected": [
+          "europepmc",
+          "pubmed",
+          "biorxiv_medrxiv"
+        ]
+      }
+    },
+    {
+      "name": "Social Baseline",
+      "enabled": true,
+      "category": "(any)",
+      "days_back": 0,
+      "start_date": "2002-11-01",
+      "end_date": "2026-07-01",
+      "text_groups": [
+        {
+          "title": "Social Baseline",
+          "abstract": "",
+          "both": "Social Baseline Theory"
+        }
+      ],
+      "authors": [],
+      "institution": "",
+      "paper_type": "(any)",
+      "version": "(any)",
+      "published": "(any)",
+      "license": "(any)",
+      "species": "Exclude animal studies",
+      "source_selection": {
+        "all": false,
+        "selected": [
+          "pubmed",
+          "psyarxiv",
+          "socarxiv"
+        ]
+      }
+    },
+    {
+      "name": "Loneliness",
+      "enabled": true,
+      "category": "evolutionary biology",
+      "days_back": 0,
+      "start_date": "2019-11-01",
+      "end_date": "2026-07-15",
+      "text_groups": [
+        {
+          "title": "loneliness",
+          "abstract": "family",
+          "both": "loneliness"
+        },
+        {
+          "title": "social Isolation",
+          "abstract": "family",
+          "both": "social Isolation"
+        }
+      ],
+      "authors": [],
+      "institution": "",
+      "paper_type": "review article",
+      "version": "(any)",
+      "published": "(any)",
+      "license": "(any)",
+      "species": "Exclude animal studies",
+      "source_selection": {
+        "all": true,
+        "selected": []
+      }
+    },
+    {
+      "name": "New Filter",
+      "enabled": true,
+      "category": "(any)",
+      "days_back": 7,
+      "start_date": "",
+      "end_date": "",
+      "text_groups": [],
+      "authors": [],
+      "institution": "",
+      "paper_type": "(any)",
+      "version": "(any)",
+      "published": "(any)",
+      "license": "(any)",
+      "species": "(any)",
+      "source_selection": {
+        "all": true,
+        "selected": []
+      }
+    },
+    {
+      "name": "Agent Simulation",
+      "enabled": true,
+      "category": "(any)",
+      "days_back": 14,
+      "start_date": "",
+      "end_date": "",
+      "text_groups": [
+        {
+          "title": "",
+          "abstract": "",
+          "both": "generative agents, multi-agent simulation, agent-based model, interactive simulacra"
+        },
+        {
+          "title": "",
+          "abstract": "",
+          "both": "algorithmic fidelity, silicon samples"
+        },
+        {
+          "title": "",
+          "abstract": "large language model",
+          "both": "persona, personality, emotion"
+        },
+        {
+          "title": "",
+          "abstract": "language model",
+          "both": "self-adapting, self-improving"
+        },
+        {
+          "title": "",
+          "abstract": "",
+          "both": "emergent misalignment"
+        },
+        {
+          "title": "",
+          "abstract": "reinforcement learning",
+          "both": "addiction"
+        }
+      ],
+      "authors": [],
+      "institution": "",
+      "paper_type": "(any)",
+      "version": "(any)",
+      "published": "(any)",
+      "license": "(any)",
+      "species": "(any)",
+      "source_selection": {
+        "all": false,
+        "selected": [
+          "arxiv",
+          "psyarxiv",
+          "socarxiv"
+        ]
       }
     }
   ]

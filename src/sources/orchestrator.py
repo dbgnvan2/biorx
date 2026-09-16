@@ -19,7 +19,7 @@ from typing import Dict, Any, List, Callable, Optional
 
 from .schema import CanonicalRecord
 from .dedup import Deduplicator
-from .query_builder import build_europepmc_query, build_psyarxiv_query, get_date_range
+from .query_builder import build_europepmc_query, build_psyarxiv_query, build_arxiv_query, get_date_range
 from .errors import SourceUnavailableError, RateLimitedError
 from .config import (
     get_enabled_search_sources, is_source_enabled,
@@ -36,6 +36,7 @@ _SOURCE_TRUST: Dict[str, float] = {
     "psyarxiv":        0.75,
     "socarxiv":        0.75,
     "biorxiv_medrxiv": 0.75,
+    "arxiv":           0.75,
     "openalex":        0.70,
 }
 
@@ -47,6 +48,7 @@ _SOURCE_LABELS: Dict[str, str] = {
     "psyarxiv":        "PsyArXiv",
     "socarxiv":        "SocArXiv",
     "biorxiv_medrxiv": "bioRxiv/medRxiv",
+    "arxiv":           "arXiv",
     "openalex":        "OpenAlex",
 }
 
@@ -98,6 +100,11 @@ class SourceOrchestrator:
             from .biorxiv_medrxiv import BiorxivMedrxivAdapter
             self._search_adapters["biorxiv_medrxiv"] = BiorxivMedrxivAdapter()
             logger.info("Registered adapter: biorxiv_medrxiv")
+
+        if is_source_enabled(self.config, "arxiv"):
+            from .arxiv import ArxivAdapter
+            self._search_adapters["arxiv"] = ArxivAdapter()
+            logger.info("Registered adapter: arxiv")
 
         if is_source_enabled(self.config, "crossref"):
             from .crossref import CrossrefAdapter
@@ -233,6 +240,8 @@ class SourceOrchestrator:
             return build_europepmc_query(filter_dict)
         if source_name in ("psyarxiv", "socarxiv"):
             return build_psyarxiv_query(filter_dict)
+        if source_name == "arxiv":
+            return build_arxiv_query(filter_dict)
         # bioRxiv/medRxiv is date-based, query is informational only
         return build_psyarxiv_query(filter_dict)
 
@@ -261,8 +270,8 @@ class SourceOrchestrator:
                 break
 
             try:
-                # PsyArXiv, SocArXiv and bioRxiv adapters accept filter_dict for date range
-                if source_name in ("psyarxiv", "socarxiv", "biorxiv_medrxiv"):
+                # PsyArXiv, SocArXiv, bioRxiv and arXiv adapters accept filter_dict for date range
+                if source_name in ("psyarxiv", "socarxiv", "biorxiv_medrxiv", "arxiv"):
                     raw_records = adapter.search(
                         query, page=page, page_size=self.PAGE_SIZE,
                         filter_dict=filter_dict
@@ -276,8 +285,23 @@ class SourceOrchestrator:
                 logger.error("Source %s unavailable: %s", source_name, e)
                 break
 
-            if not raw_records:
+            # An adapter may filter entries out of a page (arXiv drops withdrawn
+            # papers), so the number of records returned is not the number the
+            # source sent. Page-end detection must use the source's own page
+            # size or a full page minus one withdrawn paper ends the search.
+            page_size_seen = getattr(adapter, "last_page_size", None)
+            if page_size_seen is None:
+                page_size_seen = len(raw_records)
+
+            if not page_size_seen:
                 break
+
+            if not raw_records:
+                # Whole page filtered out but the source has more — keep paging.
+                if page_size_seen < self.PAGE_SIZE:
+                    break
+                page += 1
+                continue
 
             batch: List[CanonicalRecord] = []
             for raw in raw_records:
@@ -318,7 +342,7 @@ class SourceOrchestrator:
             if src_total and fetched >= src_total:
                 break
 
-            if len(raw_records) < self.PAGE_SIZE:
+            if page_size_seen < self.PAGE_SIZE:
                 break  # last page
 
             page += 1

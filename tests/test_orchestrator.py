@@ -302,3 +302,96 @@ def test_e2_3_enrichment_emits_status():
 
     assert any("Enriching" in m for m in messages), messages
     orch._crossref.enrich.assert_called()
+
+
+# ── Page-end detection must use the source's page size (review finding 2) ─────
+
+def _orch_for_pagination():
+    orch = SourceOrchestrator.__new__(SourceOrchestrator)
+    orch.config = _config()
+    orch._crossref = None
+    orch._unpaywall = None
+    orch._search_adapters = {}
+    return orch
+
+
+def test_filtered_entry_does_not_end_pagination_early():
+    """
+    An adapter that removes entries from a page (arXiv drops withdrawn papers)
+    returns fewer records than the source sent. Using the returned length as the
+    last-page signal would discard every remaining page.
+    """
+    from src.sources.dedup import Deduplicator
+
+    orch = _orch_for_pagination()
+    page_size = orch.PAGE_SIZE
+
+    adapter = MagicMock()
+    adapter.last_page_size = page_size          # source sent a full page...
+    adapter.last_total = 0
+    pages = {
+        1: [{"i": i} for i in range(page_size - 1)],   # ...one was filtered out
+        2: [{"i": 100}],
+    }
+
+    def _search(query, page=1, page_size=None, **kw):
+        adapter.last_page_size = page_size if page in (1,) else 1
+        return pages.get(page, [])
+
+    adapter.search.side_effect = _search
+    adapter.normalize.side_effect = lambda raw: _make_record(
+        doi=f"10.1234/p{raw['i']}", title=f"Paper {raw['i']}"
+    )
+
+    fetched = orch._search_source(
+        "arxiv", adapter, "q", {}, Deduplicator(),
+        None, None, None, max_results=1000,
+    )
+
+    assert adapter.search.call_count == 2, "stopped after page 1"
+    assert fetched == page_size, "records from page 2 were lost"
+
+
+def test_page_shorter_than_page_size_still_ends_pagination():
+    """The last page must still terminate the loop."""
+    from src.sources.dedup import Deduplicator
+
+    orch = _orch_for_pagination()
+    adapter = MagicMock()
+    adapter.last_total = 0
+    adapter.last_page_size = 3
+    adapter.search.return_value = [{"i": 1}, {"i": 2}, {"i": 3}]
+    adapter.normalize.side_effect = lambda raw: _make_record(
+        doi=f"10.1234/q{raw['i']}", title=f"Q {raw['i']}"
+    )
+
+    fetched = orch._search_source(
+        "arxiv", adapter, "q", {}, Deduplicator(),
+        None, None, None, max_results=1000,
+    )
+    assert adapter.search.call_count == 1
+    assert fetched == 3
+
+
+def test_adapters_without_a_page_size_attribute_are_unaffected():
+    """Siblings that do not report last_page_size keep the old behaviour (P5)."""
+    from src.sources.dedup import Deduplicator
+
+    orch = _orch_for_pagination()
+
+    class PlainAdapter:
+        def __init__(self):
+            self.calls = 0
+        def search(self, query, page=1, page_size=25, **kw):
+            self.calls += 1
+            return [{"i": page}] if page == 1 else []
+        def normalize(self, raw):
+            return _make_record(doi=f"10.1234/r{raw['i']}", title=f"R {raw['i']}")
+
+    adapter = PlainAdapter()
+    fetched = orch._search_source(
+        "europepmc", adapter, "q", {}, Deduplicator(),
+        None, None, None, max_results=1000,
+    )
+    assert adapter.calls == 1      # short page ended it, as before
+    assert fetched == 1

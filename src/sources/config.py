@@ -16,17 +16,18 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
         "psyarxiv":         {"enabled": True,  "default_selected": True},
         "socarxiv":         {"enabled": True,  "default_selected": True},
         "biorxiv_medrxiv":  {"enabled": True,  "default_selected": False},
+        "arxiv":            {"enabled": True,  "default_selected": False},
         "openalex":         {"enabled": False, "default_selected": False},
         "crossref":         {"enabled": True},
         "unpaywall":        {"enabled": True},
         "pmc_oa":           {"enabled": False},
     },
-    "unpaywall_email": "research@example.com",
-    "crossref_user_agent": "ResearchTool/1.0",
+    "unpaywall_email": "davegalloway@me.com",
+    "crossref_user_agent": "ResearchTool/1.0 (mailto:davegalloway@me.com)",
 }
 
 # Sources that are search-capable (shown in picker)
-_SEARCH_SOURCES = ["europepmc", "pubmed", "psyarxiv", "socarxiv", "biorxiv_medrxiv", "openalex"]
+_SEARCH_SOURCES = ["europepmc", "pubmed", "psyarxiv", "socarxiv", "biorxiv_medrxiv", "arxiv", "openalex"]
 
 # Display labels for picker
 SOURCE_LABELS: Dict[str, str] = {
@@ -35,6 +36,7 @@ SOURCE_LABELS: Dict[str, str] = {
     "psyarxiv":        "PsyArXiv",
     "socarxiv":        "SocArXiv",
     "biorxiv_medrxiv": "bioRxiv / medRxiv",
+    "arxiv":           "arXiv",
     "openalex":        "OpenAlex",
 }
 
@@ -83,11 +85,11 @@ def get_default_selected_sources(config: Dict[str, Any]) -> List[str]:
 
 
 def get_unpaywall_email(config: Dict[str, Any]) -> str:
-    return config.get("unpaywall_email", "research@example.com")
+    return config.get("unpaywall_email", "davegalloway@me.com")
 
 
 def get_crossref_user_agent(config: Dict[str, Any]) -> str:
-    return config.get("crossref_user_agent", "ResearchTool/1.0")
+    return config.get("crossref_user_agent", "ResearchTool/1.0 (mailto:davegalloway@me.com)")
 
 
 def is_source_enabled(config: Dict[str, Any], source: str) -> bool:

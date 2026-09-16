@@ -19,6 +19,10 @@ publication_sources:
     enabled: true
     default_selected: false
 
+  arxiv:
+    enabled: true
+    default_selected: false
+
   openalex:
     enabled: false
     default_selected: false
@@ -33,7 +37,7 @@ publication_sources:
     enabled: false
 
 # Contact email for Unpaywall API (required)
-unpaywall_email: research@example.com
+unpaywall_email: davegalloway@me.com
 
 # User-Agent string for Crossref polite pool
-crossref_user_agent: "ResearchTool/1.0 (mailto:research@example.com)"
+crossref_user_agent: "ResearchTool/1.0 (mailto:davegalloway@me.com)"
