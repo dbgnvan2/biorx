@@ -38,6 +38,23 @@ APPROVED at fix-loop 2, with three low findings carried rather than fixed:
 - `_release_connection` catches only `sqlite3.Error`. At interpreter shutdown a
   different exception could escape and print "Exception ignored".
 
+## From the chunk-4 QA gate (`docs/cycles/2026-09-15_chunk4-qa-gate.md`)
+
+REJECTED, then APPROVED at fix-loop 1. The two blocking findings are fixed; four
+low findings are carried:
+
+- Job and user creation are unbounded: anyone with the access code can create
+  users and queue jobs without limit. The spend cap bounds money, not memory.
+- The shared summary endpoint returns `created_by_user_id`, which tells one
+  colleague who ran a summary. Fine among colleagues; note it before the
+  audience widens.
+- The route-enumeration auth test asserts `checked >= 10`, a floor rather than
+  an exact count (P29), and will need attention when the SPA adds routes.
+- The constant-time access-code comparison is asserted by inspecting the
+  function's bytecode names rather than by behaviour.
+- A worker blocked with no timeout would delay interpreter exit by up to ~150s
+  (bounded by the provider and PDF timeouts). A delay, not a hang.
+
 ## From the chunk-3 QA gate (`docs/cycles/2026-09-15_chunk3-qa-gate.md`)
 
 APPROVED with five findings, all latent because nothing consumes these modules

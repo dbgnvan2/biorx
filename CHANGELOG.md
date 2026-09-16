@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-09-15 — the web app backend
+
+### Added
+- **A FastAPI backend** (`web/`) so colleagues can use the retrieval pipeline
+  from a browser. One shared `ACCESS_CODE` is exchanged for a signed cookie
+  carrying a server-issued opaque user id; the display name is a label with no
+  authority, so nobody can assume a colleague's identity — and therefore their
+  API key — by typing their name.
+- **Searches run as background jobs.** A multi-source search takes minutes and
+  cannot be held open by an HTTP request. `POST /api/searches` returns a job id;
+  the client polls status and pages results. Cancellation, expiry (410, "run it
+  again") and per-user ownership are all enforced.
+- **Summaries** with the pluggable LLM backend, under a per-user daily cap on
+  summaries billed to the owner's key.
+- **Bring-your-own-key**: a colleague can store their own DeepSeek or Anthropic
+  key, encrypted at rest. Only its last four characters ever leave the server.
+- **Per-user saved filters** in SQLite, seeded from `filters.json` on first
+  sign-in, because a single shared file in a container is last-write-wins.
+- `src/user_store.py` for users, their filters and their usage.
+
+### Fixed
+- The owner-key spend cap was a check-then-act race: the count was read at
+  submission and written when the job finished, so a burst of requests all
+  passed. A slot is now reserved atomically at admission.
+- The user-supplied abstract was not budgeted before being sent to the model,
+  so one crafted request could send an arbitrarily large prompt on the owner's
+  key. Both prompt halves are budgeted and the request body has a ceiling.
+- A segmentation fault on shutdown: a job worker mid-write while the database
+  closed under it. Shutdown now drains with a bounded wait and the caller only
+  closes shared resources when it succeeded. This would have hit on redeploys.
+
 ## 2026-09-15 — pluggable LLM backends and background jobs
 
 ### Added
