@@ -11,8 +11,9 @@ pdfplumber==0.10.3
 PyYAML==6.0.2
 
 # Web
-fastapi==0.115.5
+fastapi==0.141.1
 uvicorn[standard]==0.32.1
+starlette==1.6.0
 itsdangerous==2.2.0
 
 # Credentials at rest
@@ -21,3 +22,6 @@ cryptography==46.0.6
 # LLM backends. DeepSeek is reached over its OpenAI-compatible HTTP API with
 # `requests`, so it needs no SDK of its own.
 anthropic==0.78.0
+
+# Test-only, but pinned here so a blank machine can run the suite.
+httpx==0.28.1

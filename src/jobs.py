@@ -29,6 +29,7 @@ import threading
 import time
 import traceback
 import uuid
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
@@ -48,6 +49,24 @@ class JobStatus:
 
 
 TERMINAL = (JobStatus.DONE, JobStatus.ERROR, JobStatus.CANCELLED)
+
+
+class JobLookup:
+    """Why a job could not be returned.
+
+    Three different answers that must not collapse into one: a user whose job
+    aged out should be told to run it again, not told it never existed, and a
+    job belonging to someone else must be indistinguishable from an unknown id
+    so a guessed id cannot confirm another user's activity.
+    """
+    FOUND = "found"
+    UNKNOWN = "unknown"
+    EXPIRED = "expired"
+
+
+# How many expired job ids to remember, so an expired job can be reported as
+# expired rather than unknown. Bounded: this is a courtesy, not a record.
+EXPIRED_MEMORY = 512
 
 
 @dataclass
@@ -106,6 +125,7 @@ class JobRegistry:
     def __init__(self, max_workers: int = DEFAULT_MAX_WORKERS,
                  ttl_seconds: int = DEFAULT_TTL_SECONDS):
         self._jobs: Dict[str, Job] = {}
+        self._expired: "OrderedDict[str, str]" = OrderedDict()   # job id -> owner
         self._lock = threading.Lock()
         self._pool = ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="biorx-job"
@@ -167,21 +187,29 @@ class JobRegistry:
 
     # ── Polling ───────────────────────────────────────────────────────────────
 
-    def get(self, job_id: str, owner: Optional[str] = None) -> Optional[Job]:
-        """Return a job, or None if it is unknown, expired, or someone else's.
+    def lookup(self, job_id: str, owner: str) -> tuple:
+        """Return (job_or_None, JobLookup reason).
 
-        Ownership is checked here rather than at each call site so a job id
-        guessed or copied between users does not leak another user's results.
+        `owner` is required — not defaulted — so a caller cannot accidentally
+        get unrestricted access by omitting it. Another user's job is reported
+        as UNKNOWN, not as a permission error, so a guessed id cannot confirm
+        that someone else's job exists.
         """
         with self._lock:
             job = self._jobs.get(job_id)
-        if job is None:
-            return None
-        if owner is not None and job.owner != owner:
-            return None
+            expired_owner = self._expired.get(job_id)
+        if job is not None and job.owner == owner:
+            return job, JobLookup.FOUND
+        if job is None and expired_owner == owner:
+            return None, JobLookup.EXPIRED
+        return None, JobLookup.UNKNOWN
+
+    def get(self, job_id: str, owner: str) -> Optional[Job]:
+        """This user's job, or None. `owner` is required (see lookup())."""
+        job, _ = self.lookup(job_id, owner)
         return job
 
-    def cancel(self, job_id: str, owner: Optional[str] = None) -> bool:
+    def cancel(self, job_id: str, owner: str) -> bool:
         job = self.get(job_id, owner)
         if job is None or job.status in TERMINAL:
             return False
@@ -207,7 +235,10 @@ class JobRegistry:
                 if j.finished_at is not None and j.finished_at < cutoff
             ]
             for jid in stale:
+                self._expired[jid] = self._jobs[jid].owner
                 del self._jobs[jid]
+            while len(self._expired) > EXPIRED_MEMORY:
+                self._expired.popitem(last=False)
         if stale:
             logger.debug("Expired %d finished job(s)", len(stale))
         return len(stale)

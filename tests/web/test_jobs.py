@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import pytest
 
-from src.jobs import Job, JobRegistry, JobStatus, TERMINAL
+from src.jobs import Job, JobLookup, JobRegistry, JobStatus, TERMINAL
 
 
 @pytest.fixture
@@ -138,7 +138,7 @@ def test_cancel_stops_the_worker_through_should_stop(registry):
 
     job = registry.submit("search", "u1", work)
     started.wait(timeout=5)
-    assert registry.cancel(job.id) is True
+    assert registry.cancel(job.id, "u1") is True
     assert _settled(job) == JobStatus.CANCELLED
     assert job.result == "stopped early"
 
@@ -149,7 +149,7 @@ def test_cancelling_a_queued_job_settles_it_immediately():
         block = threading.Event()
         r.submit("search", "u1", lambda j: block.wait(timeout=5))
         queued = r.submit("search", "u1", lambda j: "never")
-        assert r.cancel(queued.id) is True
+        assert r.cancel(queued.id, "u1") is True
         assert queued.status == JobStatus.CANCELLED
         block.set()
     finally:
@@ -159,7 +159,7 @@ def test_cancelling_a_queued_job_settles_it_immediately():
 def test_cancelling_a_finished_job_reports_false(registry):
     job = registry.submit("search", "u1", lambda j: None)
     _settled(job)
-    assert registry.cancel(job.id) is False
+    assert registry.cancel(job.id, "u1") is False
 
 
 # ── Ownership and expiry ──────────────────────────────────────────────────────
@@ -174,6 +174,50 @@ def test_another_user_cannot_read_or_cancel_a_job(registry):
 
 def test_an_unknown_job_id_is_reported_as_missing(registry):
     assert registry.get("does-not-exist", owner="u1") is None
+    assert registry.lookup("does-not-exist", "u1")[1] == JobLookup.UNKNOWN
+
+
+def test_an_expired_job_is_distinguishable_from_an_unknown_one():
+    """
+    A user whose job aged out should be told to run it again. Collapsing
+    "expired" into "not found" makes that impossible (chunk-3 gate finding 1).
+    """
+    r = JobRegistry(max_workers=1, ttl_seconds=0)
+    try:
+        job = r.submit("search", "u1", lambda j: None)
+        _settled(job)
+        r.submit("search", "u1", lambda j: None)      # submitting sweeps
+        found, reason = r.lookup(job.id, "u1")
+        assert found is None
+        assert reason == JobLookup.EXPIRED
+    finally:
+        r.shutdown()
+
+
+def test_another_users_expired_job_is_reported_as_unknown():
+    """Expiry must not become an oracle for other users' job ids."""
+    r = JobRegistry(max_workers=1, ttl_seconds=0)
+    try:
+        job = r.submit("search", "u1", lambda j: None)
+        _settled(job)
+        r.submit("search", "u1", lambda j: None)
+        assert r.lookup(job.id, "someone-else")[1] == JobLookup.UNKNOWN
+    finally:
+        r.shutdown()
+
+
+def test_lookup_requires_an_owner():
+    """
+    Ownership must not be opt-in: a caller that forgets the argument should get
+    a TypeError, not unrestricted access (chunk-3 gate finding 2).
+    """
+    import inspect
+    sig = inspect.signature(JobRegistry.lookup)
+    assert sig.parameters["owner"].default is inspect.Parameter.empty
+    sig = inspect.signature(JobRegistry.get)
+    assert sig.parameters["owner"].default is inspect.Parameter.empty
+    sig = inspect.signature(JobRegistry.cancel)
+    assert sig.parameters["owner"].default is inspect.Parameter.empty
 
 
 def test_finished_jobs_expire_after_their_ttl():
@@ -182,7 +226,7 @@ def test_finished_jobs_expire_after_their_ttl():
         job = r.submit("search", "u1", lambda j: None)
         _settled(job)
         r.submit("search", "u1", lambda j: None)   # submitting sweeps
-        assert r.get(job.id) is None
+        assert r.get(job.id, "u1") is None
     finally:
         r.shutdown()
 
@@ -194,7 +238,7 @@ def test_a_running_job_is_never_expired():
         long_job = r.submit("search", "u1", lambda j: block.wait(timeout=5))
         time.sleep(0.05)
         r.submit("search", "u1", lambda j: None)   # triggers the sweep
-        assert r.get(long_job.id) is long_job
+        assert r.get(long_job.id, "u1") is long_job
         block.set()
     finally:
         r.shutdown()

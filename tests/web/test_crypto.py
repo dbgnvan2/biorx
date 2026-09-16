@@ -3,6 +3,7 @@ Tests for src/crypto.py — encryption of a user's API key at rest.
 
 Spec: docs/implementation_plan_2026-09-15.md#1.2, W3.c, W3.d
 """
+import os
 import sys
 from pathlib import Path
 
@@ -55,9 +56,10 @@ def test_missing_enc_secret_disables_byo_storage_without_generating_one(monkeypa
     assert crypto.ENV_VAR in unavailable_reason()
     with pytest.raises(KeyEncryptionUnavailable):
         encrypt_key(KEY)
-    # And nothing was written anywhere to make it work next time.
-    assert monkeypatch.delenv(crypto.ENV_VAR, raising=False) is None
+    # And nothing was written anywhere to make it work next time: a second call
+    # is still refused, and no secret appeared in the environment.
     assert is_enabled() is False
+    assert crypto.ENV_VAR not in os.environ
 
 
 def test_a_too_short_secret_is_refused(monkeypatch):
