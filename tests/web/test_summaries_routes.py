@@ -362,3 +362,85 @@ def test_n1_resummarizing_a_stored_arxiv_paper_saves_to_the_same_row(
 
     assert body["result"]["paper_id"] == existing_id
     assert ctx.db.conn.execute("SELECT COUNT(*) FROM papers").fetchone()[0] == 1
+
+
+# ── N2: recover a missing abstract before summarizing ─────────────────────────
+
+FLAMING = {
+    "title": "Interparental conflict and adolescent online flaming",
+    "abstract": "", "doi": "", "pmcid": "PMC13572605",
+    "best_oa_url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC13572605/",
+    "canonical_id": "pmcid:PMC13572605",
+}
+
+
+def test_n2_missing_abstract_is_recovered_before_summarizing(ctx, signed_in, monkeypatch, no_pdf):
+    """The smoke-test paper: open access on PMC, no abstract in the record."""
+    from src.paper_meta import AbstractRecovery
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    client = _client_returning(SUMMARY)
+
+    with patch("web.routes_summaries.recover_abstract",
+               return_value=AbstractRecovery("Recovered abstract text.", "pmc_fulltext",
+                                             ["pmc_fulltext"])), \
+         patch("src.llm_providers.build_client", return_value=client):
+        job_id = signed_in.post("/api/summaries", json={"paper": FLAMING}).json()["job_id"]
+        body = _await(signed_in, job_id)
+
+    assert body["status"] == "done", body
+    assert client.summarize_paper.call_args.args[0] == "Recovered abstract text."
+    stored = ctx.db.find_paper(FLAMING)
+    assert stored["abstract"] == "Recovered abstract text.", \
+        "the recovered abstract should be stored with the paper, not fetched again"
+
+
+def test_n2_recovery_is_not_attempted_when_the_record_has_an_abstract(ctx, signed_in, monkeypatch, no_pdf):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    with patch("web.routes_summaries.recover_abstract") as rec, \
+         patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
+        job_id = signed_in.post("/api/summaries", json={"paper": PAPER}).json()["job_id"]
+        _await(signed_in, job_id)
+    rec.assert_not_called()
+
+
+def test_n2_correction_notice_gets_a_specific_message(ctx, signed_in, monkeypatch, no_pdf):
+    """
+    A correction notice has no abstract anywhere; refusing it is right, but
+    "no downloadable text" sends the user looking for a problem that isn't there.
+    """
+    from src.paper_meta import AbstractRecovery
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    notice = {"title": "Correction to: Exploring the association between stress and skin",
+              "abstract": "", "doi": "10.1007/s44192-026-00588-0",
+              "canonical_id": "doi:10.1007/s44192-026-00588-0"}
+    client = _client_returning(SUMMARY)
+    with patch("web.routes_summaries.recover_abstract",
+               return_value=AbstractRecovery("", None, ["europepmc"])), \
+         patch("src.llm_providers.build_client", return_value=client):
+        job_id = signed_in.post("/api/summaries", json={"paper": notice}).json()["job_id"]
+        body = _await(signed_in, job_id)
+
+    assert body["status"] == "error"
+    assert "correction" in body["error"].lower()
+    client.summarize_paper.assert_not_called()
+    assert signed_in.get("/api/me").json()["owner_summaries_remaining"] >= 0
+
+
+def test_n2_an_unrecoverable_article_still_says_what_was_tried(ctx, signed_in, monkeypatch, no_pdf):
+    from src.paper_meta import AbstractRecovery
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    with patch("web.routes_summaries.recover_abstract",
+               return_value=AbstractRecovery("", None, ["europepmc", "crossref", "openalex"])), \
+         patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
+        job_id = signed_in.post("/api/summaries",
+                                json={"paper": {**FLAMING, "title": "An ordinary article"}}).json()["job_id"]
+        body = _await(signed_in, job_id)
+    assert body["status"] == "error"
+    assert "europepmc" in body["error"] and "openalex" in body["error"]

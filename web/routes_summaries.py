@@ -15,12 +15,12 @@ from pydantic import BaseModel, Field
 from src import user_store
 from src.crypto import KeyEncryptionUnavailable
 from src.jobs import Job, JobLookup
-from src.llm_config import summary_daily_cap
+from src.llm_config import non_article_kind, summary_daily_cap
 from src.llm_providers import (
     LLMError, NoLLMCredentialError, ProviderResponseError, _coerce_summary,
     resolve_client,
 )
-from src.paper_meta import pdf_url
+from src.paper_meta import pdf_url, recover_abstract
 
 from .auth import current_user, get_context
 from .deps import AppContext
@@ -127,10 +127,29 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
             job.phase = "Fetching the paper"
             full_text = _extract_text(ctx, paper)
             abstract = paper.get("abstract", "") or ""
+
             if not abstract and not full_text:
-                raise ProviderResponseError(
-                    "No abstract and no downloadable text for this paper."
-                )
+                # Many records arrive without an abstract even though one is a
+                # lookup away — an open-access paper on PMC, for instance. Try
+                # the same recovery chain the desktop app uses before giving up.
+                job.phase = "Looking for the abstract"
+                recovered = recover_abstract(paper)
+                if recovered.found:
+                    abstract = recovered.text
+                    paper["abstract"] = abstract       # stored with the paper below
+                    job.phase = f"Abstract found via {recovered.source}"
+                else:
+                    notice = non_article_kind(ctx.llm_config, paper.get("title", ""))
+                    if notice:
+                        raise ProviderResponseError(
+                            f"This looks like a {notice.rstrip(':')} notice rather "
+                            "than an article, and it has no abstract to summarize."
+                        )
+                    tried = ", ".join(dict.fromkeys(recovered.tried)) or "nothing to look up"
+                    raise ProviderResponseError(
+                        "No abstract or downloadable text for this paper "
+                        f"(looked in: {tried})."
+                    )
 
             job.phase = f"Summarizing with {resolved.provider}"
             provider_called = True

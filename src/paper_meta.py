@@ -16,7 +16,8 @@ import logging
 import os
 import re
 from html.parser import HTMLParser
-from typing import Any, Dict
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -206,3 +207,140 @@ def fetch_openalex_abstract(doi: str) -> str:
     except Exception as e:
         logger.debug("OpenAlex abstract fetch failed for %s: %s", doi, e)
         return ""
+
+
+# ── Recovering a missing abstract ─────────────────────────────────────────────
+
+_PMCID_IN_URL = re.compile(r"\b(PMC\d+)\b", re.IGNORECASE)
+
+
+@dataclass
+class AbstractRecovery:
+    """The outcome of looking for a missing abstract.
+
+    `found` is False and `text` is "" when nothing was recovered. The desktop
+    worker used to emit "(Abstract not available from any source)" as its
+    *success* value — text that could be stored or summarized as if it were an
+    abstract (learnings P14). A failure is now a state, not a string.
+    """
+    text: str = ""
+    source: Optional[str] = None
+    tried: List[str] = field(default_factory=list)
+
+    @property
+    def found(self) -> bool:
+        return bool(self.text)
+
+
+def pmcid_of(paper: Dict[str, Any]) -> str:
+    """The paper's PMCID, from the record or from a PMC link it carries."""
+    pmcid = (paper.get("pmcid") or "").strip()
+    if pmcid:
+        return pmcid.upper() if pmcid.upper().startswith("PMC") else f"PMC{pmcid}"
+    for key in ("best_oa_url", "source_url", "url", "pdf_url"):
+        match = _PMCID_IN_URL.search(paper.get(key) or "")
+        if match:
+            return match.group(1).upper()
+    return ""
+
+
+def _europepmc():
+    from .sources.europepmc import EuropePmcAdapter
+    return EuropePmcAdapter()
+
+
+def _crossref_abstract(doi: str) -> str:
+    """Crossref sometimes carries a JATS abstract that Europe PMC lacks."""
+    from .sources.crossref import CrossrefAdapter
+    from .sources.schema import CanonicalRecord, RecordFlags, make_canonical_id
+
+    record = CanonicalRecord(
+        canonical_id=make_canonical_id(doi=doi, title="", first_author="", year=0),
+        title="", abstract="", authors=[], year=0, published_date="",
+        document_type="article", is_preprint=False, journal_or_server="", doi=doi,
+        pmid="", pmcid="", source_url="", best_oa_url="", pdf_url="", license="",
+        oa_status="", subjects=[], keywords=[], source_hits=[], flags=RecordFlags(),
+    )
+    CrossrefAdapter().enrich(record)
+    return record.abstract or ""
+
+
+def recover_abstract(paper: Dict[str, Any]) -> AbstractRecovery:
+    """Find an abstract for a paper whose record has none.
+
+    Spec:  docs/implementation_plan_2026-09-16_backlog.md#N2
+    Tests: tests/test_n2_abstract_recovery.py
+
+    Tried in order, stopping at the first that yields text:
+      1. Europe PMC by DOI       — most journal papers; may also reveal a PMCID
+      2. PMC full-text XML       — open-access papers, by PMCID from the record,
+                                   the DOI lookup, or a PMC link
+      3. Crossref by DOI         — sometimes has a JATS abstract
+      4. OpenAlex by DOI         — reconstructed from its inverted index
+      5. The paper's own pages   — open-access link, landing page, DOI resolver
+
+    Moved from gui.py's AbstractFetchWorker so the desktop app and the web app
+    use one implementation. Two defects fixed in the move: step 2 ran only when
+    the paper had a DOI, so a PMCID-only paper never reached PMC; and the open-
+    access link was never scraped.
+
+    A source that raises is logged and skipped, never allowed to end the chain,
+    so one flaky service cannot hide an abstract another one has (P5).
+    """
+    result = AbstractRecovery()
+    doi = (paper.get("doi") or "").strip()
+    pmcid = pmcid_of(paper)
+
+    def attempt(name: str, fn) -> bool:
+        result.tried.append(name)
+        try:
+            text = (fn() or "").strip()
+        except Exception as e:
+            logger.info("Abstract recovery: %s failed: %s", name, e)
+            return False
+        if text:
+            result.text, result.source = text, name
+            logger.info("Abstract recovery: found %d chars via %s", len(text), name)
+            return True
+        return False
+
+    epmc = None
+    if doi:
+        epmc = _europepmc()
+        raw_holder: Dict[str, Any] = {}
+
+        def by_doi():
+            raw = epmc.get_by_id(doi)
+            raw_holder["raw"] = raw or {}
+            return (raw or {}).get("abstractText", "")
+
+        if attempt("europepmc", by_doi):
+            return result
+        pmcid = pmcid or (raw_holder.get("raw", {}).get("pmcid") or "")
+
+    if pmcid:
+        epmc = epmc or _europepmc()
+        if attempt("pmc_fulltext", lambda: epmc.fetch_abstract_from_fulltext(pmcid)):
+            return result
+
+    if doi:
+        if attempt("crossref", lambda: _crossref_abstract(doi)):
+            return result
+        if attempt("openalex", lambda: fetch_openalex_abstract(doi)):
+            return result
+
+    urls = []
+    for key in ("best_oa_url", "source_url", "url"):
+        url = (paper.get(key) or "").strip()
+        if url and url not in urls:
+            urls.append(url)
+    if doi:
+        urls.append(f"https://doi.org/{doi}")
+    for url in urls:
+        if attempt("scrape", lambda u=url: scrape_abstract_from_url(u)):
+            return result
+
+    if result.tried:
+        logger.info("Abstract recovery: nothing found (tried %s)",
+                    ", ".join(dict.fromkeys(result.tried)))
+    return result

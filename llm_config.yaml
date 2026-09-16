@@ -46,3 +46,19 @@ max_text_chars: 12000
 # key is not capped. The access code is shared, so this is the ceiling on what a
 # leaked code can spend.
 summary_daily_cap_per_user: 25
+
+# Titles that mark a record as a notice about another paper rather than an
+# article with content of its own. They usually have no abstract anywhere, and
+# a summary of one would be a summary of nothing. Matched case-insensitively
+# against the start of the title. A heuristic — editorial content, so it lives
+# here rather than in code (repo rule 9).
+not_summarizable_title_prefixes:
+  - "correction to"
+  - "correction:"
+  - "erratum"
+  - "corrigendum"
+  - "retraction"
+  - "retraction note"
+  - "expression of concern"
+  - "publisher correction"
+  - "author correction"

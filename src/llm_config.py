@@ -31,6 +31,7 @@ _FALLBACK: Dict[str, Any] = {
     },
     "max_text_chars": 12000,
     "summary_daily_cap_per_user": 25,
+    "not_summarizable_title_prefixes": [],
 }
 
 
@@ -134,3 +135,18 @@ def summary_daily_cap(config: Dict[str, Any]) -> int:
             logger.warning("SUMMARY_DAILY_CAP_PER_USER is not an integer — using config")
     return int(config.get("summary_daily_cap_per_user",
                           _FALLBACK["summary_daily_cap_per_user"]))
+
+
+def non_article_kind(config: Dict[str, Any], title: str) -> str:
+    """The notice prefix a title starts with ("correction to", …), or "".
+
+    Spec:  docs/implementation_plan_2026-09-16_backlog.md#N2
+    A heuristic over editorial config, used only to explain why a paper with
+    no text cannot be summarized — never to refuse one that has text.
+    """
+    lowered = (title or "").strip().lower()
+    for prefix in config.get("not_summarizable_title_prefixes", []) or []:
+        prefix = str(prefix).strip().lower()
+        if prefix and lowered.startswith(prefix):
+            return prefix
+    return ""

@@ -220,6 +220,7 @@ class SummarizationWorker(QObject):
 # ---------------------------------------------------------------------------
 
 from src.paper_meta import (        # noqa: E402  (kept at their former home)
+    recover_abstract,
     pdf_url as _pdf_url,
     paper_link as _paper_link,
     scrape_abstract_from_url as _scrape_abstract_from_url,
@@ -236,82 +237,24 @@ class AbstractFetchWorker(QObject):
     """
     Fetch a missing abstract in a background thread.
 
-    Strategy (in order):
-      1. Europe PMC search-by-DOI  — covers most journal papers
-      2. Europe PMC full-text XML  — covers open-access PMC papers
-      3. Crossref                  — sometimes has JATS-wrapped abstracts
-      4. OpenAlex                  — broad coverage, reconstructed from inverted index
-      5. HTML scrape of source_url — last resort; tries JSON-LD, meta tags, HTML patterns
+    The strategy chain lives in src/paper_meta.recover_abstract so the web app
+    uses the same one (docs/implementation_plan_2026-09-16_backlog.md#N2).
+    This worker only moves it off the GUI thread and turns a miss into a
+    display message — the message is shown, never passed on as an abstract.
     """
     finished = pyqtSignal(str)
     error    = pyqtSignal(str)
 
-    def __init__(self, doi: str, pmcid: str = "", source_url: str = ""):
+    NOT_FOUND_MESSAGE = "(Abstract not available from any source)"
+
+    def __init__(self, paper: Dict[str, Any]):
         super().__init__()
-        self.doi        = doi
-        self.pmcid      = pmcid
-        self.source_url = source_url
+        self.paper = dict(paper)
 
     def run(self):
-        from src.sources.europepmc import EuropePmcAdapter
-        from src.sources.crossref import CrossrefAdapter
-
         try:
-            # 1. Europe PMC by DOI
-            if self.doi:
-                adapter = EuropePmcAdapter()
-                raw = adapter.get_by_id(self.doi)
-                if raw:
-                    abstract = raw.get("abstractText", "") or ""
-                    if abstract:
-                        self.finished.emit(abstract)
-                        return
-
-                # 2. PMC full-text XML (only if we have a PMCID)
-                pmcid = self.pmcid or (raw.get("pmcid", "") if raw else "")
-                if pmcid:
-                    abstract = adapter.fetch_abstract_from_fulltext(pmcid)
-                    if abstract:
-                        self.finished.emit(abstract)
-                        return
-
-            # 3. Crossref
-            if self.doi:
-                from src.sources.schema import CanonicalRecord, RecordFlags, make_canonical_id
-                cid = make_canonical_id(doi=self.doi, title="", first_author="", year=0)
-                record = CanonicalRecord(
-                    canonical_id=cid, title="", abstract="",
-                    authors=[], year=0, published_date="", document_type="article",
-                    is_preprint=False, journal_or_server="", doi=self.doi,
-                    pmid="", pmcid="", source_url="", best_oa_url="", pdf_url="",
-                    license="", oa_status="", subjects=[], keywords=[],
-                    source_hits=[], flags=RecordFlags(),
-                )
-                CrossrefAdapter().enrich(record)
-                if record.abstract:
-                    self.finished.emit(record.abstract)
-                    return
-
-            # 4. OpenAlex (inverted-index reconstruction)
-            if self.doi:
-                abstract = _fetch_openalex_abstract(self.doi)
-                if abstract:
-                    self.finished.emit(abstract)
-                    return
-
-            # 5. Scrape the publisher page directly
-            urls_to_try = []
-            if self.source_url:
-                urls_to_try.append(self.source_url)
-            if self.doi:
-                urls_to_try.append(f"https://doi.org/{self.doi}")
-            for url in urls_to_try:
-                abstract = _scrape_abstract_from_url(url)
-                if abstract:
-                    self.finished.emit(abstract)
-                    return
-
-            self.finished.emit("(Abstract not available from any source)")
+            result = recover_abstract(self.paper)
+            self.finished.emit(result.text if result.found else self.NOT_FOUND_MESSAGE)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -429,13 +372,12 @@ class PaperDetailDialog(QDialog):
         self.abstract_text = QTextEdit()
         self.abstract_text.setReadOnly(True)
         abstract = self.paper.get("abstract") or ""
-        doi      = self.paper.get("doi", "")
-        pmcid    = self.paper.get("pmcid", "")
+        lookup_keys = ("doi", "pmcid", "best_oa_url", "source_url", "url")
         if abstract:
             self.abstract_text.setPlainText(abstract)
-        elif doi or pmcid:
+        elif any(self.paper.get(k) for k in lookup_keys):
             self.abstract_text.setPlainText("Retrieving abstract…")
-            self._fetch_abstract(doi, pmcid)
+            self._fetch_abstract()
         else:
             self.abstract_text.setPlainText("(No abstract available)")
         al.addWidget(self.abstract_text)
@@ -489,11 +431,10 @@ class PaperDetailDialog(QDialog):
 
         self.setLayout(layout)
 
-    def _fetch_abstract(self, doi: str, pmcid: str = ""):
-        """Fetch abstract in background via DOI/PMCID, update text widget when done."""
-        source_url = self.paper.get("source_url") or self.paper.get("url") or ""
+    def _fetch_abstract(self):
+        """Fetch the abstract in the background; update the text widget when done."""
         self._abstract_thread = QThread()
-        self._abstract_worker = AbstractFetchWorker(doi=doi, pmcid=pmcid, source_url=source_url)
+        self._abstract_worker = AbstractFetchWorker(self.paper)
         self._abstract_worker.moveToThread(self._abstract_thread)
         self._abstract_thread.started.connect(self._abstract_worker.run)
         self._abstract_worker.finished.connect(self.abstract_text.setPlainText)
