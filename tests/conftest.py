@@ -12,30 +12,41 @@ guard that depends on every future test remembering; this one does not.
 Loopback and Unix-domain sockets are allowed: the test client, a local server
 started by a test, and SQLite never leave the machine.
 """
+import logging
 import os
 import socket
 from pathlib import Path
 
 import pytest
 
+logger = logging.getLogger(__name__)
+
 # ── Real-artifact fingerprint guard ──────────────────────────────────────────
 # A class-level patch in a test (gui_module.Database) can be defeated by a
 # second import spelling (src.db.Database). Fingerprinting the real artifacts
 # catches any escape regardless of how it occurred (P28/P6).
 #
-# We fingerprint ~/preprints/ as a whole directory tree so that:
-#   - biorxiv.db WAL/SHM side files are covered (not just the main file, P6)
-#   - source_cache.db and PDFs are covered (P5 sibling writes)
-# Repo-root files (filters.json, biorxiv.log) use __file__-relative paths so the
-# guard resolves the same file the app writes regardless of CWD (P19).
+# ~/preprints/ is fingerprinted as a whole tree so that WAL/SHM files,
+# source_cache.db, and PDFs are all covered (P5 siblings, P6 WAL mode).
+#
+# filters.json: the guard watches <repo_root>/filters.json via __file__-relative
+# path. The app writes Path("filters.json") CWD-relative — these coincide when
+# pytest CWD is the repo root, which is always true for the standard invocation
+# `pytest tests/` from the repo root. Running pytest from another directory
+# would leave a gap; this is documented rather than worked around (P19).
 
 _REPO_ROOT      = Path(__file__).parent.parent
 _REAL_PREPRINTS = Path("~/preprints").expanduser()
 _REAL_FILTERS   = _REPO_ROOT / "filters.json"
 
 
-def _fingerprint_dir(path: Path) -> dict:
-    """Snapshot {relative_path: (mtime_ns, size)} for every file in a directory tree."""
+def _fingerprint_dir(path: Path) -> dict | None:
+    """Snapshot {relative_path: (mtime_ns, size)} for every file in a directory tree.
+
+    Returns None when the walk itself fails (incomplete — cannot certify clean).
+    Individual unreadable files within the walk are skipped with a warning so a
+    single stale fd does not abort the whole snapshot (P2/P31).
+    """
     if not path.exists():
         return {}
     out: dict = {}
@@ -46,9 +57,10 @@ def _fingerprint_dir(path: Path) -> dict:
                     s = p.stat()
                     out[str(p.relative_to(path))] = (s.st_mtime_ns, s.st_size)
                 except OSError:
-                    pass
-    except OSError:
-        pass
+                    logger.warning("artifact guard: could not stat %s (skipped)", p)
+    except OSError as exc:
+        logger.error("artifact guard: rglob walk of %s failed: %s", path, exc)
+        return None  # incomplete — caller must not certify clean
     return out
 
 
@@ -62,26 +74,38 @@ def _fingerprint_file(path: Path):
 
 @pytest.fixture(scope="session", autouse=True)
 def _guard_real_artifacts(tmp_path_factory):
-    """Redirect BIORX_DB_PATH to a temp DB and fail if any real artifact changes."""
-    tmp_db = tmp_path_factory.mktemp("db") / "test.db"
-    prev = os.environ.get("BIORX_DB_PATH")
-    os.environ["BIORX_DB_PATH"] = str(tmp_db)
+    """Redirect BIORX_DB_PATH and BIORX_CACHE_PATH to temp paths; fail if any real
+    artifact changes. All write locations must be env-overridable so tests never
+    touch production data even when a class-level patch is bypassed (P28/P5)."""
+    tmp_db    = tmp_path_factory.mktemp("db")    / "test.db"
+    tmp_cache = tmp_path_factory.mktemp("cache") / "source_cache.db"
+
+    prev_db    = os.environ.get("BIORX_DB_PATH")
+    prev_cache = os.environ.get("BIORX_CACHE_PATH")
+    os.environ["BIORX_DB_PATH"]    = str(tmp_db)
+    os.environ["BIORX_CACHE_PATH"] = str(tmp_cache)
 
     before_preprints = _fingerprint_dir(_REAL_PREPRINTS)
     before_filters   = _fingerprint_file(_REAL_FILTERS)
 
     yield
 
-    if prev is None:
-        os.environ.pop("BIORX_DB_PATH", None)
-    else:
-        os.environ["BIORX_DB_PATH"] = prev
+    for key, prev in (("BIORX_DB_PATH", prev_db), ("BIORX_CACHE_PATH", prev_cache)):
+        if prev is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = prev
 
     after_preprints = _fingerprint_dir(_REAL_PREPRINTS)
     after_filters   = _fingerprint_file(_REAL_FILTERS)
 
     escapes = []
-    if before_preprints != after_preprints:
+    if before_preprints is None or after_preprints is None:
+        escapes.append(
+            "~/preprints/ scan was incomplete (OSError during rglob) — "
+            "cannot certify the directory was not modified"
+        )
+    elif before_preprints != after_preprints:
         changed = set(after_preprints) - set(before_preprints)
         changed |= {k for k in before_preprints if before_preprints[k] != after_preprints.get(k)}
         escapes.append(f"~/preprints/ was modified (files: {sorted(changed)})")
