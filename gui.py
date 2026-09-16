@@ -90,16 +90,12 @@ SPECIES     = [
 ]
 
 
-def load_filters(path: Path) -> List[Dict[str, Any]]:
-    if path.exists():
-        with open(path) as f:
-            return json.load(f).get("filters", [])
-    return []
-
-
-def save_filters(path: Path, filters: List[Dict[str, Any]]):
-    with open(path, "w") as f:
-        json.dump({"filters": filters}, f, indent=2)
+from src.filters_store import (     # noqa: E402  (kept at their former home)
+    load_filters_file as load_filters,
+    save_filters_file as save_filters,
+    filter_is_enabled,
+    filter_has_text as _filter_has_text,
+)
 
 
 def filter_initial_check_state() -> "Qt.CheckState":
@@ -111,28 +107,6 @@ def filter_initial_check_state() -> "Qt.CheckState":
     explicit selection, regardless of the filter's persisted ``enabled`` flag.
     """
     return Qt.CheckState.Unchecked
-
-
-def filter_is_enabled(f: Dict[str, Any]) -> bool:
-    """Purpose: Report whether a filter participates in 'Run All Enabled'.
-    Spec:    docs/implementation_plan_2026-06-07.md#E1.2
-    Tests:   tests/test_gui_filters.py::test_e1_2_run_all_enabled_uses_enabled_field
-
-    This reads the persisted ``enabled`` flag and is independent of the row's
-    visual check state in the Search panel.
-    """
-    return f.get("enabled", True)
-
-
-def _filter_has_text(f: Dict[str, Any]) -> bool:
-    """Return True if the filter has at least one non-empty text search term."""
-    groups = f.get("text_groups", [])
-    for g in groups:
-        if any(g.get(k, "").strip() for k in ("title", "abstract", "both")):
-            return True
-    if any(f.get(k) for k in ("authors", "institution")):
-        return True
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -239,171 +213,17 @@ class SummarizationWorker(QObject):
 # Paper detail dialog + download worker
 # ---------------------------------------------------------------------------
 
-def _pdf_url(paper: Dict[str, Any]) -> str:
-    """Return best URL for opening a paper's PDF or landing page."""
-    # Prefer an explicit PDF/OA URL from enrichment
-    if paper.get("pdf_url"):
-        return paper["pdf_url"]
-    if paper.get("best_oa_url"):
-        return paper["best_oa_url"]
-    # bioRxiv-style fallback
-    doi     = paper.get("doi", "")
-    version = paper.get("version", "1")
-    source  = paper.get("source", paper.get("server", ""))
-    if doi and source in ("biorxiv_medrxiv", "biorxiv", "medrxiv"):
-        server = "biorxiv" if "biorxiv" in source else "medrxiv"
-        return f"https://www.{server}.org/content/{doi}v{version}.full.pdf"
-    if doi:
-        return f"https://doi.org/{doi}"
-    return paper.get("source_url", paper.get("url", ""))
-
-
-def _paper_link(paper: Dict[str, Any]) -> str:
-    """Return the best landing-page/document URL for a paper.
-
-    Prefers the publisher/source landing page, then a DOI resolver, then any
-    explicit PDF/OA URL. Used for export links the user can click through to
-    the document of record.
-    """
-    doi = paper.get("doi", "")
-    return (
-        paper.get("source_url")
-        or paper.get("url")
-        or (f"https://doi.org/{doi}" if doi else "")
-        or _pdf_url(paper)
-    )
+from src.paper_meta import (        # noqa: E402  (kept at their former home)
+    pdf_url as _pdf_url,
+    paper_link as _paper_link,
+    scrape_abstract_from_url as _scrape_abstract_from_url,
+    fetch_openalex_abstract as _fetch_openalex_abstract,
+)
 
 
 def _open_in_browser(url: str):
     import webbrowser
     webbrowser.open(url)
-
-
-def _scrape_abstract_from_url(url: str) -> str:
-    """
-    Attempt to scrape an abstract from a publisher page.
-
-    Tries in order:
-      1. JSON-LD structured data (schema.org/ScholarlyArticle description)
-      2. <meta name="description"> / og:description
-      3. Common HTML patterns: section/div with id or class containing "abstract"
-    Returns empty string if nothing useful is found or the page is paywalled.
-    """
-    import requests, json, re
-    from html.parser import HTMLParser
-
-    class _TextExtractor(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.text_parts = []
-            self._skip = False
-        def handle_starttag(self, tag, attrs):
-            if tag in ("script", "style", "nav", "header", "footer"):
-                self._skip = True
-        def handle_endtag(self, tag):
-            if tag in ("script", "style", "nav", "header", "footer"):
-                self._skip = False
-        def handle_data(self, data):
-            if not self._skip:
-                self.text_parts.append(data)
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/122.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-
-    try:
-        resp = requests.get(url, headers=headers, timeout=20, allow_redirects=True)
-        if not resp.ok or len(resp.text) < 500:
-            return ""
-        html = resp.text
-    except Exception as e:
-        logger.debug("Abstract scrape fetch failed for %s: %s", url, e)
-        return ""
-
-    # 1. JSON-LD structured data
-    for m in re.finditer(
-        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
-        html, re.DOTALL | re.IGNORECASE
-    ):
-        try:
-            data = json.loads(m.group(1))
-            # May be a list or a single object
-            items = data if isinstance(data, list) else [data]
-            for item in items:
-                # Check top-level and mainEntity (Springer/BMC wraps in WebPage > mainEntity)
-                candidates = [item, item.get("mainEntity") or {}]
-                for candidate in candidates:
-                    desc = candidate.get("description") or candidate.get("abstract") or ""
-                    if desc and len(desc) > 80:
-                        return re.sub(r"<[^>]+>", "", desc).strip()
-        except Exception:
-            continue
-
-    # 2. Meta tags
-    for pattern in [
-        r'<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']',
-        r'<meta\s+property=["\']og:description["\']\s+content=["\'](.*?)["\']',
-        r'<meta\s+name=["\']citation_abstract["\']\s+content=["\'](.*?)["\']',
-    ]:
-        m = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
-        if m:
-            text = m.group(1).strip()
-            if len(text) > 80:
-                return re.sub(r"<[^>]+>", "", text).strip()
-
-    # 3. HTML section/div with abstract id or class
-    for pattern in [
-        r'<(?:section|div|p)[^>]+(?:id|class)=["\'][^"\']*\babstract\b[^"\']*["\'][^>]*>(.*?)</(?:section|div)',
-        r'id=["\']Abs1[^"\']*["\'][^>]*>(.*?)</section',
-        r'id=["\']abstract["\'][^>]*>(.*?)</(?:section|div)',
-    ]:
-        m = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
-        if m:
-            text = re.sub(r"<[^>]+>", " ", m.group(1))
-            text = re.sub(r"\s+", " ", text).strip()
-            if len(text) > 80:
-                return text
-
-    return ""
-
-
-def _fetch_openalex_abstract(doi: str) -> str:
-    """
-    Fetch abstract from OpenAlex via its inverted-index format.
-    OpenAlex stores abstracts as {word: [position, ...]} dicts to work around
-    publisher restrictions; we reconstruct the plain text here.
-    Returns empty string on any failure.
-    """
-    import requests, re
-    try:
-        clean = re.sub(r"^https?://doi\.org/", "", doi.strip())
-        resp = requests.get(
-            f"https://api.openalex.org/works/doi:{clean}",
-            params={"select": "abstract_inverted_index"},
-            headers={"User-Agent": "ResearchTool/1.0 (mailto:research@example.com)"},
-            timeout=15,
-        )
-        if not resp.ok:
-            return ""
-        idx = resp.json().get("abstract_inverted_index") or {}
-        if not idx:
-            return ""
-        # Reconstruct: sort (position, word) pairs and join
-        pairs = sorted(
-            (pos, word)
-            for word, positions in idx.items()
-            for pos in positions
-        )
-        return " ".join(word for _, word in pairs)
-    except Exception as e:
-        logger.debug("OpenAlex abstract fetch failed for %s: %s", doi, e)
-        return ""
 
 
 class AbstractFetchWorker(QObject):
