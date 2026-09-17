@@ -28,6 +28,10 @@ from .config import (
 
 logger = logging.getLogger(__name__)
 
+# Marker present in every failure status message emitted via on_status.
+# monitor.py imports this so a wording change is a visible diff, not silent drift (P19).
+FAILURE_STATUS_MARKER = "— skipped"
+
 # Source trust weights for ranking (peer-reviewed > PMC-backed > preprints)
 _SOURCE_TRUST: Dict[str, float] = {
     "europepmc":       1.00,
@@ -306,6 +310,8 @@ class SourceOrchestrator:
                     raw_records = adapter.search(query, page=page, page_size=self.PAGE_SIZE)
             except RateLimitedError:
                 logger.warning("Rate limited by %s — stopping", source_name)
+                if on_status:
+                    on_status(f"{_source_label(source_name)} rate-limited {FAILURE_STATUS_MARKER}")
                 break
             except SourceUnavailableError as e:
                 logger.error("Source %s unavailable: %s", source_name, e)

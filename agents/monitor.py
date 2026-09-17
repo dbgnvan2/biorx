@@ -18,17 +18,14 @@ from typing import Optional
 # Allow import of src modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.sources.orchestrator import SourceOrchestrator
+from src.sources.orchestrator import SourceOrchestrator, FAILURE_STATUS_MARKER
 from src.sources.config import load_sources_config
 from src.filtering import filter_papers
 
 logger = logging.getLogger(__name__)
 
-# A source status message containing this marker means the source was skipped
-# due to an error. The orchestrator emits "<Label> unavailable — skipped" or
-# "<Label> error — skipped"; both contain this string (P19: named here so that
-# a status-format change is a visible diff, not silent drift).
-FAILURE_STATUS_MARKER = "— skipped"
+# FAILURE_STATUS_MARKER is imported from orchestrator (P19: single source of truth;
+# a wording change there is a visible diff that forces this file to update too).
 
 
 def load_filters(path: str = "filters.json") -> list:
