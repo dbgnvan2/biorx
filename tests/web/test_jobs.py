@@ -244,13 +244,6 @@ def test_a_running_job_is_never_expired():
         r.shutdown()
 
 
-def test_jobs_for_lists_only_that_users_jobs(registry):
-    a = registry.submit("search", "u1", lambda j: None)
-    b = registry.submit("search", "u2", lambda j: None)
-    _settled(a); _settled(b)
-    assert [j.id for j in registry.jobs_for("u1")] == [a.id]
-
-
 def test_shutdown_cancels_unfinished_jobs():
     r = JobRegistry(max_workers=1)
     block = threading.Event()

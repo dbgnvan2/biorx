@@ -220,10 +220,6 @@ class JobRegistry:
             job.finished_at = time.time()
         return True
 
-    def jobs_for(self, owner: str) -> List[Job]:
-        with self._lock:
-            return [j for j in self._jobs.values() if j.owner == owner]
-
     # ── Expiry ────────────────────────────────────────────────────────────────
 
     def _expire_old(self) -> int:

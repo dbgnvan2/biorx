@@ -23,7 +23,6 @@ from pydantic import BaseModel, Field
 from src import user_store
 from src.filtering import filter_papers
 from src.jobs import Job, JobLookup
-from src.sources.orchestrator import _source_label
 
 from .auth import current_user, get_context
 from .deps import AppContext

@@ -47,7 +47,6 @@ class AppContext:
     cookie_secure: bool = True
     orchestrator: Any = None
     startup_warnings: list = field(default_factory=list)
-    _extras: Dict[str, Any] = field(default_factory=dict)
 
     def get_orchestrator(self):
         """Build the SourceOrchestrator lazily.
