@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QListWidget, QListWidgetItem, QCheckBox,
     QSpinBox, QDateEdit, QComboBox, QTextEdit, QSplitter, QMessageBox,
     QProgressBar, QTableWidget, QTableWidgetItem, QHeaderView, QFrame,
-    QFormLayout, QGroupBox, QDialog, QInputDialog,
+    QFormLayout, QGroupBox, QDialog, QInputDialog, QScrollArea, QPlainTextEdit,
 )
 from PyQt6.QtCore import Qt, QDate, pyqtSignal, QThread, QObject
 from PyQt6.QtGui import QFont
@@ -1348,9 +1348,14 @@ class FiltersTab(QWidget):
 
         right.setLayout(rl)
 
+        scroll = QScrollArea()
+        scroll.setWidget(right)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(left)
-        splitter.addWidget(right)
+        splitter.addWidget(scroll)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         outer.addWidget(splitter)
@@ -1962,6 +1967,88 @@ class SavedReferencesTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Settings tab
+# ---------------------------------------------------------------------------
+
+SETTINGS_FILES = [
+    ("sources_config.yaml", "Sources — which APIs are enabled and your contact email"),
+    ("llm_config.yaml",     "LLM — provider, model, and token budget"),
+]
+
+
+class SettingsTab(QWidget):
+    """Edit YAML configuration files. Changes take effect on next restart."""
+
+    def __init__(self):
+        super().__init__()
+        self._paths = {label: Path(fname) for fname, label in SETTINGS_FILES}
+        self._current_path: Optional[Path] = None
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout()
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Edit:"))
+        self.file_combo = QComboBox()
+        for _, label in SETTINGS_FILES:
+            self.file_combo.addItem(label)
+        self.file_combo.currentIndexChanged.connect(self._load_file)
+        top.addWidget(self.file_combo, 1)
+        layout.addLayout(top)
+
+        self.editor = QPlainTextEdit()
+        self.editor.setFont(QFont("Menlo, Monaco, Courier New", 12))
+        layout.addWidget(self.editor, 1)
+
+        bottom = QHBoxLayout()
+        self.status_label = QLabel("")
+        bottom.addWidget(self.status_label, 1)
+        reload_btn = QPushButton("Reload from disk")
+        reload_btn.clicked.connect(self._load_file)
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(self._save_file)
+        bottom.addWidget(reload_btn)
+        bottom.addWidget(save_btn)
+        layout.addLayout(bottom)
+
+        layout.addWidget(QLabel(
+            "Changes take effect on next restart.",
+            styleSheet="color: gray; font-size: 11px;"
+        ))
+
+        self.setLayout(layout)
+        self._load_file()
+
+    def _load_file(self):
+        _, label = SETTINGS_FILES[self.file_combo.currentIndex()]
+        path = self._paths[label]
+        self._current_path = path
+        try:
+            self.editor.setPlainText(path.read_text())
+            self.status_label.setText(f"Loaded {path.name}")
+        except FileNotFoundError:
+            self.editor.setPlainText("")
+            self.status_label.setText(f"Not found: {path}")
+
+    def _save_file(self):
+        if self._current_path is None:
+            return
+        import yaml
+        text = self.editor.toPlainText()
+        try:
+            yaml.safe_load(text)
+        except yaml.YAMLError as e:
+            QMessageBox.critical(self, "Invalid YAML", str(e))
+            return
+        try:
+            self._current_path.write_text(text)
+            self.status_label.setText(f"Saved {self._current_path.name} — restart to apply.")
+        except OSError as e:
+            QMessageBox.critical(self, "Save failed", str(e))
+
+
+# ---------------------------------------------------------------------------
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -1989,9 +2076,12 @@ class MainWindow(QMainWindow):
         # When a reference list is saved, refresh the Saved References tab
         self.search_tab.reference_list_saved.connect(self.saved_refs_tab.refresh_lists)
 
+        self.settings_tab = SettingsTab()
+
         tabs.addTab(self.search_tab,     "Search & Browse")
         tabs.addTab(self.filters_tab,    "Filters")
         tabs.addTab(self.saved_refs_tab, "Saved References")
+        tabs.addTab(self.settings_tab,   "Settings")
 
         self.setCentralWidget(tabs)
         logger.info("Application started with sources: %s",
