@@ -37,15 +37,31 @@ MAX_PAPER_BYTES = 200_000
 
 class SummaryRequest(BaseModel):
     paper: Dict[str, Any] = Field(default_factory=dict)
+    # Inline credentials from localStorage: sent per-request, never stored on
+    # the server. Allows BYO key without requiring KEY_ENC_SECRET.
+    api_key: str = Field(default="", max_length=500)
+    provider: str = Field(default="", max_length=50)
+    model: str = Field(default="", max_length=200)
 
 
-def _resolve_for(ctx: AppContext, user_id: str):
+def _resolve_for(ctx: AppContext, user_id: str,
+                 inline_key: str = "", inline_provider: str = "",
+                 inline_model: str = ""):
     """Resolve this user's LLM client, honouring the owner-key spend cap.
 
     The cap exists because the access code is shared: without it, anyone holding
     the code can spend the owner's credential without limit. A user on their own
     key is not capped.
+
+    inline_key, when provided, is used directly without touching the database.
+    It is never stored — it travels from the browser's localStorage per-request.
     """
+    if inline_key.strip():
+        # Inline path: key comes from localStorage, no server storage required.
+        resolved = resolve_client(user_provider=inline_provider, user_key=inline_key.strip(),
+                                  user_model=inline_model, config=ctx.llm_config)
+        return resolved, None
+
     try:
         provider, key = user_store.get_llm_key(ctx.db, user_id)
     except KeyEncryptionUnavailable as e:
@@ -227,7 +243,10 @@ def start_summary(body: SummaryRequest,
             detail=f"That paper is larger than {MAX_PAPER_BYTES:,} bytes.",
         )
     try:
-        resolved, usage_id = _resolve_for(ctx, user_id)
+        resolved, usage_id = _resolve_for(ctx, user_id,
+                                           inline_key=body.api_key,
+                                           inline_provider=body.provider,
+                                           inline_model=body.model)
     except NoLLMCredentialError as e:
         # The "no key at all" case (D2): a clean, actionable error, not a crash
         # and not a job that fails opaquely a minute later.

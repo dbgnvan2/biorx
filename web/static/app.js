@@ -91,12 +91,51 @@ function showApp() {
   loadFilters();
 }
 
+/* ── Local key storage (localStorage) ────────────────────────────────────── */
+
+const LS_KEY      = "biorx_local_key";
+const LS_PROVIDER = "biorx_local_provider";
+const LS_MODEL    = "biorx_local_model";
+
+function localSettings() {
+  try {
+    return {
+      key:      localStorage.getItem(LS_KEY)      || "",
+      provider: localStorage.getItem(LS_PROVIDER) || "",
+      model:    localStorage.getItem(LS_MODEL)    || "",
+    };
+  } catch (e) { return { key: "", provider: "", model: "" }; }
+}
+
+function saveLocalSettings(provider, key, model) {
+  try {
+    if (key)      localStorage.setItem(LS_KEY, key);
+    else          localStorage.removeItem(LS_KEY);
+    if (provider) localStorage.setItem(LS_PROVIDER, provider);
+    if (model)    localStorage.setItem(LS_MODEL, model);
+    else          localStorage.removeItem(LS_MODEL);
+  } catch (e) { /* storage blocked — silently skip */ }
+}
+
+function clearLocalSettings() {
+  try {
+    localStorage.removeItem(LS_KEY);
+    localStorage.removeItem(LS_PROVIDER);
+    localStorage.removeItem(LS_MODEL);
+  } catch (e) {}
+}
+
 /* ── Profile and LLM settings ────────────────────────────────────────────── */
 
 function renderMe() {
   const me = state.me;
+  const local = localSettings();
   const name = me.display_name || "unnamed";
-  $("who").textContent = `${name} · ${me.provider} (${me.model || "no model"})`;
+
+  // Header shows the effective provider/model. Local key takes precedence.
+  const displayProvider = local.key ? (local.provider || me.provider) : me.provider;
+  const displayModel    = local.key ? (local.model    || me.model)    : me.model;
+  $("who").textContent = `${name} · ${displayProvider} (${displayModel || "no model"})`;
 
   const select = $("key-provider");
   if (!select.options.length) {
@@ -107,64 +146,95 @@ function renderMe() {
       select.appendChild(option);
     }
   }
-  select.value = me.key_source === "user" ? me.provider : select.value || me.provider;
+  // Pre-select: local setting > server-stored provider > default
+  select.value = local.provider || (me.key_source === "user" ? me.provider : me.provider);
 
-  // Populate model field: show stored preference; hint shows the config default.
+  // Model field: local setting wins over server preference
   const modelInput = $("preferred-model");
   if (document.activeElement !== modelInput) {
-    modelInput.value = me.preferred_model || "";
+    modelInput.value = local.model || me.preferred_model || "";
   }
   $("model-hint").textContent = me.default_model ? `(default: ${me.default_model})` : "";
 
-  const where = {
-    user: `Using your own key (…${me.key_last4}).`,
-    owner: `Using the shared key. ${me.owner_summaries_remaining} of ` +
-           `${me.owner_summaries_cap} summaries left today.`,
-    none: "Using a local model; no key needed.",
-    missing: "No API key is available. Add yours below to summarize.",
-  }[me.key_source] || "";
-  $("key-state").textContent = where;
+  // Key field: show masked hint if a key is stored locally
+  const keyInput = $("api-key");
+  if (document.activeElement !== keyInput && local.key) {
+    keyInput.placeholder = `Local key saved (…${local.key.slice(-4)}). Enter a new one to replace.`;
+  }
 
+  const serverStatus = {
+    user:    `Server also has your encrypted key (…${me.key_last4}).`,
+    owner:   `Using shared key if local key absent. ${me.owner_summaries_remaining} of ` +
+             `${me.owner_summaries_cap} summaries left today.`,
+    none:    "Local model (no key needed) — or add your key above.",
+    missing: local.key ? "" : "No key available. Enter yours above.",
+  }[me.key_source] || "";
+
+  const localStatus = local.key
+    ? `Your key is saved in this browser (…${local.key.slice(-4)}).`
+    : "";
+
+  $("key-state").textContent = localStatus || serverStatus;
+
+  // Always show the key/model form — localStorage path works regardless of
+  // whether server-side encryption (KEY_ENC_SECRET) is configured.
+  $("byo").classList.remove("hidden");
   const disabled = $("byo-disabled");
-  if (me.byo_enabled) {
-    disabled.classList.add("hidden");
-    $("byo").classList.remove("hidden");
-  } else {
-    disabled.textContent =
-      "Personal API keys cannot be stored on this server: " + me.byo_disabled_reason;
+  if (!me.byo_enabled && !local.key) {
+    // Server-side storage unavailable AND no local key yet: show a soft note
+    // (not hidden, just informational) so users know what to expect.
+    disabled.textContent = "Key saved here stays in this browser only (not on the server).";
     disabled.classList.remove("hidden");
-    $("byo").classList.add("hidden");
+  } else {
+    disabled.classList.add("hidden");
   }
 }
 
 async function saveKey() {
   notice("");
-  const keyVal = $("api-key").value.trim();
-  const modelVal = $("preferred-model").value.trim();
+  const keyVal      = $("api-key").value.trim();
+  const modelVal    = $("preferred-model").value.trim();
+  const providerVal = $("key-provider").value;
+
+  // Always save to localStorage first (works without server-side encryption).
+  const existingLocal = localSettings();
+  const keyToStore = keyVal || existingLocal.key;
+  if (keyToStore) {
+    saveLocalSettings(providerVal, keyToStore, modelVal);
+    if (keyVal) $("api-key").value = "";
+  } else if (modelVal !== existingLocal.model) {
+    saveLocalSettings(providerVal, "", modelVal);
+  }
+
+  // Also save to server if server-side encryption is available.
   try {
-    if (keyVal) {
+    if (keyVal && state.me.byo_enabled) {
       state.me = await api("PUT", "/api/me/llm-key", {
-        provider: $("key-provider").value,
+        provider: providerVal,
         api_key: keyVal,
         model: modelVal,
       });
-      $("api-key").value = "";
-    } else if (modelVal !== (state.me.preferred_model || "")) {
-      // Model-only change: no key entered, just update the model preference.
+    } else if (!keyVal && modelVal !== (state.me.preferred_model || "")) {
       state.me = await api("PUT", "/api/me/llm-model", { model: modelVal });
+    } else {
+      state.me = await api("GET", "/api/me");
     }
-    renderMe();
-    notice("Settings saved.", "ok");
-  } catch (e) { notice(e.message); }
+  } catch (e) { /* server save failed — local save still succeeded */ }
+
+  renderMe();
+  notice("Settings saved.", "ok");
 }
 
 async function removeKey() {
   notice("");
+  clearLocalSettings();
   try {
     state.me = await api("DELETE", "/api/me/llm-key");
-    renderMe();
-    notice("Key removed.", "ok");
-  } catch (e) { notice(e.message); }
+  } catch (e) { /* server-side key may not exist */ }
+  try { state.me = await api("GET", "/api/me"); } catch (e) {}
+  $("api-key").placeholder = "Stored encrypted; only the last 4 are ever shown";
+  renderMe();
+  notice("Key removed.", "ok");
 }
 
 /* ── Saved filters ───────────────────────────────────────────────────────── */
@@ -402,7 +472,14 @@ async function startSummary(paper, button) {
 
   let job;
   try {
-    job = await api("POST", "/api/summaries", { paper });
+    const local = localSettings();
+    const summaryBody = { paper };
+    if (local.key) {
+      summaryBody.api_key  = local.key;
+      summaryBody.provider = local.provider || state.me.provider;
+      summaryBody.model    = local.model    || "";
+    }
+    job = await api("POST", "/api/summaries", summaryBody);
   } catch (e) {
     notice(e.message);
     $("summary-meta").textContent = "";
