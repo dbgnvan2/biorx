@@ -395,3 +395,42 @@ def test_adapters_without_a_page_size_attribute_are_unaffected():
     )
     assert adapter.calls == 1      # short page ended it, as before
     assert fetched == 1
+
+
+def test_full_pages_advance_page_until_max_pages():
+    """A source that keeps returning full pages must advance the page cursor each
+    iteration and terminate at MAX_PAGES_PER_SOURCE. Regression for the mutation
+    `page += 1` -> `page += 0`, which spins forever: page_size_seen stays at
+    PAGE_SIZE (never `< PAGE_SIZE`) and no source total is reported, so the only
+    thing that ends the loop is the page cursor advancing."""
+    from src.sources.dedup import Deduplicator
+
+    orch = _orch_for_pagination()
+    page_size = orch.PAGE_SIZE
+
+    class FullPageAdapter:
+        def __init__(self, page_size):
+            self.page_size = page_size
+            self.pages_seen = []
+            self.last_page_size = 0
+            self.last_total = 0
+
+        def search(self, query, page=1, page_size=None, **kw):
+            self.pages_seen.append(page)
+            self.last_page_size = page_size
+            # A distinct, full page of records on every call.
+            base = (page - 1) * self.page_size
+            return [{"i": base + i} for i in range(self.page_size)]
+
+        def normalize(self, raw):
+            return _make_record(doi=f"10.1234/full{raw['i']}", title=f"Full {raw['i']}")
+
+    adapter = FullPageAdapter(page_size)
+    fetched = orch._search_source(
+        "europepmc", adapter, "q", {}, Deduplicator(),
+        None, None, None, max_results=10_000,
+    )
+
+    assert adapter.pages_seen == list(range(1, orch.MAX_PAGES_PER_SOURCE + 1)), \
+        adapter.pages_seen
+    assert fetched == page_size * orch.MAX_PAGES_PER_SOURCE
