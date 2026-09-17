@@ -5,7 +5,7 @@ API docs: https://developer.osf.io/
 """
 
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Sequence, Optional, Dict, Any, List
 import logging
 import requests
@@ -188,7 +188,7 @@ class SocArxivAdapter:
             source_hits=[SourceHit(
                 source=self.source_name,
                 source_record_id=osf_id,
-                fetched_at=datetime.utcnow().isoformat(),
+                fetched_at=datetime.now(timezone.utc).isoformat(),
             )],
             flags=flags,
             source_trust_weight=self.source_trust_weight,

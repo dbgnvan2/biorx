@@ -6,7 +6,7 @@ Queries arXiv API for CS/LLM/agent-simulation literature.
 from __future__ import annotations
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Sequence, Optional, Dict, Any, List
 import logging
 import re
@@ -293,7 +293,7 @@ class ArxivAdapter:
             source_hits=[SourceHit(
                 source=self.source_name,
                 source_record_id=arxiv_id_full,
-                fetched_at=datetime.utcnow().isoformat(),
+                fetched_at=datetime.now(timezone.utc).isoformat(),
             )],
             flags=RecordFlags(fulltext_reusable=True),
             source_trust_weight=self.source_trust_weight,

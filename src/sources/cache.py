@@ -13,12 +13,19 @@ import os
 import sqlite3
 import json
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_ts(s: str) -> datetime:
+    """Parse an ISO timestamp; treat naive strings as UTC for backward compatibility."""
+    dt = datetime.fromisoformat(s)
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
 
 # TTLs in hours
 _TTL_RAW_SEARCH   = 24
@@ -90,8 +97,8 @@ class SearchCache:
         row = cur.fetchone()
         if not row:
             return None
-        fetched_at = datetime.fromisoformat(row[1])
-        if datetime.utcnow() - fetched_at > timedelta(hours=_TTL_RAW_SEARCH):
+        fetched_at = _parse_ts(row[1])
+        if datetime.now(timezone.utc) - fetched_at > timedelta(hours=_TTL_RAW_SEARCH):
             return None  # expired
         return json.loads(row[0])
 
@@ -100,7 +107,7 @@ class SearchCache:
         h = self._query_hash(source, query, page)
         self._conn.execute(
             "INSERT OR REPLACE INTO raw_search_cache (query_hash, page, response, fetched_at) VALUES (?,?,?,?)",
-            (h, page, json.dumps(data), datetime.utcnow().isoformat()),
+            (h, page, json.dumps(data), datetime.now(timezone.utc).isoformat()),
         )
         self._conn.commit()
 
@@ -115,8 +122,8 @@ class SearchCache:
         row = cur.fetchone()
         if not row:
             return None
-        fetched_at = datetime.fromisoformat(row[1])
-        if datetime.utcnow() - fetched_at > timedelta(hours=_TTL_OA_LOOKUP):
+        fetched_at = _parse_ts(row[1])
+        if datetime.now(timezone.utc) - fetched_at > timedelta(hours=_TTL_OA_LOOKUP):
             return None
         return json.loads(row[0])
 
@@ -124,7 +131,7 @@ class SearchCache:
         """Store an Unpaywall response."""
         self._conn.execute(
             "INSERT OR REPLACE INTO oa_lookup_cache (doi, response, fetched_at) VALUES (?,?,?)",
-            (doi.lower().strip(), json.dumps(data), datetime.utcnow().isoformat()),
+            (doi.lower().strip(), json.dumps(data), datetime.now(timezone.utc).isoformat()),
         )
         self._conn.commit()
 
@@ -139,15 +146,15 @@ class SearchCache:
         row = cur.fetchone()
         if not row:
             return None
-        fetched_at = datetime.fromisoformat(row[1])
-        if datetime.utcnow() - fetched_at > timedelta(hours=_TTL_ID_RESOLVE):
+        fetched_at = _parse_ts(row[1])
+        if datetime.now(timezone.utc) - fetched_at > timedelta(hours=_TTL_ID_RESOLVE):
             return None
         return row[0]
 
     def set_id_resolution(self, identifier: str, id_type: str, canonical_id: str) -> None:
         self._conn.execute(
             "INSERT OR REPLACE INTO id_resolution_cache (identifier, id_type, canonical_id, fetched_at) VALUES (?,?,?,?)",
-            (identifier, id_type, canonical_id, datetime.utcnow().isoformat()),
+            (identifier, id_type, canonical_id, datetime.now(timezone.utc).isoformat()),
         )
         self._conn.commit()
 

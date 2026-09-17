@@ -7,7 +7,7 @@ Enable via sources_config.yaml: biorxiv_medrxiv.enabled = true
 from __future__ import annotations
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Sequence, Optional, Dict, Any, List
 import logging
 
@@ -132,7 +132,7 @@ class BiorxivMedrxivAdapter:
             source_hits=[SourceHit(
                 source=self.source_name,
                 source_record_id=doi,
-                fetched_at=datetime.utcnow().isoformat(),
+                fetched_at=datetime.now(timezone.utc).isoformat(),
             )],
             flags=RecordFlags(fulltext_reusable=True),  # bioRxiv is freely accessible
             source_trust_weight=self.source_trust_weight,

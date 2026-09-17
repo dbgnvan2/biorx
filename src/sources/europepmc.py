@@ -5,7 +5,7 @@ API docs: https://europepmc.org/RestfulWebService
 """
 
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Sequence, Optional, Dict, Any, List
 import logging
 import requests
@@ -331,7 +331,7 @@ class EuropePmcAdapter:
             source_hits=[SourceHit(
                 source=self.source_name,
                 source_record_id=raw.get("id", doi or pmid),
-                fetched_at=datetime.utcnow().isoformat(),
+                fetched_at=datetime.now(timezone.utc).isoformat(),
             )],
             flags=flags,
             source_trust_weight=trust,
