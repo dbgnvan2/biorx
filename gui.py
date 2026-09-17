@@ -1218,7 +1218,10 @@ class DiscoverTermsWorker(QObject):
     @staticmethod
     def _papers_fallback(papers: list) -> str:
         """Format found papers as a readable list to show when no LLM is available."""
-        lines = ["[No LLM available — papers found. Write terms manually below.]\n"]
+        lines = [
+            "[No LLM available — configure one in Settings > LLM Config.]\n"
+            "[Papers found below. Write search terms manually in the box.]\n"
+        ]
         for i, r in enumerate(papers[:30], 1):
             lines.append(f"{i}. {r.title}")
             if r.abstract:
@@ -1242,7 +1245,13 @@ class DiscoverTermsWorker(QObject):
             "with", "from", "how", "what", "where", "which", "about", "as",
         }
         words = [w.strip(".,;:!?") for w in query.split()]
-        keywords = [w for w in words if w.lower() not in _STOP and len(w) > 2]
+        seen: set = set()
+        keywords = []
+        for w in words:
+            low = w.lower()
+            if low not in _STOP and len(w) > 2 and low not in seen:
+                seen.add(low)
+                keywords.append(w)
         return ", ".join(keywords) if keywords else query
 
     def run(self):
@@ -1303,22 +1312,23 @@ class DiscoverTermsWorker(QObject):
         )
 
         from src.llm_providers import resolve_client, NoLLMCredentialError
+        _settings_hint = (
+            "To configure: open the Settings tab → select 'LLM Config' → "
+            "set default_provider to 'anthropic' or 'deepseek', and add your api_key."
+        )
         try:
             resolved = resolve_client()
         except NoLLMCredentialError as e:
             logger.warning("Discover Terms: no LLM configured (%s)", e)
-            self.status.emit(
-                f"No LLM available ({e}). "
-                "Add api_key to llm_config.yaml in Settings, or start Ollama."
-            )
+            self.status.emit(f"No LLM key set. {_settings_hint}")
             self.finished.emit(self._papers_fallback(papers))
             return
 
         if not resolved.client.is_available():
             logger.warning("Discover Terms: provider %r not reachable", resolved.provider)
             self.status.emit(
-                f"LLM provider '{resolved.provider}' is not reachable. "
-                "Papers found — write terms manually."
+                f"LLM provider '{resolved.provider}' is not running. "
+                f"Start Ollama, or {_settings_hint}"
             )
             self.finished.emit(self._papers_fallback(papers))
             return
@@ -1581,6 +1591,23 @@ class FiltersTab(QWidget):
         right = QWidget()
         rl    = QVBoxLayout()
 
+        # ─ Discover search terms (top of page) ─
+        discover_group = QGroupBox("Discover Search Terms with AI")
+        dg_layout = QHBoxLayout()
+        dg_label = QLabel(
+            "Describe your research interest — the app will search for relevant papers "
+            "and ask the LLM to suggest keywords."
+        )
+        dg_label.setWordWrap(True)
+        dg_btn = QPushButton("🔍  Discover terms…")
+        dg_btn.setToolTip("Configure LLM in Settings > LLM Config")
+        dg_btn.setFixedWidth(160)
+        dg_btn.clicked.connect(self._open_discover_dialog)
+        dg_layout.addWidget(dg_label, 1)
+        dg_layout.addWidget(dg_btn)
+        discover_group.setLayout(dg_layout)
+        rl.addWidget(discover_group)
+
         # ─ Identity ─
         id_group = QGroupBox("Filter Identity")
         id_form  = QFormLayout()
@@ -1681,12 +1708,6 @@ class FiltersTab(QWidget):
         action_row.addWidget(save_as_btn)
         action_row.addWidget(del_btn)
         action_row.addStretch()
-        discover_btn = QPushButton("🔍  Discover terms…")
-        discover_btn.setToolTip(
-            "Search broadly for relevant papers and ask the local LLM to suggest search terms"
-        )
-        discover_btn.clicked.connect(self._open_discover_dialog)
-        action_row.addWidget(discover_btn)
         action_row.addWidget(self.test_btn)
         rl.addLayout(action_row)
 
