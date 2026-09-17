@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-09-16 — polite User-Agent for all API calls (batch-H)
+
+### Added / Fixed
+- **Every HTTP request to a polite-pool API now sends a correct `biorx/1.0`
+  User-Agent** (and `biorx/1.0 (mailto:EMAIL)` when a contact email is set).
+  This applies to all eight consumers: EuropePMC, PubMed, PsyArXiv, SocArXiv,
+  bioRxiv/medRxiv, Crossref, arXiv, and PDF downloads (both `pdf_handler.py`
+  and `monitor.py`). Previously six adapters sent `ResearchTool/1.0` or no UA,
+  and PDF downloads sent no UA at all.
+- **Contact email** is read from `BIORX_CONTACT_EMAIL` env or `contact_email`
+  in `sources_config.yaml`; no personal address is embedded in source code.
+- **Startup warning** when no contact email is configured. The warning is:
+  - Logged at startup for both GUI and CLI.
+  - Shown in the GUI status bar (all warnings joined, never overwriting).
+  - Returned by `/healthz` in the web app as `startup_warnings[]`.
+  - Displayed by the web UI on boot via `startup_warnings.join(" | ")`.
+- `PDFHandler()` with no `output_dir` argument now resolves via `DATA_DIR`
+  environment variable instead of crashing. Default remains `~/preprints/PDFs`.
+
+### Tests
+- `test_h_environment.py`: 16 new tests covering all eight consumers, the
+  startup-warning flow, pdf_handler default constructor, and monitor UA.
+- `test_app.py`: `test_h_app_js_reads_healthz_startup_warnings_on_boot`
+  asserts the render call (`startup_warnings.join`) survives comment-stripping
+  (P27 mutation guard).
+- `test_frontend_wiring.py`: `/healthz` added to the exact endpoint set.
+- Retrieval-layer BASELINE advanced four times to `a55b83e`; test gates each
+  advance against the drift guard.
+
 ## 2026-09-16 — recovering a missing abstract (N2)
 
 ### Fixed
