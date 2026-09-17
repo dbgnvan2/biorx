@@ -33,8 +33,12 @@ ROOT = Path(__file__).parent.parent.parent
 #   get_crossref_user_agent(cfg) to CrossrefAdapter; orchestrator warns when Crossref/
 #   arXiv active with no contact email; placeholder defaults removed from unpaywall.py
 #   and crossref.py — "research@example.com"/"ResearchTool/1.0" replaced with ""/"biorx/1.0")
+# Updated from a75924f → febd2fd (chdp F1-F2 final: EuropePmcAdapter, PsyArxivAdapter,
+#   SocArxivAdapter now accept sources_config and use polite_user_agent(sources_config);
+#   orchestrator passes self.config to all three; polite-pool warning extended to mention
+#   all consumers including OpenAlex and fires unconditionally when no email is set)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "a75924f"
+BASELINE = "febd2fd"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
