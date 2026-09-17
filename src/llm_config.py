@@ -44,14 +44,23 @@ class ProviderConfig:
     timeout: int
     base_url: str = ""
     api_key_env: str = ""
+    api_key: str = ""      # key stored directly in the config file (desktop use)
 
     @property
     def needs_key(self) -> bool:
         return bool(self.api_key_env)
 
     def owner_key(self) -> str:
-        """The server owner's key for this provider, from the environment."""
-        return os.environ.get(self.api_key_env, "").strip() if self.api_key_env else ""
+        """The server owner's key for this provider.
+
+        Precedence: env var (set at launch) → api_key field in the config file
+        (desktop convenience — the file is local and not committed to git).
+        """
+        if self.api_key_env:
+            env_val = os.environ.get(self.api_key_env, "").strip()
+            if env_val:
+                return env_val
+        return self.api_key.strip()
 
 
 def config_path() -> Path:
@@ -118,6 +127,7 @@ def provider_config(config: Dict[str, Any], name: str) -> Optional[ProviderConfi
         timeout=int(raw.get("timeout", 120)),
         base_url=raw.get("base_url", ""),
         api_key_env=raw.get("api_key_env", ""),
+        api_key=raw.get("api_key", ""),
     )
 
 

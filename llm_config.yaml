@@ -8,8 +8,15 @@
 #   anthropic → x-api-key, /v1/messages, official `anthropic` SDK
 #   openai    → Authorization: Bearer, /chat/completions (DeepSeek, OpenAI, …)
 #   ollama    → local /api/generate, no key
+#
+# Desktop usage — setting your API key:
+#   Option A (recommended): add  api_key: sk-ant-...  directly to the provider
+#             block below (this file is local and not committed to git).
+#   Option B: set the env var before launching:  export ANTHROPIC_API_KEY=sk-ant-...
+#
+# To switch provider: change default_provider to anthropic, deepseek, or ollama.
 
-default_provider: ollama          # overridden by the LLM_PROVIDER env var
+default_provider: ollama          # change to anthropic or deepseek if you have a key
 
 providers:
   ollama:
@@ -32,9 +39,10 @@ providers:
     # Verified against the current model list, 2026-09-15. `claude-sonnet-4`
     # does not exist; the current ids are claude-opus-5, claude-sonnet-5 and
     # claude-haiku-4-5, with no date suffixes.
-    model: claude-sonnet-5
+    model: claude-sonnet-5             # change to claude-haiku-4-5 for faster/cheaper
     model_env: ANTHROPIC_MODEL
     api_key_env: ANTHROPIC_API_KEY
+    # api_key: sk-ant-...              # uncomment and paste your key here (desktop use)
     timeout: 120
 
 # How much of a paper's extracted text is sent to the model. A budget, named and

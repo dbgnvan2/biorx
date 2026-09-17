@@ -1215,9 +1215,17 @@ class DiscoverTermsWorker(QObject):
     def stop(self):
         self._stop = True
 
-    def run(self):
-        from src.llm import OllamaClient
+    @staticmethod
+    def _papers_fallback(papers: list) -> str:
+        """Format found papers as a readable list to show when no LLM is available."""
+        lines = ["[No LLM available — papers found. Write terms manually below.]\n"]
+        for i, r in enumerate(papers[:30], 1):
+            lines.append(f"{i}. {r.title}")
+            if r.abstract:
+                lines.append(f"   {r.abstract[:150].strip()}…")
+        return "\n".join(lines)
 
+    def run(self):
         self.status.emit("Searching for relevant papers…")
         filter_dict = {
             "days_back": self.days_back,
@@ -1273,31 +1281,32 @@ class DiscoverTermsWorker(QObject):
             "- No preamble, no explanation — output only the groups and terms"
         )
 
-        from src.llm_providers import resolve_client, NoLLMCredentialError, ProviderUnavailableError
+        from src.llm_providers import resolve_client, NoLLMCredentialError
         try:
             resolved = resolve_client()
         except NoLLMCredentialError as e:
-            self.error.emit(
-                f"No LLM available: {e}\n\n"
-                "Options: start Ollama locally (ollama serve), or set ANTHROPIC_API_KEY / "
-                "DEEPSEEK_API_KEY and set the provider in llm_config.yaml.\n\n"
-                "The papers above were found — you can write terms manually."
+            logger.warning("Discover Terms: no LLM configured (%s)", e)
+            self.status.emit(
+                f"No LLM available ({e}). "
+                "Add api_key to llm_config.yaml in Settings, or start Ollama."
             )
-            self.finished.emit("")
+            self.finished.emit(self._papers_fallback(papers))
             return
 
         if not resolved.client.is_available():
-            self.error.emit(
+            logger.warning("Discover Terms: provider %r not reachable", resolved.provider)
+            self.status.emit(
                 f"LLM provider '{resolved.provider}' is not reachable. "
-                "Check that it is running.\n\n"
-                "The papers above were found — you can write terms manually."
+                "Papers found — write terms manually."
             )
-            self.finished.emit("")
+            self.finished.emit(self._papers_fallback(papers))
             return
 
         result = resolved.client.generate(prompt)
         if not result:
-            self.error.emit(f"LLM ({resolved.provider}) returned no response.")
+            logger.warning("Discover Terms: LLM (%s) returned empty response", resolved.provider)
+            self.status.emit(f"LLM ({resolved.provider}) returned no response — showing papers.")
+            self.finished.emit(self._papers_fallback(papers))
             return
 
         self.finished.emit(result.strip())
@@ -1415,14 +1424,27 @@ class DiscoverTermsDialog(QDialog):
     def _on_finished(self, structured_text: str):
         self._thread.quit()
         self.discover_btn.setEnabled(True)
-        if structured_text:
-            self.structured_view.setPlainText(structured_text)
+        if not structured_text:
+            self.status_label.setText("Done (no results).")
+            return
+        self.structured_view.setPlainText(structured_text)
+        # Only auto-parse and enable "Add" when the LLM returned themed output
+        # (identified by **headers**).  The fallback paper list is shown for
+        # reference only; the user types terms manually in the box below.
+        is_llm_output = "**" in structured_text
+        if is_llm_output:
             self._populate_filter_terms()
             self.parse_btn.setEnabled(True)
             self.apply_btn.setEnabled(True)
             self.status_label.setText("Done — edit the filter terms below, then click Add.")
         else:
-            self.status_label.setText("Done (no terms returned).")
+            self.terms_edit.setPlaceholderText(
+                "LLM not available — type search terms here (comma-separated)…"
+            )
+            self.apply_btn.setEnabled(True)   # let them add manual terms
+            self.status_label.setText(
+                "LLM not available. Browse the papers above, type terms below, then click Add."
+            )
 
     @staticmethod
     def _parse_structured(text: str) -> str:
