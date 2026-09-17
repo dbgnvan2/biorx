@@ -155,29 +155,46 @@ def test_a_normal_progress_message_is_not_read_as_a_failure(ctx, signed_in):
 
 def test_the_failure_marker_matches_what_the_orchestrator_actually_emits():
     """
-    A round-trip against the real producer (learnings P19): the orchestrator has
-    no structured failure callback, so this reads a human-readable status. If
-    someone rewords that message, this fails instead of the detector silently
-    going quiet.
+    Behavioral round-trip against the real producer (learnings P19): the orchestrator
+    emits a human-readable status on source failure; source_from_failure_status parses
+    it back to the internal source name. If someone changes the emission format without
+    updating the parser, this fails at the on_status boundary, not in source text.
     """
-    import inspect
-
-    from src.sources import orchestrator as orch_module
+    from src.sources.orchestrator import SourceOrchestrator, _SOURCE_LABELS
+    from src.sources.errors import SourceUnavailableError
     from web.routes_searches import source_from_failure_status
 
-    source = inspect.getsource(orch_module.SourceOrchestrator.search)
-    # The orchestrator uses the FAILURE_STATUS_MARKER constant; verify it's present
-    # (a rename of the constant would be caught here) and that at least one failure
-    # branch still formats label before marker.
-    assert 'FAILURE_STATUS_MARKER' in source, \
-        "the orchestrator no longer uses FAILURE_STATUS_MARKER in search()"
-    marker = orch_module.FAILURE_STATUS_MARKER
+    target_name = next(iter(_SOURCE_LABELS))
+    target_label = _SOURCE_LABELS[target_name]
 
-    for name, label in orch_module._SOURCE_LABELS.items():
-        # New format: "<label> <marker> (<qualifier>)"
-        assert source_from_failure_status(f"{label} {marker} (unavailable)") == name
-        assert source_from_failure_status(f"{label} {marker} (error)") == name
-        assert source_from_failure_status(f"{label}: 40 fetched") == ""
+    class _AlwaysFails:
+        source_name = target_name
+        source_trust_weight = 1.0
+        def search(self, *a, **kw): raise SourceUnavailableError("down for test")
+        def normalize(self, raw): raise NotImplementedError
+
+    orch = SourceOrchestrator.__new__(SourceOrchestrator)
+    orch.config = {}
+    orch._crossref = None
+    orch._unpaywall = None
+    orch._search_adapters = {target_name: _AlwaysFails()}
+
+    msgs: list = []
+    orch.search(
+        filter_dict={"days_back": 1, "text_groups": [], "authors": []},
+        source_selection={"all": False, "selected": [target_name]},
+        on_status=msgs.append,
+    )
+
+    failure_msgs = [m for m in msgs if source_from_failure_status(m) != ""]
+    assert failure_msgs, (
+        f"Orchestrator emitted no parseable failure status for {target_name!r}: {msgs}"
+    )
+    assert source_from_failure_status(failure_msgs[0]) == target_name, (
+        f"source_from_failure_status({failure_msgs[0]!r}) should be {target_name!r}"
+    )
+    # Progress-style messages must not look like failures.
+    assert source_from_failure_status(f"{target_label}: 40 fetched") == ""
 
 
 # ── Cancellation, expiry and ownership ────────────────────────────────────────

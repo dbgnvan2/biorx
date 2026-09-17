@@ -61,8 +61,10 @@ ROOT = Path(__file__).parent.parent.parent
 #   added to orchestrator.py; all 4 on_status failure emission sites now use it; message
 #   format normalised to "<label> — skipped (<qualifier>)" so monitor.py split() extracts
 #   the label cleanly — P19 single-source-of-truth fix; W1.a required)
+# Updated from cb3d6f0 → 5b8ec2a (batch I QA gate follow-up: comment in orchestrator.py
+#   updated to reflect new "— skipped (unavailable)" format — cosmetic only; W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "cb3d6f0"
+BASELINE = "5b8ec2a"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.

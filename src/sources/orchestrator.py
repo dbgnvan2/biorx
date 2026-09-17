@@ -316,7 +316,7 @@ class SourceOrchestrator:
             except SourceUnavailableError as e:
                 logger.error("Source %s unavailable: %s", source_name, e)
                 if fetched == 0:
-                    raise  # propagate so search() can emit "unavailable — skipped"
+                    raise  # propagate so search() can emit "— skipped (unavailable)"
                 # Mid-pagination failure: records already yielded but source is now broken.
                 # Emit the marker so callers (monitor.py) count this as a source failure.
                 if on_status:

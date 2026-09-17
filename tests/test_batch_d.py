@@ -209,7 +209,8 @@ def test_d_monitor_exit_code_reflects_failed_sources(tmp_path, capsys):
         '"text_groups": [], "authors": [], "source_selection": {"all": true, "selected": []}}]}'
     )
 
-    FAILURE_MSG = "Europe PMC — skipped"
+    from src.sources.orchestrator import FAILURE_STATUS_MARKER as _FM
+    FAILURE_MSG = f"Europe PMC {_FM} (unavailable)"
 
     def fake_search(filter_dict, source_selection=None, on_batch=None, on_progress=None,
                     on_status=None, should_stop=None, max_results=200):

@@ -93,7 +93,7 @@ def test_i_all_failure_paths_emit_the_marker():
                 f"Label before marker is empty for {label_key}: {m!r}. "
                 "Message format must be '<label> <marker> ...' not '... <marker> <label>'"
             )
-            assert "Europe PMC" in label_part or label_part, (
+            assert "Europe PMC" in label_part, (
                 f"Unexpected label part {label_part!r} for {label_key}"
             )
 

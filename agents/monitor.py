@@ -18,7 +18,7 @@ from typing import Optional
 # Allow import of src modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.sources.orchestrator import SourceOrchestrator, FAILURE_STATUS_MARKER
+from src.sources.orchestrator import SourceOrchestrator, FAILURE_STATUS_MARKER, _SOURCE_LABELS
 from src.sources.config import load_sources_config
 from src.filtering import filter_papers
 
@@ -111,10 +111,13 @@ def run_search(
 
     failed_this_run: list = []
 
+    _label_to_name = {v: k for k, v in _SOURCE_LABELS.items()}
+
     def on_status(message: str) -> None:
         print(f"[{filter_name}] {message}", file=sys.stderr)
         if FAILURE_STATUS_MARKER in message:
-            source_name = message.split(FAILURE_STATUS_MARKER)[0].strip()
+            label = message.split(FAILURE_STATUS_MARKER)[0].strip()
+            source_name = _label_to_name.get(label, label)
             failed_this_run.append(source_name)
 
     records = orchestrator.search(
