@@ -233,6 +233,37 @@ def test_d_monitor_exit_code_reflects_failed_sources(tmp_path, capsys):
     assert exit_code == 2, f"expected 2 when sources failed, got {exit_code}"
 
 
+def test_d_monitor_run_search_resolves_internal_source_name():
+    """on_status must store the internal source name (e.g. 'europepmc'), not the
+    display label ('Europe PMC'), in sources_failed.
+    Kills the split-index mutant: split(marker)[1] yields the qualifier part, not the
+    label, so .get() falls back and stores ' (unavailable)' — wrong but exit-code-2
+    still passes, masking the bug. This test pins the content, not just the count."""
+    from src.sources.orchestrator import FAILURE_STATUS_MARKER as _FM
+
+    FAILURE_MSG = f"Europe PMC {_FM} (unavailable)"
+
+    def fake_search(filter_dict, source_selection=None, on_batch=None, on_progress=None,
+                    on_status=None, should_stop=None, max_results=200):
+        if on_status:
+            on_status(FAILURE_MSG)
+        return []
+
+    orch = MagicMock()
+    orch.search.side_effect = fake_search
+
+    sources_failed: list = []
+    monitor.run_search(
+        orch,
+        {"days_back": 7, "text_groups": [], "authors": []},
+        "Test",
+        sources_failed=sources_failed,
+    )
+    assert sources_failed == ["europepmc"], (
+        f"Expected internal name ['europepmc'], got {sources_failed}"
+    )
+
+
 def test_d_monitor_exits_0_when_all_sources_succeed(tmp_path):
     """Smoke test: no failures → exit 0."""
     orch = MagicMock()

@@ -173,10 +173,7 @@ def test_the_failure_marker_matches_what_the_orchestrator_actually_emits():
         def search(self, *a, **kw): raise SourceUnavailableError("down for test")
         def normalize(self, raw): raise NotImplementedError
 
-    orch = SourceOrchestrator.__new__(SourceOrchestrator)
-    orch.config = {}
-    orch._crossref = None
-    orch._unpaywall = None
+    orch = SourceOrchestrator({})
     orch._search_adapters = {target_name: _AlwaysFails()}
 
     msgs: list = []
@@ -195,6 +192,26 @@ def test_the_failure_marker_matches_what_the_orchestrator_actually_emits():
     )
     # Progress-style messages must not look like failures.
     assert source_from_failure_status(f"{target_label}: 40 fetched") == ""
+
+
+def test_the_failure_parser_handles_all_sources_and_qualifiers():
+    """Unit test: source_from_failure_status covers all 8 _SOURCE_LABELS entries
+    across all 4 qualifier variants (unavailable/error/rate-limited/partial).
+    Progress messages must never parse as failures. Covers mutation gap where
+    only next(iter()) was tested in the behavioral round-trip above."""
+    from src.sources.orchestrator import FAILURE_STATUS_MARKER, _SOURCE_LABELS
+    from web.routes_searches import source_from_failure_status
+
+    qualifiers = ("unavailable", "error", "rate-limited", "partial")
+    for name, label in _SOURCE_LABELS.items():
+        for q in qualifiers:
+            msg = f"{label} {FAILURE_STATUS_MARKER} ({q})"
+            assert source_from_failure_status(msg) == name, (
+                f"Parser failed for source={name!r} qualifier={q!r}: {msg!r}"
+            )
+        assert source_from_failure_status(f"{label}: 40 fetched") == "", (
+            f"Progress message misidentified as failure for source={name!r}"
+        )
 
 
 # ── Cancellation, expiry and ownership ────────────────────────────────────────

@@ -63,8 +63,10 @@ ROOT = Path(__file__).parent.parent.parent
 #   the label cleanly — P19 single-source-of-truth fix; W1.a required)
 # Updated from cb3d6f0 → 5b8ec2a (batch I QA gate follow-up: comment in orchestrator.py
 #   updated to reflect new "— skipped (unavailable)" format — cosmetic only; W1.a required)
+# Updated from 5b8ec2a → 0428f66 (batch I QA gate round 2: advance past the cosmetic
+#   comment fix; no retrieval logic change — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "5b8ec2a"
+BASELINE = "0428f66"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
