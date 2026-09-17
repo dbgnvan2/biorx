@@ -104,7 +104,7 @@ class SourceOrchestrator:
 
         if is_source_enabled(self.config, "arxiv"):
             from .arxiv import ArxivAdapter
-            self._search_adapters["arxiv"] = ArxivAdapter()
+            self._search_adapters["arxiv"] = ArxivAdapter(sources_config=self.config)
             logger.info("Registered adapter: arxiv")
 
         if is_source_enabled(self.config, "crossref"):

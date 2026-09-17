@@ -159,7 +159,7 @@ def test_h_crossref_user_agent_uses_the_contact_address(monkeypatch):
 
 
 def test_h_arxiv_request_carries_the_contact_address(monkeypatch):
-    """The boundary: the header the arXiv adapter actually sends."""
+    """Env path: BIORX_CONTACT_EMAIL reaches the arXiv User-Agent header."""
     from src.sources import arxiv
 
     monkeypatch.setenv("BIORX_CONTACT_EMAIL", "env@example.org")
@@ -182,6 +182,40 @@ def test_h_arxiv_request_carries_the_contact_address(monkeypatch):
     adapter = arxiv.ArxivAdapter(min_request_interval=0)
     adapter.search("all:test", page=1, page_size=1, filter_dict={})
     assert sent["headers"]["User-Agent"] == "biorx/1.0 (mailto:env@example.org)"
+
+
+def test_h_arxiv_request_carries_config_contact_address(monkeypatch):
+    """Config path: contact_email from sources_config reaches arXiv User-Agent.
+
+    A user who sets contact_email in sources_config.yaml but not BIORX_CONTACT_EMAIL
+    must still get the mailto header on arXiv requests (P5: all four polite-pool
+    consumers must be wired, not just Crossref/Unpaywall).
+    """
+    from src.sources import arxiv
+
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    sent = {}
+
+    class _Resp:
+        status_code = 200
+        text = '<feed xmlns="http://www.w3.org/2005/Atom"></feed>'
+        content = text.encode()
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        sent["headers"] = headers
+        return _Resp()
+
+    monkeypatch.setattr(arxiv.requests, "get", fake_get)
+    adapter = arxiv.ArxivAdapter(
+        min_request_interval=0,
+        sources_config={"contact_email": "cfg@example.org"},
+    )
+    adapter.search("all:test", page=1, page_size=1, filter_dict={})
+    assert sent["headers"]["User-Agent"] == "biorx/1.0 (mailto:cfg@example.org)"
 
 
 def test_h_no_contact_email_skips_unpaywall_and_says_so(monkeypatch, caplog):

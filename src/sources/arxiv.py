@@ -64,9 +64,11 @@ class ArxivAdapter:
     source_name = "arxiv"
     source_trust_weight = 0.75
 
-    def __init__(self, timeout: int = 30, min_request_interval: float = 3.0):
+    def __init__(self, timeout: int = 30, min_request_interval: float = 3.0,
+                 sources_config: dict | None = None):
         self.timeout = timeout
         self.min_request_interval = min_request_interval
+        self.sources_config = sources_config or {}
         self.last_request_time = 0.0
         self.last_total = 0
         # Entries present in the last page BEFORE withdrawn ones were removed.
@@ -113,7 +115,7 @@ class ArxivAdapter:
         }
 
         headers = {
-            "User-Agent": polite_user_agent({}),
+            "User-Agent": polite_user_agent(self.sources_config),
         }
 
         attempts = 0

@@ -40,7 +40,6 @@ publication_sources:
 # open-access lookup). The environment variable BIORX_CONTACT_EMAIL wins over
 # this field when both are set.
 #
-# Note: Crossref and Unpaywall read this file. OpenAlex and arXiv read only
-# the environment variable (they are called without the loaded config).
-# Setting BIORX_CONTACT_EMAIL covers all four.
+# Setting BIORX_CONTACT_EMAIL covers all four sources (it wins over this field
+# when both are set). All four sources also read this field directly.
 contact_email: ""

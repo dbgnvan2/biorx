@@ -57,7 +57,7 @@ Test suite:  /opt/homebrew/bin/pytest tests/ -q  →  exit code 0 (183 passed,
   `mailto:research@example.com`)
 - Risk: the module docstring states "Extracted verbatim from gui.py …
   Behaviour is unchanged". The OpenAlex `User-Agent` contact email changed from
-  `research@example.com` to `davegalloway@me.com`, so the claim is false, and a
+  `research@example.com` to `[owner-email]`, so the claim is false, and a
   real personal email is now hardcoded in source (P4 — a literal that should be
   config).
 - Fix: either restore the placeholder, or correct the docstring to name the
@@ -245,7 +245,7 @@ Test suite:  /opt/homebrew/bin/pytest tests/ -q  →  exit code 0 (192 passed,
 - File: `tests/test_paper_meta.py:177-179`
 - `assert "@me.com" not in source` is a legitimate absence-over-source guard
   (P19-corollary use), but it checks one domain suffix and would miss a different
-  personal address (e.g. `davebgalloway@gmail.com`). The underlying fix is
+  personal address (e.g. another personal address). The underlying fix is
   correct; the guard is just narrower than "no personal address".
 
 ---
