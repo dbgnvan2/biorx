@@ -1201,7 +1201,7 @@ class DiscoverTermsWorker(QObject):
     LLM to suggest precise search terms from the papers found.
     """
     status   = pyqtSignal(str)
-    finished = pyqtSignal(list)   # list[str] of suggested terms
+    finished = pyqtSignal(str)    # structured text block from LLM
     error    = pyqtSignal(str)
 
     def __init__(self, orchestrator, query: str, days_back: int = 90, max_papers: int = 30):
@@ -1258,30 +1258,49 @@ class DiscoverTermsWorker(QObject):
         prompt = (
             f"Research interest: {self.query}\n\n"
             f"Sample papers:\n{paper_lines}\n\n"
-            "Based on these papers, suggest 10-15 specific search terms (single words "
-            "or short 2-3 word phrases) for finding similar research. Focus on "
-            "methodology, technical concepts, and domain-specific vocabulary — avoid "
-            "generic words. Return ONLY a comma-separated list, no explanation."
+            "Based on these papers, suggest search terms for finding similar research. "
+            "Organise them into 4-6 thematic groups. Use this exact format:\n\n"
+            "**Group name**\n"
+            "- term one / synonym / abbreviation\n"
+            "- term two\n"
+            "- term three\n\n"
+            "Rules:\n"
+            "- Group names must be wrapped in **double asterisks**\n"
+            "- Each term line must start with '- '\n"
+            "- Use ' / ' to separate close synonyms or abbreviations on the same line\n"
+            "- Focus on methodology, technical vocabulary, domain-specific constructs\n"
+            "- Avoid generic words\n"
+            "- No preamble, no explanation — output only the groups and terms"
         )
 
-        client = OllamaClient()
-        if not client.is_available():
+        from src.llm_providers import resolve_client, NoLLMCredentialError, ProviderUnavailableError
+        try:
+            resolved = resolve_client()
+        except NoLLMCredentialError as e:
             self.error.emit(
-                "Ollama is not running — start it with: ollama serve\n"
-                "The papers above were found; you can write terms manually."
+                f"No LLM available: {e}\n\n"
+                "Options: start Ollama locally (ollama serve), or set ANTHROPIC_API_KEY / "
+                "DEEPSEEK_API_KEY and set the provider in llm_config.yaml.\n\n"
+                "The papers above were found — you can write terms manually."
             )
-            # Still emit the paper titles so the user has something to work with
-            titles = ", ".join(r.title.split()[0] for r in papers[:5] if r.title)
-            self.finished.emit([])
+            self.finished.emit("")
             return
 
-        result = client.generate(prompt)
+        if not resolved.client.is_available():
+            self.error.emit(
+                f"LLM provider '{resolved.provider}' is not reachable. "
+                "Check that it is running.\n\n"
+                "The papers above were found — you can write terms manually."
+            )
+            self.finished.emit("")
+            return
+
+        result = resolved.client.generate(prompt)
         if not result:
-            self.error.emit("LLM returned no response. Check Ollama logs.")
+            self.error.emit(f"LLM ({resolved.provider}) returned no response.")
             return
 
-        terms = [t.strip().strip('"').strip("'") for t in result.split(",") if t.strip()]
-        self.finished.emit(terms)
+        self.finished.emit(result.strip())
 
 
 class DiscoverTermsDialog(QDialog):
@@ -1301,14 +1320,15 @@ class DiscoverTermsDialog(QDialog):
 
         layout.addWidget(QLabel(
             "Describe your research interest in plain language. The app will search "
-            "for relevant papers and ask the local LLM to suggest precise search terms."
+            "for relevant papers and ask the local LLM to suggest search terms organised "
+            "by theme."
         ))
 
         self.query_edit = QTextEdit()
         self.query_edit.setPlaceholderText(
             "e.g. agents modeling social behavior or social interactions"
         )
-        self.query_edit.setMaximumHeight(80)
+        self.query_edit.setMaximumHeight(72)
         layout.addWidget(self.query_edit)
 
         days_row = QHBoxLayout()
@@ -1328,10 +1348,31 @@ class DiscoverTermsDialog(QDialog):
         self.status_label.setStyleSheet("color: gray; font-size: 11px;")
         layout.addWidget(self.status_label)
 
-        layout.addWidget(QLabel("Suggested terms (edit freely, comma-separated):"))
+        # ── Structured output (read-only) ────────────────────────────────────
+        layout.addWidget(QLabel("Suggested terms by theme:"))
+        self.structured_view = QTextEdit()
+        self.structured_view.setReadOnly(True)
+        self.structured_view.setPlaceholderText(
+            "Themes and terms will appear here after discovery…"
+        )
+        self.structured_view.setFontFamily("Courier")
+        layout.addWidget(self.structured_view, 3)
+
+        # ── Editable flat list for the filter ───────────────────────────────
+        filter_hdr = QHBoxLayout()
+        filter_hdr.addWidget(QLabel("Terms for filter (comma-separated, edit as needed):"))
+        self.parse_btn = QPushButton("Re-parse from above")
+        self.parse_btn.setEnabled(False)
+        self.parse_btn.setToolTip("Re-extract terms from the theme list above")
+        self.parse_btn.clicked.connect(self._populate_filter_terms)
+        filter_hdr.addStretch()
+        filter_hdr.addWidget(self.parse_btn)
+        layout.addLayout(filter_hdr)
+
         self.terms_edit = QTextEdit()
-        self.terms_edit.setPlaceholderText("Terms will appear here after discovery…")
-        layout.addWidget(self.terms_edit, 1)
+        self.terms_edit.setPlaceholderText("Comma-separated terms will appear here…")
+        self.terms_edit.setMaximumHeight(72)
+        layout.addWidget(self.terms_edit)
 
         btns = QHBoxLayout()
         self.apply_btn = QPushButton("Add to filter as new group")
@@ -1355,6 +1396,8 @@ class DiscoverTermsDialog(QDialog):
         self._stop_worker()
         self.discover_btn.setEnabled(False)
         self.apply_btn.setEnabled(False)
+        self.parse_btn.setEnabled(False)
+        self.structured_view.setPlainText("")
         self.terms_edit.setPlainText("")
         self.status_label.setText("Starting…")
 
@@ -1369,15 +1412,71 @@ class DiscoverTermsDialog(QDialog):
         self._worker.error.connect(self._on_error)
         self._thread.start()
 
-    def _on_finished(self, terms):
+    def _on_finished(self, structured_text: str):
         self._thread.quit()
         self.discover_btn.setEnabled(True)
-        if terms:
-            self.terms_edit.setPlainText(", ".join(terms))
+        if structured_text:
+            self.structured_view.setPlainText(structured_text)
+            self._populate_filter_terms()
+            self.parse_btn.setEnabled(True)
             self.apply_btn.setEnabled(True)
-            self.status_label.setText(f"Done — {len(terms)} terms suggested. Edit as needed.")
+            self.status_label.setText("Done — edit the filter terms below, then click Add.")
         else:
-            self.status_label.setText("Done (no terms returned). Search results may still help.")
+            self.status_label.setText("Done (no terms returned).")
+
+    @staticmethod
+    def _parse_structured(text: str) -> str:
+        """
+        Extract individual search terms from a structured LLM block.
+
+        Expected format (requested in the prompt):
+            **Group name**
+            - term one / synonym / abbreviation
+            - term two
+
+        Lines starting with '**' are group headers — skipped.
+        Lines starting with '-' (after stripping) are term lines.
+        Slash-separated variants on the same line become separate terms.
+        Parenthetical abbreviations like "(ABSS)" are stripped from each variant.
+        Lines matching neither pattern are skipped.
+        """
+        import re
+        terms = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            # Skip group headers (**...**)
+            if line.startswith("**"):
+                continue
+            # Accept term lines (start with '-' or '•')
+            if line.startswith(("-", "•")):
+                line = line.lstrip("-•").strip()
+            else:
+                # Tolerate lines without a leading dash if they contain a slash
+                # (some models omit the bullet); skip everything else
+                if "/" not in line:
+                    continue
+            # Split slash variants
+            parts = re.split(r"\s*/\s*", line)
+            for p in parts:
+                p = re.sub(r"\s*\([^)]+\)", "", p).strip().strip('"').strip("'")
+                if p and len(p) > 2:
+                    terms.append(p)
+        # Deduplicate preserving order
+        seen: set = set()
+        unique = []
+        for t in terms:
+            key = t.lower()
+            if key not in seen:
+                seen.add(key)
+                unique.append(t)
+        return ", ".join(unique)
+
+    def _populate_filter_terms(self):
+        structured = self.structured_view.toPlainText().strip()
+        if structured:
+            self.terms_edit.setPlainText(self._parse_structured(structured))
 
     def _on_error(self, msg):
         self._thread.quit()
