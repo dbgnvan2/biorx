@@ -429,6 +429,17 @@ def test_h_pubmed_carries_config_contact_address(monkeypatch):
     )
 
 
+def test_h_biorxiv_medrxiv_carries_config_contact_address(monkeypatch):
+    """Config path: contact_email from sources_config reaches bioRxiv/medRxiv UA (F1/P5)."""
+    from src.sources.biorxiv_medrxiv import BiorxivMedrxivAdapter
+
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    adapter = BiorxivMedrxivAdapter(sources_config={"contact_email": "cfg@example.org"})
+    assert adapter._api.session.headers["User-Agent"] == "biorx/1.0 (mailto:cfg@example.org)", (
+        f"BiorxivMedrxivAdapter must use config contact_email in UA; got: {adapter._api.session.headers.get('User-Agent')}"
+    )
+
+
 def test_h_orchestrator_warns_about_openalex_when_no_email(monkeypatch):
     """
     The no-email startup warning names OpenAlex so users know the silent degradation

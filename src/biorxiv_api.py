@@ -16,9 +16,10 @@ BASE_URL = "https://api.biorxiv.org"
 class BioRxivAPI:
     """Wrapper for bioRxiv REST API."""
 
-    def __init__(self, timeout: int = 30):
+    def __init__(self, timeout: int = 30, user_agent: str = "biorx/1.0"):
         self.timeout = timeout
         self.session = requests.Session()
+        self.session.headers.update({"User-Agent": user_agent})
 
     def search_by_date_range(
         self,

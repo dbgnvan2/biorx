@@ -99,7 +99,7 @@ class SourceOrchestrator:
 
         if is_source_enabled(self.config, "biorxiv_medrxiv"):
             from .biorxiv_medrxiv import BiorxivMedrxivAdapter
-            self._search_adapters["biorxiv_medrxiv"] = BiorxivMedrxivAdapter()
+            self._search_adapters["biorxiv_medrxiv"] = BiorxivMedrxivAdapter(sources_config=self.config)
             logger.info("Registered adapter: biorxiv_medrxiv")
 
         if is_source_enabled(self.config, "arxiv"):
@@ -135,8 +135,8 @@ class SourceOrchestrator:
         if not get_contact_email(self.config):
             msg = (
                 "Requests to polite-pool APIs (Crossref, arXiv, Europe PMC, PubMed, "
-                "PsyArXiv, SocArXiv, OpenAlex) will send no contact email "
-                "(BIORX_CONTACT_EMAIL not set). Set BIORX_CONTACT_EMAIL or "
+                "PsyArXiv, SocArXiv, bioRxiv/medRxiv, OpenAlex) will send no contact "
+                "email (BIORX_CONTACT_EMAIL not set). Set BIORX_CONTACT_EMAIL or "
                 "contact_email in sources_config.yaml."
             )
             logger.warning(msg)

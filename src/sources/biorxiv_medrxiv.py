@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from .base import RawRecord
 from .schema import CanonicalRecord, AuthorRecord, SourceHit, RecordFlags, make_canonical_id
 from .errors import SourceUnavailableError, RateLimitedError
+from .config import polite_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,10 @@ class BiorxivMedrxivAdapter:
     source_name = "biorxiv_medrxiv"
     source_trust_weight = 0.75
 
-    def __init__(self, timeout: int = 30):
+    def __init__(self, timeout: int = 30, sources_config: dict | None = None):
+        self.sources_config = sources_config or {}
         from src.biorxiv_api import BioRxivAPI
-        self._api = BioRxivAPI(timeout=timeout)
+        self._api = BioRxivAPI(timeout=timeout, user_agent=polite_user_agent(self.sources_config))
 
     def search(
         self, query: str, page: int = 1, page_size: int = 100,
