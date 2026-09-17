@@ -29,8 +29,12 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from 531b24f → fa4665c (chdp F1 fix: ArxivAdapter.sources_config threads the
 #   loaded config so contact_email from YAML reaches arXiv requests, matching how
 #   Crossref/Unpaywall/OpenAlex work; orchestrator.py passes self.config to ArxivAdapter)
+# Updated from fa4665c → a75924f (chdp F1-F3 completion: _crossref_abstract passes
+#   get_crossref_user_agent(cfg) to CrossrefAdapter; orchestrator warns when Crossref/
+#   arXiv active with no contact email; placeholder defaults removed from unpaywall.py
+#   and crossref.py — "research@example.com"/"ResearchTool/1.0" replaced with ""/"biorx/1.0")
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "fa4665c"
+BASELINE = "a75924f"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
