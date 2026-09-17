@@ -41,8 +41,11 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from 128cef6 → a55b83e (chdp F1 final: BiorxivMedrxivAdapter threads
 #   sources_config to BioRxivAPI.user_agent; orchestrator passes self.config; all
 #   seven search-source adapters now send polite_user_agent(sources_config) — P5 class closed)
+# Updated from a55b83e → b0a7ca8 (batch D: arXiv wildcard strip, version carry,
+#   5xx retry, M3 author clause removed; schema.py adds arxiv_version field;
+#   query_builder.py drops normalize_authors — W1.a required changes)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "a55b83e"
+BASELINE = "b0a7ca8"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
