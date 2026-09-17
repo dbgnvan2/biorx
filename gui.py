@@ -1225,11 +1225,32 @@ class DiscoverTermsWorker(QObject):
                 lines.append(f"   {r.abstract[:150].strip()}…")
         return "\n".join(lines)
 
+    @staticmethod
+    def _query_to_keywords(query: str) -> str:
+        """
+        Convert a natural-language description to comma-separated keywords for
+        the filter dict.
+
+        The raw description passed as a single "both" term gets Lucene-quoted
+        into one exact phrase, which matches nothing. Splitting it into
+        individual meaningful words (stop-words removed) produces an OR-joined
+        clause that returns relevant papers from Lucene sources.
+        """
+        _STOP = {
+            "a", "an", "the", "and", "or", "of", "for", "in", "to", "by", "on",
+            "at", "is", "are", "was", "were", "be", "been", "being", "that", "this",
+            "with", "from", "how", "what", "where", "which", "about", "as",
+        }
+        words = [w.strip(".,;:!?") for w in query.split()]
+        keywords = [w for w in words if w.lower() not in _STOP and len(w) > 2]
+        return ", ".join(keywords) if keywords else query
+
     def run(self):
         self.status.emit("Searching for relevant papers…")
+        keywords = self._query_to_keywords(self.query)
         filter_dict = {
             "days_back": self.days_back,
-            "text_groups": [{"title": "", "abstract": "", "both": self.query}],
+            "text_groups": [{"title": "", "abstract": "", "both": keywords}],
         }
         papers = []
 
