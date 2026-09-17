@@ -218,6 +218,57 @@ def test_h_arxiv_request_carries_config_contact_address(monkeypatch):
     assert sent["headers"]["User-Agent"] == "biorx/1.0 (mailto:cfg@example.org)"
 
 
+def test_h_crossref_abstract_carries_config_contact_address(monkeypatch):
+    """
+    _crossref_abstract passes the loaded sources_config to CrossrefAdapter so
+    the abstract-recovery Crossref path sends a polite mailto UA (F1/P5).
+
+    Tests the boundary the adapter actually uses, not a mock of the mock.
+    """
+    from src import paper_meta as pm
+    from src.sources import crossref as crossref_mod
+
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    captured = {}
+
+    class _FakeAdapter:
+        def __init__(self, user_agent="biorx/1.0", timeout=15):
+            captured["user_agent"] = user_agent
+
+        def enrich(self, record):
+            pass
+
+    monkeypatch.setattr(crossref_mod, "CrossrefAdapter", _FakeAdapter)
+    # Patch load_sources_config in paper_meta (the local import) to return config email.
+    # _crossref_abstract does `from .sources.config import ... load_sources_config`
+    # at call time; patch the config module directly.
+    from src.sources import config as sources_config_mod
+    monkeypatch.setattr(sources_config_mod, "load_sources_config",
+                        lambda: {"contact_email": "cfg@example.org"})
+
+    pm._crossref_abstract("10.1234/test")
+    assert captured["user_agent"] == "biorx/1.0 (mailto:cfg@example.org)", (
+        "_crossref_abstract must pass the config-resolved user_agent to CrossrefAdapter; "
+        f"got: {captured.get('user_agent')}"
+    )
+
+
+def test_h_orchestrator_warns_when_crossref_active_but_no_email(monkeypatch):
+    """
+    When Crossref is enabled and no contact email is set, orchestrator.warnings
+    includes a message so the caller can surface the degraded mode (F2/P2/P5).
+    """
+    from src.sources.orchestrator import SourceOrchestrator
+
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    cfg = {"publication_sources": {"crossref": {"enabled": True}}}
+    orch = SourceOrchestrator(cfg)
+    assert any("BIORX_CONTACT_EMAIL" in w and "Crossref" in w for w in orch.warnings), (
+        "expected a Crossref/BIORX_CONTACT_EMAIL warning in orch.warnings; "
+        f"got: {orch.warnings}"
+    )
+
+
 def test_h_no_contact_email_skips_unpaywall_and_says_so(monkeypatch, caplog):
     """
     Unpaywall requires an address. With none, the enricher is not registered and

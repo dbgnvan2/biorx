@@ -23,11 +23,11 @@ class UnpaywallAdapter:
 
     source_name = "unpaywall"
 
-    def __init__(self, email: str = "research@example.com", timeout: int = 15):
+    def __init__(self, email: str = "", timeout: int = 15):
         self.email   = email
         self.timeout = timeout
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "ResearchTool/1.0"})
+        self.session.headers.update({"User-Agent": "biorx/1.0"})
 
     def get_by_id(self, doi: str) -> Optional[Dict[str, Any]]:
         """

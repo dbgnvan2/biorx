@@ -128,6 +128,22 @@ class SourceOrchestrator:
                 logger.warning(msg)
                 self.warnings.append(msg)
 
+        # Crossref and arXiv degrade silently to bare UA when no contact email.
+        # Surface this rather than dropping it (learnings P2/P5).
+        from .config import get_contact_email
+        if not get_contact_email(self.config):
+            polite_pool_active = (
+                is_source_enabled(self.config, "crossref") or
+                is_source_enabled(self.config, "arxiv")
+            )
+            if polite_pool_active:
+                msg = (
+                    "Crossref and arXiv requests will send no contact email (BIORX_CONTACT_EMAIL "
+                    "not set). Set BIORX_CONTACT_EMAIL or contact_email in sources_config.yaml."
+                )
+                logger.warning(msg)
+                self.warnings.append(msg)
+
     # ── Public search API ─────────────────────────────────────────────────────
 
     def search(

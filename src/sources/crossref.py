@@ -43,7 +43,7 @@ class CrossrefAdapter:
 
     source_name = "crossref"
 
-    def __init__(self, user_agent: str = "ResearchTool/1.0", timeout: int = 15):
+    def __init__(self, user_agent: str = "biorx/1.0", timeout: int = 15):
         self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": user_agent})

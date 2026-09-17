@@ -256,8 +256,13 @@ def _europepmc():
 def _crossref_abstract(doi: str) -> str:
     """Crossref sometimes carries a JATS abstract that Europe PMC lacks."""
     from .sources.crossref import CrossrefAdapter
+    from .sources.config import get_crossref_user_agent, load_sources_config
     from .sources.schema import CanonicalRecord, RecordFlags, make_canonical_id
 
+    try:
+        cfg = load_sources_config()
+    except Exception:
+        cfg = {}
     record = CanonicalRecord(
         canonical_id=make_canonical_id(doi=doi, title="", first_author="", year=0),
         title="", abstract="", authors=[], year=0, published_date="",
@@ -265,7 +270,7 @@ def _crossref_abstract(doi: str) -> str:
         pmid="", pmcid="", source_url="", best_oa_url="", pdf_url="", license="",
         oa_status="", subjects=[], keywords=[], source_hits=[], flags=RecordFlags(),
     )
-    CrossrefAdapter().enrich(record)
+    CrossrefAdapter(user_agent=get_crossref_user_agent(cfg)).enrich(record)
     return record.abstract or ""
 
 
