@@ -38,8 +38,11 @@ ROOT = Path(__file__).parent.parent.parent
 #   polite-pool warning fires unconditionally with all consumers named)
 # Updated from febd2fd → 128cef6 (chdp F1-F2 sibling: PubMedAdapter was missing
 #   sources_config pass-through; warning updated to include PubMed in consumer list)
+# Updated from 128cef6 → a55b83e (chdp F1 final: BiorxivMedrxivAdapter threads
+#   sources_config to BioRxivAPI.user_agent; orchestrator passes self.config; all
+#   seven search-source adapters now send polite_user_agent(sources_config) — P5 class closed)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "128cef6"
+BASELINE = "a55b83e"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
