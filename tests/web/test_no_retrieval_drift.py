@@ -26,8 +26,11 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from a3769ef → ad2818e (Batch H: User-Agent hygiene + Unpaywall guard)
 # Updated from ad2818e → 531b24f (test-qa fix: orch.warnings added to orchestrator.py
 #   to surface startup conditions to callers — an interface addition, not retrieval logic)
+# Updated from 531b24f → fa4665c (chdp F1 fix: ArxivAdapter.sources_config threads the
+#   loaded config so contact_email from YAML reaches arXiv requests, matching how
+#   Crossref/Unpaywall/OpenAlex work; orchestrator.py passes self.config to ArxivAdapter)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "531b24f"
+BASELINE = "fa4665c"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
