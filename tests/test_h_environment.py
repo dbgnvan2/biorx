@@ -385,6 +385,57 @@ def test_h_show_startup_warnings_renders_to_status_bar_and_logger(caplog):
     )
 
 
+def test_h_europepmc_carries_config_contact_address(monkeypatch):
+    """Config path: contact_email from sources_config reaches EuropePMC User-Agent (F1/P5)."""
+    from src.sources.europepmc import EuropePmcAdapter
+
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    adapter = EuropePmcAdapter(sources_config={"contact_email": "cfg@example.org"})
+    assert adapter.session.headers["User-Agent"] == "biorx/1.0 (mailto:cfg@example.org)", (
+        f"EuropePmcAdapter must use config contact_email in UA; got: {adapter.session.headers.get('User-Agent')}"
+    )
+
+
+def test_h_psyarxiv_carries_config_contact_address(monkeypatch):
+    """Config path: contact_email from sources_config reaches PsyArXiv User-Agent (F1/P5)."""
+    from src.sources.psyarxiv import PsyArxivAdapter
+
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    adapter = PsyArxivAdapter(sources_config={"contact_email": "cfg@example.org"})
+    assert adapter.session.headers["User-Agent"] == "biorx/1.0 (mailto:cfg@example.org)", (
+        f"PsyArxivAdapter must use config contact_email in UA; got: {adapter.session.headers.get('User-Agent')}"
+    )
+
+
+def test_h_socarxiv_carries_config_contact_address(monkeypatch):
+    """Config path: contact_email from sources_config reaches SocArXiv User-Agent (F1/P5)."""
+    from src.sources.socarxiv import SocArxivAdapter
+
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    adapter = SocArxivAdapter(sources_config={"contact_email": "cfg@example.org"})
+    assert adapter.session.headers["User-Agent"] == "biorx/1.0 (mailto:cfg@example.org)", (
+        f"SocArxivAdapter must use config contact_email in UA; got: {adapter.session.headers.get('User-Agent')}"
+    )
+
+
+def test_h_orchestrator_warns_about_openalex_when_no_email(monkeypatch):
+    """
+    The no-email startup warning names OpenAlex so users know the silent degradation
+    extends beyond sources they explicitly enabled (F2/P5).
+
+    OpenAlex runs unconditionally from paper_meta.py; the warning fires whenever
+    no contact email is set regardless of which optional sources are enabled.
+    """
+    from src.sources.orchestrator import SourceOrchestrator
+
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    orch = SourceOrchestrator({})
+    assert any("OpenAlex" in w for w in orch.warnings), (
+        "expected an OpenAlex mention in orch.warnings when no email is set; "
+        f"got: {orch.warnings}"
+    )
+
+
 # ── platform ─────────────────────────────────────────────────────────────────
 
 def test_h_sqlite_has_fts5():

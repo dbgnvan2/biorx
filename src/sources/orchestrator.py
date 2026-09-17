@@ -79,7 +79,7 @@ class SourceOrchestrator:
         """Instantiate and register enabled adapters."""
         if is_source_enabled(self.config, "europepmc"):
             from .europepmc import EuropePmcAdapter
-            self._search_adapters["europepmc"] = EuropePmcAdapter()
+            self._search_adapters["europepmc"] = EuropePmcAdapter(sources_config=self.config)
             logger.info("Registered adapter: europepmc")
 
         if is_source_enabled(self.config, "pubmed"):
@@ -89,12 +89,12 @@ class SourceOrchestrator:
 
         if is_source_enabled(self.config, "psyarxiv"):
             from .psyarxiv import PsyArxivAdapter
-            self._search_adapters["psyarxiv"] = PsyArxivAdapter()
+            self._search_adapters["psyarxiv"] = PsyArxivAdapter(sources_config=self.config)
             logger.info("Registered adapter: psyarxiv")
 
         if is_source_enabled(self.config, "socarxiv"):
             from .socarxiv import SocArxivAdapter
-            self._search_adapters["socarxiv"] = SocArxivAdapter()
+            self._search_adapters["socarxiv"] = SocArxivAdapter(sources_config=self.config)
             logger.info("Registered adapter: socarxiv")
 
         if is_source_enabled(self.config, "biorxiv_medrxiv"):
@@ -128,21 +128,18 @@ class SourceOrchestrator:
                 logger.warning(msg)
                 self.warnings.append(msg)
 
-        # Crossref and arXiv degrade silently to bare UA when no contact email.
-        # Surface this rather than dropping it (learnings P2/P5).
+        # All polite-pool APIs degrade to bare biorx/1.0 UA when no contact email.
+        # OpenAlex always runs (via paper_meta.py); other sources are config-gated.
+        # Surface this unconditionally so callers and the web app can warn users (P2/P5).
         from .config import get_contact_email
         if not get_contact_email(self.config):
-            polite_pool_active = (
-                is_source_enabled(self.config, "crossref") or
-                is_source_enabled(self.config, "arxiv")
+            msg = (
+                "Requests to polite-pool APIs (Crossref, arXiv, Europe PMC, PsyArXiv, "
+                "SocArXiv, OpenAlex) will send no contact email (BIORX_CONTACT_EMAIL "
+                "not set). Set BIORX_CONTACT_EMAIL or contact_email in sources_config.yaml."
             )
-            if polite_pool_active:
-                msg = (
-                    "Crossref and arXiv requests will send no contact email (BIORX_CONTACT_EMAIL "
-                    "not set). Set BIORX_CONTACT_EMAIL or contact_email in sources_config.yaml."
-                )
-                logger.warning(msg)
-                self.warnings.append(msg)
+            logger.warning(msg)
+            self.warnings.append(msg)
 
     # ── Public search API ─────────────────────────────────────────────────────
 

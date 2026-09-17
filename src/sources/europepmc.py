@@ -13,6 +13,7 @@ import requests
 from .base import RawRecord
 from .schema import CanonicalRecord, AuthorRecord, SourceHit, RecordFlags, make_canonical_id
 from .errors import SourceUnavailableError, RateLimitedError
+from .config import polite_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -94,10 +95,11 @@ class EuropePmcAdapter:
     source_name = "europepmc"
     source_trust_weight = 1.0
 
-    def __init__(self, timeout: int = 30):
+    def __init__(self, timeout: int = 30, sources_config: dict | None = None):
         self.timeout = timeout
+        self.sources_config = sources_config or {}
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "ResearchTool/1.0"})
+        self.session.headers.update({"User-Agent": polite_user_agent(self.sources_config)})
         # Cursor state per query (reset on each new search call)
         self._cursor_mark: str = "*"
         self._last_query: str = ""

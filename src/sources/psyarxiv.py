@@ -13,6 +13,7 @@ import requests
 from .base import RawRecord
 from .schema import CanonicalRecord, AuthorRecord, SourceHit, RecordFlags, make_canonical_id
 from .errors import SourceUnavailableError, RateLimitedError
+from .config import polite_user_agent
 from .query_builder import get_date_range
 
 logger = logging.getLogger(__name__)
@@ -26,11 +27,12 @@ class PsyArxivAdapter:
     source_name = "psyarxiv"
     source_trust_weight = 0.75
 
-    def __init__(self, timeout: int = 30):
+    def __init__(self, timeout: int = 30, sources_config: dict | None = None):
         self.timeout = timeout
+        self.sources_config = sources_config or {}
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "ResearchTool/1.0",
+            "User-Agent": polite_user_agent(self.sources_config),
             "Accept":     "application/vnd.api+json",
         })
 
