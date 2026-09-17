@@ -40,6 +40,7 @@ publication_sources:
 # open-access lookup). The environment variable BIORX_CONTACT_EMAIL wins over
 # this field when both are set.
 #
-# Setting BIORX_CONTACT_EMAIL covers all four sources (it wins over this field
-# when both are set). All four sources also read this field directly.
+# Setting BIORX_CONTACT_EMAIL covers all polite-pool consumers (Crossref, arXiv,
+# Europe PMC, PubMed, PsyArXiv, SocArXiv, bioRxiv/medRxiv, OpenAlex). It wins
+# over this field when both are set; all consumers also read this field directly.
 contact_email: ""

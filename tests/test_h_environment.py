@@ -489,6 +489,35 @@ def test_h_search_agent_biorxiv_api_carries_config_contact_address(monkeypatch, 
     )
 
 
+def test_h_pdf_download_sends_biorx_user_agent(monkeypatch, tmp_path):
+    """PDFHandler.download_pdf sends User-Agent: biorx/1.0 on download requests (F1/P5)."""
+    import requests as requests_mod
+    from src.pdf_handler import PDFHandler
+
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        headers = {}
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, chunk_size=8192):
+            return iter([b"%PDF-fake"])
+
+    def fake_get(url, timeout=None, stream=False, headers=None):
+        captured["headers"] = headers
+        return _Resp()
+
+    monkeypatch.setattr(requests_mod, "get", fake_get)
+    handler = PDFHandler(output_dir=str(tmp_path))
+    handler.download_pdf("https://biorxiv.org/fake.pdf", doi="10.1/test", title="Test")
+    assert captured.get("headers", {}).get("User-Agent") == "biorx/1.0", (
+        f"PDFHandler must send User-Agent: biorx/1.0; got: {captured.get('headers')}"
+    )
+
+
 def test_h_orchestrator_warns_about_openalex_when_no_email(monkeypatch):
     """
     The no-email startup warning names OpenAlex so users know the silent degradation

@@ -89,7 +89,10 @@ class PDFHandler:
                 logger.debug(f"PDF already exists: {filepath}")
                 return str(filepath)
 
-            response = requests.get(url, timeout=timeout, stream=True)
+            response = requests.get(
+                url, timeout=timeout, stream=True,
+                headers={"User-Agent": "biorx/1.0"},
+            )
             response.raise_for_status()
 
             with open(filepath, "wb") as f:
