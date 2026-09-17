@@ -9,7 +9,6 @@ before it is wired, per the repo invariant in src/db.py.
 """
 
 from __future__ import annotations
-import os
 import sqlite3
 import json
 import hashlib
@@ -17,6 +16,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
 import logging
+
+from src.db import resolve_data_path, ensure_writable_directory
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,10 @@ def _parse_ts(s: str) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
-# TTLs in hours
+# TTLs in hours — three layers:
+#   raw_search  24 h  (fresh source results)
+#   oa_lookup   7 d   (Unpaywall open-access status)
+#   id_resolve  30 d  (DOI / arXiv / PMID canonical mapping)
 _TTL_RAW_SEARCH   = 24
 _TTL_OA_LOOKUP    = 7 * 24
 _TTL_ID_RESOLVE   = 30 * 24
@@ -35,24 +39,23 @@ _TTL_ID_RESOLVE   = 30 * 24
 
 def _default_cache_path() -> str:
     """Resolve cache path: BIORX_CACHE_PATH → DATA_DIR/source_cache.db → ~/preprints."""
-    explicit = os.environ.get("BIORX_CACHE_PATH")
-    if explicit:
-        return explicit
-    data_dir = os.environ.get("DATA_DIR")
-    if data_dir:
-        return str(Path(data_dir) / "source_cache.db")
-    return "~/preprints/source_cache.db"
+    return resolve_data_path("BIORX_CACHE_PATH", "source_cache.db")
 
 
 class SearchCache:
     """SQLite-backed multi-layer cache for source API responses.
+
+    Three cache layers and their TTLs:
+      raw_search  — 24 h   raw API search results per (source, query, page)
+      oa_lookup   — 7 d    Unpaywall open-access status per DOI
+      id_resolve  — 30 d   canonical ID mapping (DOI / arXiv / PMID)
 
     Not yet wired into production (zero callers). See module docstring.
     """
 
     def __init__(self, cache_path: str | None = None):
         self.path = Path(cache_path or _default_cache_path()).expanduser()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_writable_directory(self.path.parent)
         self._conn = sqlite3.connect(str(self.path))
         self._init_tables()
 

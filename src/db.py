@@ -23,7 +23,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DB_PATH = "~/preprints/biorxiv.db"
+DEFAULT_DATA_DIR = "~/preprints"
+DEFAULT_DB_PATH  = f"{DEFAULT_DATA_DIR}/biorxiv.db"
 
 
 class _ConnectionHolder:
@@ -68,20 +69,50 @@ def busy_timeout_ms() -> int:
         return DEFAULT_BUSY_TIMEOUT_MS
 
 
-def default_db_path() -> str:
-    """Resolve the database path: BIORX_DB_PATH, else DATA_DIR/biorxiv.db, else ~.
+def resolve_data_path(env_key: str, filename: str) -> str:
+    """Resolve a writable data-file path: env_key → DATA_DIR/filename → ~/preprints/filename.
 
     Every location this app writes to must be overridable by environment, so a
     container, a test, or a second deployment never resolves to a developer's
-    home directory (learnings P34).
+    home directory (learnings P34).  All sibling resolvers (db path, cache path)
+    share this function so a contract change in one is applied everywhere (P5).
     """
-    explicit = os.environ.get("BIORX_DB_PATH")
+    explicit = os.environ.get(env_key)
     if explicit:
         return explicit
     data_dir = os.environ.get("DATA_DIR")
     if data_dir:
-        return str(Path(data_dir) / "biorxiv.db")
-    return DEFAULT_DB_PATH
+        return str(Path(data_dir) / filename)
+    return f"{DEFAULT_DATA_DIR}/{filename}"
+
+
+def default_db_path() -> str:
+    """Resolve the database path: BIORX_DB_PATH, else DATA_DIR/biorxiv.db, else ~/preprints."""
+    return resolve_data_path("BIORX_DB_PATH", "biorxiv.db")
+
+
+def ensure_writable_directory(directory: Path) -> None:
+    """Create the directory and confirm it is writable.
+
+    Without this, an unwritable directory — the usual symptom of a volume
+    mounted with the wrong ownership — surfaces later as a bare sqlite
+    "unable to open database file", which says nothing about the cause.
+    """
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except PermissionError as e:
+        raise PermissionError(
+            f"Cannot create the data directory {directory}: {e}. "
+            "If this is a container, the mounted volume must be writable "
+            "by the user the app runs as."
+        ) from e
+
+    if not os.access(directory, os.W_OK):
+        raise PermissionError(
+            f"The data directory {directory} is not writable by uid "
+            f"{os.getuid()}. If this is a container, mount the volume "
+            "writable by that user."
+        )
 
 
 class Database:
@@ -124,27 +155,7 @@ class Database:
 
     @staticmethod
     def _ensure_writable_directory(directory: Path) -> None:
-        """Create the database's directory and confirm we can write to it.
-
-        Without this, an unwritable directory — the usual symptom of a volume
-        mounted with the wrong ownership — surfaces later as a bare sqlite
-        "unable to open database file", which says nothing about the cause.
-        """
-        try:
-            directory.mkdir(parents=True, exist_ok=True)
-        except PermissionError as e:
-            raise PermissionError(
-                f"Cannot create the data directory {directory}: {e}. "
-                "If this is a container, the mounted volume must be writable "
-                "by the user the app runs as."
-            ) from e
-
-        if not os.access(directory, os.W_OK):
-            raise PermissionError(
-                f"The data directory {directory} is not writable by uid "
-                f"{os.getuid()}. If this is a container, mount the volume "
-                "writable by that user."
-            )
+        ensure_writable_directory(directory)
 
     # ── Connection handling ───────────────────────────────────────────────────
 

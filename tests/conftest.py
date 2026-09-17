@@ -19,6 +19,14 @@ from pathlib import Path
 
 import pytest
 
+try:
+    from src.db import DEFAULT_DATA_DIR
+except ImportError:
+    # Fallback for isolated subprocess sessions (e.g. pytester copies conftest to
+    # a temp dir where the project root is not on sys.path). The value must match
+    # db.py:DEFAULT_DATA_DIR — kept in sync by test_f2_no_data_dir_resolves_to_default.
+    DEFAULT_DATA_DIR = "~/preprints"
+
 logger = logging.getLogger(__name__)
 
 # ── Real-artifact fingerprint guard ──────────────────────────────────────────
@@ -36,7 +44,7 @@ logger = logging.getLogger(__name__)
 # would leave a gap; this is documented rather than worked around (P19).
 
 _REPO_ROOT      = Path(__file__).parent.parent
-_REAL_PREPRINTS = Path("~/preprints").expanduser()
+_REAL_PREPRINTS = Path(DEFAULT_DATA_DIR).expanduser()
 _REAL_FILTERS   = _REPO_ROOT / "filters.json"
 
 
