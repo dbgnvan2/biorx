@@ -64,13 +64,15 @@ def create_app(ctx: AppContext = None) -> FastAPI:
     @application.get("/healthz")
     def healthz():
         """Liveness plus the effective configuration. Never reports a secret —
-        only whether one is present."""
+        only whether one is present. Includes startup_warnings so the caller
+        can surface "Unpaywall off, no contact email" to the user (P25)."""
         c: AppContext = application.state.ctx
         from src import crypto
         from src.llm_config import default_provider, provider_config
 
         provider = default_provider(c.llm_config)
         pconf = provider_config(c.llm_config, provider)
+        c.get_orchestrator()
         return {
             "ok": True,
             "access_code_set": bool(c.access_code),
@@ -79,6 +81,7 @@ def create_app(ctx: AppContext = None) -> FastAPI:
             "model": pconf.model if pconf else "",
             "owner_key_set": bool(pconf.owner_key()) if pconf else False,
             "db_path": str(c.db.db_path),
+            "startup_warnings": list(c.startup_warnings),
         }
 
     if STATIC_DIR.exists():

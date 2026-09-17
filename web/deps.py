@@ -46,6 +46,7 @@ class AppContext:
     # than production code branching on a magic value.
     cookie_secure: bool = True
     orchestrator: Any = None
+    startup_warnings: list = field(default_factory=list)
     _extras: Dict[str, Any] = field(default_factory=dict)
 
     def get_orchestrator(self):
@@ -53,10 +54,14 @@ class AppContext:
 
         Constructing it imports every adapter; doing that at import time would
         make the app fail to start because of an unrelated source.
+        Stores orchestrator.warnings on startup_warnings so routes can surface them.
         """
         if self.orchestrator is None:
             from src.sources.orchestrator import SourceOrchestrator
             self.orchestrator = SourceOrchestrator(self.sources_config)
+            self.startup_warnings = list(self.orchestrator.warnings)
+            for w in self.startup_warnings:
+                logger.warning("Startup: %s", w)
         return self.orchestrator
 
 

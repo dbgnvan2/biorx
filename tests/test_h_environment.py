@@ -35,6 +35,15 @@ def _python_files():
     yield ROOT / "gui.py"
 
 
+def _root_md_files():
+    """Root-level Markdown files only.
+
+    docs/cycles/ holds historical gate files that quote personal addresses for
+    audit purposes — those are excluded by not recursing into subdirectories.
+    """
+    yield from ROOT.glob("*.md")
+
+
 def _string_constants(path: Path):
     tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
@@ -86,6 +95,31 @@ def test_h_the_address_scan_would_catch_one(tmp_path):
     sample.write_text('# someone@realmail.test in a comment\nUA = {"u": f"x (mailto:someone@realmail.io)"}\n')
     hits = [a for _, v in _string_constants(sample) for a in EMAIL.findall(v)]
     assert hits == ["someone@realmail.io"]
+
+
+def test_h_no_personal_address_in_root_markdown():
+    """
+    Root-level .md files (README, TODO, specs) must not contain a personal
+    address. docs/cycles/ is excluded — gate files quote addresses for audit.
+    Scans raw text (no AST) because Markdown has no comment syntax.
+    """
+    found = []
+    for path in _root_md_files():
+        if not path.exists():
+            continue
+        for addr in EMAIL.findall(path.read_text(encoding="utf-8")):
+            if not ALLOWED_DOMAIN.search(addr):
+                found.append(f"{path.relative_to(ROOT)}: {addr}")
+    assert found == []
+
+
+def test_h_root_md_scan_would_catch_one(tmp_path):
+    """Guard-the-guard: the raw Markdown scanner finds an address in plain text."""
+    sample = tmp_path / "TASK.md"
+    sample.write_text("Send feedback to real@person.example.io and nothing else.\n")
+    hits = EMAIL.findall(sample.read_text())
+    non_example = [a for a in hits if not ALLOWED_DOMAIN.search(a)]
+    assert non_example == ["real@person.example.io"]
 
 
 # ── contact address resolution ───────────────────────────────────────────────

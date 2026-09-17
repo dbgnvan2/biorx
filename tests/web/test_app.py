@@ -125,3 +125,20 @@ def test_the_orchestrator_is_built_lazily(ctx):
     """Constructing it imports every adapter; doing that at startup would let an
     unrelated source stop the app from booting."""
     assert ctx.orchestrator is None
+
+
+def test_h_healthz_surfaces_startup_warnings_when_no_contact_email(client, monkeypatch):
+    """
+    /healthz builds the orchestrator and returns startup_warnings so a web caller
+    can surface "Unpaywall off, no contact email" to the user (Batch H, F2/P25).
+
+    With no contact email and Unpaywall enabled, the orchestrator warns — and that
+    warning must appear in the healthz response, not be silently dropped.
+    """
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    body = client.get("/healthz").json()
+    assert "startup_warnings" in body, "/healthz must include startup_warnings key"
+    assert any("BIORX_CONTACT_EMAIL" in w for w in body["startup_warnings"]), (
+        "expected at least one warning mentioning BIORX_CONTACT_EMAIL; "
+        f"got: {body['startup_warnings']}"
+    )

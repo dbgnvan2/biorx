@@ -31,11 +31,15 @@ MIN_HTML_CHARS = 500             # below this, the response is an error/intersti
 def openalex_user_agent() -> str:
     """User-Agent for the OpenAlex polite pool, read at call time.
 
-    One source for every polite-pool header (src/sources/config.py): the user's
-    BIORX_CONTACT_EMAIL, and no mailto at all when none is set.
+    One source for every polite-pool header (src/sources/config.py): env
+    BIORX_CONTACT_EMAIL wins; falls back to contact_email in sources_config.yaml.
     """
-    from src.sources.config import polite_user_agent
-    return polite_user_agent({})
+    from src.sources.config import load_sources_config, polite_user_agent
+    try:
+        cfg = load_sources_config()
+    except Exception:
+        cfg = {}
+    return polite_user_agent(cfg)
 
 _BROWSER_HEADERS = {
     "User-Agent": (
