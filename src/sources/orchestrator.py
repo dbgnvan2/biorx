@@ -219,6 +219,7 @@ class SourceOrchestrator:
                     on_progress=on_source_progress,
                     should_stop=should_stop,
                     max_results=budget,
+                    on_status=on_status,
                 )
                 total_fetched += fetched
                 known_total   += fetched
@@ -282,6 +283,7 @@ class SourceOrchestrator:
         on_progress: Optional[Callable],
         should_stop: Optional[Callable],
         max_results: int,
+        on_status: Optional[Callable] = None,
     ) -> int:
         """Paginate through a single source and add results to dedup. Returns count fetched."""
         fetched = 0
@@ -309,6 +311,10 @@ class SourceOrchestrator:
                 logger.error("Source %s unavailable: %s", source_name, e)
                 if fetched == 0:
                     raise  # propagate so search() can emit "unavailable — skipped"
+                # Mid-pagination failure: records already yielded but source is now broken.
+                # Emit the marker so callers (monitor.py) count this as a source failure.
+                if on_status:
+                    on_status(f"{_source_label(source_name)} partial — skipped")
                 break
 
             # An adapter may filter entries out of a page (arXiv drops withdrawn
