@@ -319,6 +319,7 @@ class Database:
                 llm_provider       TEXT      DEFAULT '',
                 llm_key_ciphertext BLOB,
                 llm_key_last4      TEXT      DEFAULT '',
+                preferred_model    TEXT      DEFAULT '',
                 created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -386,6 +387,7 @@ class Database:
         # `summaries.paper_id` is UNIQUE, so one summary exists per paper and a
         # later run replaces it; these columns record whose run is current.
         self._add_column_if_missing(cursor, "summaries", "created_by_user_id", "TEXT")
+        self._add_column_if_missing(cursor, "users", "preferred_model", "TEXT DEFAULT ''")
 
     # SQLite cannot change a column constraint in place, so relaxing NOT NULL
     # means rebuilding the table. The rewrite targets exactly this declaration.

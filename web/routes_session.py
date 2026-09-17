@@ -35,6 +35,11 @@ class DisplayNameRequest(BaseModel):
 class LlmKeyRequest(BaseModel):
     provider: str = Field(min_length=1, max_length=50)
     api_key: str = Field(min_length=8, max_length=500)
+    model: str = Field(default="", max_length=200)
+
+
+class LlmModelRequest(BaseModel):
+    model: str = Field(default="", max_length=200)
 
 
 def _me(ctx: AppContext, user_id: str) -> dict:
@@ -54,13 +59,18 @@ def _me(ctx: AppContext, user_id: str) -> dict:
     else:
         key_source = "missing"
 
+    preferred_model = user.get("preferred_model") or ""
+    effective_model = preferred_model or (pconf.model if pconf else "")
+
     used = user_store.owner_usage_today(ctx.db, user_id)
     cap = summary_daily_cap(ctx.llm_config)
     return {
         "user_id": user_id,
         "display_name": user.get("display_name", ""),
         "provider": effective,
-        "model": pconf.model if pconf else "",
+        "model": effective_model,
+        "default_model": pconf.model if pconf else "",
+        "preferred_model": preferred_model,
         "key_source": key_source,
         "key_last4": user.get("llm_key_last4") or "",
         "byo_enabled": crypto.is_enabled(),
@@ -135,6 +145,8 @@ def put_llm_key(body: LlmKeyRequest,
         )
     try:
         user_store.set_llm_key(ctx.db, user_id, body.provider, body.api_key)
+        if body.model:
+            user_store.set_preferred_model(ctx.db, user_id, body.model)
     except crypto.KeyEncryptionUnavailable as e:
         # Storage is off because KEY_ENC_SECRET is absent. Say so plainly
         # rather than storing the key unencrypted.
@@ -150,4 +162,16 @@ def put_llm_key(body: LlmKeyRequest,
 def delete_llm_key(ctx: AppContext = Depends(get_context),
                    user_id: str = Depends(current_user)):
     user_store.clear_llm_key(ctx.db, user_id)
+    return _me(ctx, user_id)
+
+
+@router.put("/api/me/llm-model")
+def put_llm_model(body: LlmModelRequest,
+                  ctx: AppContext = Depends(get_context),
+                  user_id: str = Depends(current_user)):
+    """Store this user's preferred model name.
+
+    An empty string clears the preference and falls back to the config default.
+    """
+    user_store.set_preferred_model(ctx.db, user_id, body.model)
     return _me(ctx, user_id)

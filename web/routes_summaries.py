@@ -56,7 +56,11 @@ def _resolve_for(ctx: AppContext, user_id: str):
             detail=f"Your stored key could not be read: {e}",
         ) from e
 
+    user_data = user_store.get_user(ctx.db, user_id) or {}
+    preferred_model = user_data.get("preferred_model") or ""
+
     resolved = resolve_client(user_provider=provider, user_key=key,
+                              user_model=preferred_model,
                               config=ctx.llm_config)
 
     usage_id = None

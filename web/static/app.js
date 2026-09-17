@@ -109,6 +109,13 @@ function renderMe() {
   }
   select.value = me.key_source === "user" ? me.provider : select.value || me.provider;
 
+  // Populate model field: show stored preference; hint shows the config default.
+  const modelInput = $("preferred-model");
+  if (document.activeElement !== modelInput) {
+    modelInput.value = me.preferred_model || "";
+  }
+  $("model-hint").textContent = me.default_model ? `(default: ${me.default_model})` : "";
+
   const where = {
     user: `Using your own key (…${me.key_last4}).`,
     owner: `Using the shared key. ${me.owner_summaries_remaining} of ` +
@@ -132,14 +139,22 @@ function renderMe() {
 
 async function saveKey() {
   notice("");
+  const keyVal = $("api-key").value.trim();
+  const modelVal = $("preferred-model").value.trim();
   try {
-    state.me = await api("PUT", "/api/me/llm-key", {
-      provider: $("key-provider").value,
-      api_key: $("api-key").value,
-    });
-    $("api-key").value = "";
+    if (keyVal) {
+      state.me = await api("PUT", "/api/me/llm-key", {
+        provider: $("key-provider").value,
+        api_key: keyVal,
+        model: modelVal,
+      });
+      $("api-key").value = "";
+    } else if (modelVal !== (state.me.preferred_model || "")) {
+      // Model-only change: no key entered, just update the model preference.
+      state.me = await api("PUT", "/api/me/llm-model", { model: modelVal });
+    }
     renderMe();
-    notice("Key saved.", "ok");
+    notice("Settings saved.", "ok");
   } catch (e) { notice(e.message); }
 }
 

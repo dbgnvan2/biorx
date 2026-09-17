@@ -125,6 +125,7 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/session",
         "/api/me",
         "/api/me/llm-key",
+        "/api/me/llm-model",
         "/api/filters",
         "/api/searches",
         "/api/searches/{param}",

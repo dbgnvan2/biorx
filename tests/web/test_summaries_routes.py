@@ -83,7 +83,7 @@ def test_user_key_overrides_owner_key(ctx, signed_in, monkeypatch, enc_secret, n
 
     seen = {}
 
-    def capture(pconf, api_key, max_chars):
+    def capture(pconf, api_key, max_chars, model_override=""):
         seen["provider"] = pconf.name
         seen["key"] = api_key
         return _client_returning(SUMMARY)

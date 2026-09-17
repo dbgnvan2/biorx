@@ -48,9 +48,12 @@
         <label><span>Your API key</span>
           <input id="api-key" type="password" autocomplete="off"
                  placeholder="Stored encrypted; only the last 4 are ever shown"></label>
+        <label class="shrink" style="min-width:220px"><span>Model <span id="model-hint" class="muted small"></span></span>
+          <input id="preferred-model" type="text" autocomplete="off"
+                 placeholder="leave blank for default"></label>
         <div class="shrink">
-          <button id="save-key" class="primary">Save key</button>
-          <button id="remove-key">Remove</button>
+          <button id="save-key" class="primary">Save</button>
+          <button id="remove-key">Remove key</button>
         </div>
       </div>
     </div>

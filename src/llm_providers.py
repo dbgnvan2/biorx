@@ -353,22 +353,30 @@ class ResolvedLLM:
         return self.key_source == "owner"
 
 
-def build_client(pconf: ProviderConfig, api_key: str, max_chars: int):
-    """Construct the client for a provider's dialect."""
+def build_client(pconf: ProviderConfig, api_key: str, max_chars: int,
+                 model_override: str = ""):
+    """Construct the client for a provider's dialect.
+
+    model_override, when non-empty, replaces the config-file model name so a
+    user can select a specific variant (e.g. claude-haiku-4-5 vs claude-sonnet-5)
+    without the server owner having to restart.
+    """
+    model = model_override.strip() or pconf.model
     if pconf.dialect == "anthropic":
-        return AnthropicClient(api_key=api_key, model=pconf.model,
+        return AnthropicClient(api_key=api_key, model=model,
                                timeout=pconf.timeout, max_chars=max_chars)
     if pconf.dialect == "openai":
-        return DeepSeekClient(api_key=api_key, model=pconf.model,
+        return DeepSeekClient(api_key=api_key, model=model,
                               base_url=pconf.base_url, timeout=pconf.timeout,
                               max_chars=max_chars)
     if pconf.dialect == "ollama":
         from .llm import OllamaClient
-        return OllamaClient(base_url=pconf.base_url, model=pconf.model)
+        return OllamaClient(base_url=pconf.base_url, model=model)
     raise ProviderUnavailableError(f"unknown provider dialect: {pconf.dialect!r}")
 
 
 def resolve_client(user_provider: str = "", user_key: str = "",
+                   user_model: str = "",
                    config: Optional[Dict[str, Any]] = None) -> ResolvedLLM:
     """Pick the client for this request.
 
@@ -376,6 +384,10 @@ def resolve_client(user_provider: str = "", user_key: str = "",
     NoLLMCredentialError telling them to add one. The user's key is passed in
     already decrypted; this function never touches the database, so it stays
     testable without one.
+
+    user_model, when non-empty, overrides the config-file model for this user's
+    key. Ignored when falling back to the owner's key (the owner chooses the
+    model for owner-billed requests).
     """
     cfg = config if config is not None else load_llm_config()
     budget = max_text_chars(cfg)
@@ -388,8 +400,9 @@ def resolve_client(user_provider: str = "", user_key: str = "",
             raise NoLLMCredentialError(
                 f"your key is set for {name!r}, which is not a configured provider"
             )
-        return ResolvedLLM(build_client(pconf, user_key, budget), pconf.name,
-                           pconf.model, "user")
+        effective_model = user_model.strip() or pconf.model
+        return ResolvedLLM(build_client(pconf, user_key, budget, user_model), pconf.name,
+                           effective_model, "user")
 
     # 2. The server owner's key for the default provider.
     name = default_provider(cfg)

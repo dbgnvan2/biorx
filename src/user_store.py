@@ -90,6 +90,14 @@ def set_llm_key(db, user_id: str, provider: str, api_key: str) -> str:
     return tail
 
 
+def set_preferred_model(db, user_id: str, model: str) -> None:
+    db.conn.execute(
+        "UPDATE users SET preferred_model = ? WHERE user_id = ?",
+        (model.strip()[:200], user_id),
+    )
+    db.conn.commit()
+
+
 def clear_llm_key(db, user_id: str) -> None:
     db.conn.execute(
         "UPDATE users SET llm_provider = '', llm_key_ciphertext = NULL, "
