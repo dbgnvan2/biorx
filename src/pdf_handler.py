@@ -34,7 +34,7 @@ def default_pdf_dir() -> str:
 class PDFHandler:
     """Handle PDF download and text extraction."""
 
-    def __init__(self, output_dir: str | None = None):
+    def __init__(self, output_dir: Optional[str] = None):
         """
         Initialize PDF handler.
 

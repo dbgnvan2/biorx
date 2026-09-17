@@ -518,6 +518,23 @@ def test_h_pdf_download_sends_biorx_user_agent(monkeypatch, tmp_path):
     )
 
 
+def test_h_pdf_handler_default_constructor_uses_env_aware_dir(monkeypatch, tmp_path):
+    """PDFHandler() with no args resolves output_dir via default_pdf_dir() (F2/P28).
+
+    Regression: before the fix, no output_dir → Path(None).expanduser() → TypeError.
+    After: None is replaced by default_pdf_dir(), which respects DATA_DIR.
+    """
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from importlib import reload
+    import src.pdf_handler as ph_mod
+    reload(ph_mod)                        # pick up the fresh env variable
+    handler = ph_mod.PDFHandler()         # must not raise
+    assert handler.output_dir == tmp_path / "pdfs", (
+        f"PDFHandler() should resolve to DATA_DIR/pdfs when DATA_DIR is set; "
+        f"got: {handler.output_dir}"
+    )
+
+
 def test_h_monitor_pdf_download_sends_biorx_user_agent(monkeypatch, tmp_path):
     """monitor.py download_pdf sends User-Agent: biorx/1.0 (F1/P5 sibling)."""
     import requests as req_mod
