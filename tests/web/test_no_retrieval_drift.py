@@ -53,8 +53,12 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from 9071d92 → 6d49624 (batch H: with_retry wrapped in all sibling HTTP calls
 #   — get_total, get_by_id, fetch_abstract_from_fulltext — in europepmc.py, psyarxiv.py,
 #   socarxiv.py; closes P5 class — W1.a required)
+# Updated from 6d49624 → a2607f8 (batch I: _search_source gains on_status kwarg; mid-
+#   pagination SourceUnavailableError now emits "partial — skipped" marker so monitor.py
+#   exits 2 on truncated results — P2/P19 fix; interface addition, not retrieval logic
+#   change — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "6d49624"
+BASELINE = "a2607f8"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
