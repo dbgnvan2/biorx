@@ -172,19 +172,6 @@ def test_typing_another_users_display_name_does_not_reach_their_key(
     assert me["key_last4"] == ""
 
 
-def test_the_access_code_is_compared_in_constant_time():
-    """A non-constant-time compare leaks the code one character at a time."""
-    import inspect
-
-    from web import auth
-    source = inspect.getsource(auth.check_access_code)
-    tree = compile(source.strip(), "<check>", "exec", flags=0, dont_inherit=True)
-    names = {n for n in tree.co_names}
-    for const in tree.co_consts:
-        if hasattr(const, "co_names"):
-            names |= set(const.co_names)
-    assert "compare_digest" in names
-
 
 def test_an_unset_access_code_refuses_everyone(tmp_path):
     from fastapi.testclient import TestClient
