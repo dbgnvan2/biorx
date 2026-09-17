@@ -14,7 +14,7 @@ import logging
 # Allow import when run standalone
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from .base import RawRecord
+from .base import RawRecord, with_retry
 from .schema import CanonicalRecord, AuthorRecord, SourceHit, RecordFlags, make_canonical_id
 from .errors import SourceUnavailableError, RateLimitedError
 from .config import polite_user_agent
@@ -61,18 +61,18 @@ class BiorxivMedrxivAdapter:
         category  = None if category == "(any)" else category
         cursor    = (page - 1) * 100
 
-        try:
-            resp   = self._api.search_recent(days=days_back, category=category,
-                                             server="biorxiv", cursor=cursor)
-            papers = self._api.parse_papers(resp)
-            # Attach total to each paper dict for progress reporting
-            msgs  = resp.get("messages", [{}])
-            total = int(msgs[0].get("total", 0)) if msgs else 0
-            for p in papers:
-                p["_total"] = total
-            return papers
-        except requests.RequestException as e:
-            raise SourceUnavailableError(f"bioRxiv unreachable: {e}") from e
+        resp = with_retry(
+            lambda: self._api.search_recent(days=days_back, category=category,
+                                            server="biorxiv", cursor=cursor),
+            source_label="bioRxiv",
+        )
+        papers = self._api.parse_papers(resp)
+        # Attach total to each paper dict for progress reporting
+        msgs  = resp.get("messages", [{}])
+        total = int(msgs[0].get("total", 0)) if msgs else 0
+        for p in papers:
+            p["_total"] = total
+        return papers
 
     def get_by_id(self, identifier: str) -> Optional[RawRecord]:
         """Fetch a single bioRxiv paper by DOI (not efficiently supported)."""

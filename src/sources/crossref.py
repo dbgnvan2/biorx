@@ -10,7 +10,7 @@ import logging
 import re
 import requests
 
-from .base import RawRecord
+from .base import RawRecord, with_retry
 from .schema import CanonicalRecord
 from .errors import SourceUnavailableError, RateLimitedError
 
@@ -59,13 +59,10 @@ class CrossrefAdapter:
             Crossref 'message' dict or None if not found.
         """
         clean = re.sub(r"^https?://doi\.org/", "", doi.strip())
-        try:
-            resp = self.session.get(
-                f"{BASE_URL}/{clean}", timeout=self.timeout
-            )
-        except requests.RequestException as e:
-            raise SourceUnavailableError(f"Crossref unreachable: {e}") from e
-
+        resp = with_retry(
+            lambda: self.session.get(f"{BASE_URL}/{clean}", timeout=self.timeout),
+            source_label="Crossref",
+        )
         if resp.status_code == 404:
             return None
         if resp.status_code == 429:

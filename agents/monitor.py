@@ -312,12 +312,15 @@ def main(args=None):
             file=sys.stderr,
         )
 
-    # Exit 2 when any source failed so cron operators can detect it (M1/CLI bug)
+    # Exit 2 on any source failure or PDF download failure (P2: nonzero exit for cron)
     if all_sources_failed:
         print(
             f"Sources failed: {', '.join(all_sources_failed)}",
             file=sys.stderr,
         )
+        return 2
+
+    if total_failed_downloads > 0:
         return 2
 
     return 0

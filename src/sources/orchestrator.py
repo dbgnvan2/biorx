@@ -307,6 +307,8 @@ class SourceOrchestrator:
                 break
             except SourceUnavailableError as e:
                 logger.error("Source %s unavailable: %s", source_name, e)
+                if fetched == 0:
+                    raise  # propagate so search() can emit "unavailable — skipped"
                 break
 
             # An adapter may filter entries out of a page (arXiv drops withdrawn

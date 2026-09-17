@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any
 import logging
 import requests
 
+from .base import with_retry
 from .schema import CanonicalRecord
 from .errors import SourceUnavailableError, RateLimitedError
 
@@ -41,15 +42,14 @@ class UnpaywallAdapter:
         """
         import re
         clean = re.sub(r"^https?://doi\.org/", "", doi.strip())
-        try:
-            resp = self.session.get(
+        resp = with_retry(
+            lambda: self.session.get(
                 f"{BASE_URL}/{clean}",
                 params={"email": self.email},
                 timeout=self.timeout,
-            )
-        except requests.RequestException as e:
-            raise SourceUnavailableError(f"Unpaywall unreachable: {e}") from e
-
+            ),
+            source_label="Unpaywall",
+        )
         if resp.status_code in (404, 422):
             # 404 = DOI not found; 422 = DOI not indexed by Unpaywall — both are normal
             return None

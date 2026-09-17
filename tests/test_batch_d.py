@@ -311,7 +311,17 @@ def test_d_monitor_imports_on_the_declared_floor():
     # Either way, importing successfully on the interpreter running the suite
     # is the meaningful check. If the module had dict|None it would SyntaxError
     # on 3.9 before we got here.
-    assert monitor is not None   # loaded without SyntaxError
+    import inspect
+    import types
+    ret = inspect.signature(monitor.find_filter).return_annotation
+    # On 3.10+ dict|None produces a types.UnionType; on 3.9 it is a SyntaxError
+    # before the import even completes. If the annotation uses X|Y syntax and this
+    # is Python 3.10+, we can detect it and fail explicitly.
+    if hasattr(types, "UnionType"):
+        assert not isinstance(ret, types.UnionType), (
+            f"find_filter return annotation uses X|Y union syntax — "
+            f"would be a SyntaxError on Python 3.9: {ret!r}"
+        )
 
 
 # ── monitor counts failed downloads (M2) ─────────────────────────────────────

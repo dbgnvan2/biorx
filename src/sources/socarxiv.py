@@ -10,7 +10,7 @@ from typing import Sequence, Optional, Dict, Any, List
 import logging
 import requests
 
-from .base import RawRecord
+from .base import RawRecord, with_retry
 from .schema import CanonicalRecord, AuthorRecord, SourceHit, RecordFlags, make_canonical_id
 from .errors import SourceUnavailableError, RateLimitedError
 from .config import polite_user_agent
@@ -57,11 +57,10 @@ class SocArxivAdapter:
             if first_term:
                 params["filter[title]"] = first_term
 
-        try:
-            resp = self.session.get(BASE_URL, params=params, timeout=self.timeout)
-        except requests.RequestException as e:
-            raise SourceUnavailableError(f"SocArXiv (OSF) unreachable: {e}") from e
-
+        resp = with_retry(
+            lambda: self.session.get(BASE_URL, params=params, timeout=self.timeout),
+            source_label="SocArXiv",
+        )
         if resp.status_code == 429:
             raise RateLimitedError("SocArXiv rate limit hit")
         if not resp.ok:
