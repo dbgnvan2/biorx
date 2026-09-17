@@ -46,8 +46,15 @@ ROOT = Path(__file__).parent.parent.parent
 #   query_builder.py drops normalize_authors — W1.a required changes)
 # Updated from b0a7ca8 → b973db1 (batch C: datetime.utcnow() → datetime.now(timezone.utc)
 #   across all adapters; P5 deprecation class fix; no logic change — W1.a required)
+# Updated from b973db1 → 9071d92 (batch G: with_retry wrapped in adapter search() calls;
+#   orchestrator.py gains `if fetched==0: raise` to surface empty-page source failure —
+#   logic addition required to distinguish "source yielded nothing" from "source errored
+#   before yielding"; base.py unchanged in substance — W1.a required)
+# Updated from 9071d92 → 6d49624 (batch H: with_retry wrapped in all sibling HTTP calls
+#   — get_total, get_by_id, fetch_abstract_from_fulltext — in europepmc.py, psyarxiv.py,
+#   socarxiv.py; closes P5 class — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "b973db1"
+BASELINE = "6d49624"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
