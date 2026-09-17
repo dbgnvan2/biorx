@@ -9,13 +9,15 @@ Groups are OR-joined. Within a group:
   - abstract terms → must appear in abstract
   - both terms   → must appear in title OR abstract
 
-Wildcard: term ending in '*' = prefix match (works natively in Europe PMC Lucene).
+Wildcard: term ending in '*' = prefix match (works natively in Europe PMC Lucene and
+  in Europe PMC's bare term matches — but NOT in arXiv, which has no wildcard operator).
 """
 
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
-from ..filtering import normalize_authors
+logger = logging.getLogger(__name__)
 
 
 # ── Internal helpers ────────────────────────────────────────────────────────────
@@ -198,14 +200,11 @@ def build_arxiv_query(filter_dict: Dict[str, Any]) -> str:
         if group_clause:
             group_clauses.append(group_clause)
 
-    # Authors, OR-joined and AND-ed with the text part. The filter's `authors`
-    # field is a list in the GUI's format and a comma-separated string in older
-    # hand-written filters; normalize_authors() is the single reader of both, so
-    # the query builder and the client-side filter cannot disagree about it.
-    author_terms = normalize_authors(filter_dict.get("authors"))
-    author_clauses = [
-        f'au:"{t}"' if " " in t else f"au:{t}" for t in author_terms
-    ]
+    # Author filtering is intentionally omitted from the arXiv query. arXiv's
+    # au:"…" phrase clause is stricter than the client-side substring match
+    # (decision M3), so applying it at query time returns fewer results than
+    # the saved filter intends. The client-side filter_papers() owns author
+    # matching consistently across all sources.
 
     # Build date range clause
     start_date, end_date = get_date_range(filter_dict)
@@ -225,14 +224,6 @@ def build_arxiv_query(filter_dict: Dict[str, Any]) -> str:
             text_part = group_clauses[0]
         parts.append(f"({text_part})")
 
-    # Add authors (OR-joined with text if present)
-    if author_clauses:
-        author_part = " OR ".join(author_clauses) if len(author_clauses) > 1 else author_clauses[0]
-        if parts:
-            parts.append(f"({author_part})")
-        else:
-            parts.append(author_part)
-
     # Add date (always present)
     parts.append(date_clause)
 
@@ -240,11 +231,24 @@ def build_arxiv_query(filter_dict: Dict[str, Any]) -> str:
     return " AND ".join(parts)
 
 
+def _strip_arxiv_wildcard(term: str) -> str:
+    """arXiv has no wildcard operator; strip trailing * and log when removed."""
+    clean = term.rstrip("*")
+    if clean != term:
+        logger.debug("arXiv query: stripped wildcard from %r → %r", term, clean)
+    return clean
+
+
 def _group_to_arxiv(group: Dict[str, str]) -> str:
-    """Convert one text_group to an arXiv query clause (title/abstract/both)."""
-    title_terms = _split_terms(group.get("title", ""))
-    abstract_terms = _split_terms(group.get("abstract", ""))
-    both_terms = _split_terms(group.get("both", ""))
+    """Convert one text_group to an arXiv query clause (title/abstract/both).
+
+    Note: arXiv's `all:` field is broader than Europe PMC's bare term — it also
+    matches authors, journal-ref, and comments, not just title and abstract.
+    This is defensible but currently undocumented to users (see TODO.md).
+    """
+    title_terms    = [_strip_arxiv_wildcard(t) for t in _split_terms(group.get("title",    ""))]
+    abstract_terms = [_strip_arxiv_wildcard(t) for t in _split_terms(group.get("abstract", ""))]
+    both_terms     = [_strip_arxiv_wildcard(t) for t in _split_terms(group.get("both",     ""))]
 
     parts: List[str] = []
 
@@ -257,7 +261,6 @@ def _group_to_arxiv(group: Dict[str, str]) -> str:
         parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
 
     if both_terms:
-        # "both" = all: field in arXiv
         clauses = [f'all:"{t}"' if " " in t else f"all:{t}" for t in both_terms]
         parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
 

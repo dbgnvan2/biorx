@@ -54,6 +54,9 @@ class CanonicalRecord:
     source_hits: List[SourceHit]
     flags: RecordFlags
     source_trust_weight: float = 1.0
+    # Preprint version number as a string (e.g. "2" for arXiv v2). Empty string
+    # means unknown/unversioned; to_dict() falls back to "1" for display.
+    arxiv_version: str = ""
 
     # ── Serialization ─────────────────────────────────────────────────────────
 
@@ -68,7 +71,7 @@ class CanonicalRecord:
             "author_corresponding":           self.authors[0].display_name if self.authors else "",
             "author_corresponding_institution": "",
             "type":                           self.document_type,
-            "version":                        "1",
+            "version":                        self.arxiv_version or "1",
             "published":                      "NA" if self.is_preprint else self.journal_or_server or "published",
             "license":                        self.license,
             # Display / metadata fields

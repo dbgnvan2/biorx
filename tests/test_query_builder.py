@@ -214,29 +214,32 @@ def test_arxiv_date_only_no_text():
     assert "ti:" not in q
 
 
-def test_arxiv_authors_or_joined():
+def test_arxiv_authors_not_in_query(
+):
+    """
+    M3 resolution: arXiv's au:"…" clause is stricter than the client-side
+    substring match, so author filtering is done entirely client-side by
+    filter_papers(). build_arxiv_query must not include au: clauses regardless
+    of whether the filter has authors.
+    """
     q = build_arxiv_query({
         "text_groups": [],
         "days_back": 7,
-        "authors": ["Smith", "Jones"],     # the shape filters.json actually uses
+        "authors": ["Smith", "Jones"],
     })
-    # Authors should be OR-joined
-    assert " OR " in q
-    assert 'au:Smith' in q or 'au:"Smith"' in q
-    assert 'au:Jones' in q or 'au:"Jones"' in q
+    assert "au:" not in q
     assert "submittedDate:[" in q
 
 
-def test_arxiv_authors_and_ed_with_text():
-    """Authors should be AND-ed with text groups when both present."""
+def test_arxiv_authors_not_in_query_with_text():
+    """Author absence holds when text groups are also present."""
     q = build_arxiv_query({
         "text_groups": [{"title": "", "abstract": "", "both": "agent"}],
         "days_back": 7,
         "authors": ["Smith"],
     })
-    assert "AND" in q
+    assert "au:" not in q
     assert "all:agent" in q
-    assert "au:Smith" in q or 'au:"Smith"' in q
 
 
 def test_arxiv_ignores_unsupported_filters():
@@ -279,9 +282,14 @@ def test_days_back_used_when_no_explicit_dates():
 
 
 def test_arxiv_authors_accepts_the_legacy_string_shape():
-    """Hand-written filters may still store authors as one comma-separated string."""
+    """
+    Hand-written filters may still store authors as one comma-separated string.
+    The query must build without raising (authors are filtered client-side, not
+    at query time — M3 decision).
+    """
     q = build_arxiv_query({"text_groups": [], "days_back": 7, "authors": "Smith, Jones"})
-    assert "au:Smith" in q and "au:Jones" in q
+    assert "submittedDate:[" in q
+    assert "au:" not in q
 
 
 def test_arxiv_query_builds_for_every_saved_filter():

@@ -13,6 +13,7 @@ from pathlib import Path
 import json
 import argparse
 import logging
+from typing import Optional
 
 # Allow import of src modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -23,35 +24,60 @@ from src.filtering import filter_papers
 
 logger = logging.getLogger(__name__)
 
+# A source status message containing this marker means the source was skipped
+# due to an error. The orchestrator emits "<Label> unavailable — skipped" or
+# "<Label> error — skipped"; both contain this string (P19: named here so that
+# a status-format change is a visible diff, not silent drift).
+FAILURE_STATUS_MARKER = "— skipped"
 
-def load_filters(path: str = "filters.json") -> dict:
-    """Load filters.json and return a dict of {name: filter_dict}."""
+
+def load_filters(path: str = "filters.json") -> list:
+    """Load filters.json and return the list of filter dicts.
+
+    Returns a list (not a dict) so that duplicate filter names are preserved;
+    both will run under --all.  Warns when names are duplicated.
+    """
     filter_path = Path(path)
     if not filter_path.exists():
         logger.error("filters.json not found at %s", filter_path)
-        return {}
+        return []
     try:
         with open(filter_path) as f:
             data = json.load(f)
 
         # Handle structure: {filters: [{name, enabled, ...}, ...]}
         if isinstance(data, dict) and "filters" in data:
-            return {f["name"]: f for f in data["filters"] if isinstance(f, dict)}
-        # Fallback: data is already {name: filter}
-        return data
+            filters_list = [f for f in data["filters"] if isinstance(f, dict)]
+        else:
+            # Fallback: data is already a list
+            filters_list = data if isinstance(data, list) else []
+
+        # Warn on duplicate names so the user knows --all will run both.
+        seen: dict = {}
+        for i, f in enumerate(filters_list):
+            name = f.get("name", "")
+            if name in seen:
+                logger.warning(
+                    "Duplicate filter name %r at index %d and %d — both will run with --all",
+                    name, seen[name], i,
+                )
+            else:
+                seen[name] = i
+
+        return filters_list
     except Exception as e:
         logger.error("Failed to load filters.json: %s", e)
-        return {}
+        return []
 
 
-def find_filter(filters: dict, name: str) -> dict | None:
-    """Find a filter by name."""
-    return filters.get(name)
+def find_filter(filters: list, name: str) -> Optional[dict]:
+    """Find the first filter matching name."""
+    return next((f for f in filters if f.get("name") == name), None)
 
 
-def get_enabled_filters(filters: dict) -> list:
-    """Get all enabled filter names."""
-    return [name for name, f in filters.items() if f.get("enabled", False)]
+def get_enabled_filters(filters: list) -> list:
+    """Get all enabled filter dicts (may include entries with duplicate names)."""
+    return [f for f in filters if f.get("enabled", False)]
 
 
 def run_search(
@@ -60,6 +86,7 @@ def run_search(
     filter_name: str,
     max_results: int = 200,
     dry_run: bool = False,
+    sources_failed: Optional[list] = None,
 ) -> list:
     """
     Run a single search and return the deduplicated records that match the filter.
@@ -71,11 +98,12 @@ def run_search(
     yields a different set depending on which front end ran it.
 
     Args:
-        orchestrator: SourceOrchestrator instance
-        filter_dict: Filter dict from filters.json
-        filter_name: Name of the filter (for logging)
-        max_results: Maximum results to return
-        dry_run: If True, don't download PDFs
+        orchestrator:   SourceOrchestrator instance
+        filter_dict:    Filter dict from filters.json
+        filter_name:    Name of the filter (for logging)
+        max_results:    Maximum results to return
+        dry_run:        If True, don't download PDFs
+        sources_failed: If provided, failed source names are appended here.
 
     Returns:
         List of paper dicts (CanonicalRecord.to_dict()) that match the filter.
@@ -84,9 +112,18 @@ def run_search(
 
     print(f"[{filter_name}] Searching...", file=sys.stderr)
 
+    failed_this_run: list = []
+
+    def on_status(message: str) -> None:
+        print(f"[{filter_name}] {message}", file=sys.stderr)
+        if FAILURE_STATUS_MARKER in message:
+            source_name = message.split(FAILURE_STATUS_MARKER)[0].strip()
+            failed_this_run.append(source_name)
+
     records = orchestrator.search(
         filter_dict,
         source_selection=source_selection,
+        on_status=on_status,
         max_results=max_results,
     )
 
@@ -99,6 +136,15 @@ def run_search(
         f"({len(papers) - len(matched)} dropped client-side)",
         file=sys.stderr,
     )
+
+    if failed_this_run:
+        print(
+            f"[{filter_name}] Failed sources: {', '.join(failed_this_run)}",
+            file=sys.stderr,
+        )
+        if sources_failed is not None:
+            sources_failed.extend(failed_this_run)
+
     return matched
 
 
@@ -107,6 +153,7 @@ def download_pdf(record: dict, dest_dir: Path, timeout: int = 30) -> bool:
     Download a record's PDF to dest_dir.
 
     Returns True if successful or file already exists, False on error.
+    Failures are logged at WARNING (not DEBUG) so they appear in cron logs.
     """
     pdf_url = record.get("pdf_url", "")
     if not pdf_url:
@@ -132,11 +179,11 @@ def download_pdf(record: dict, dest_dir: Path, timeout: int = 30) -> bool:
         print(f"  Downloaded {filename}", file=sys.stderr)
         return True
     except Exception as e:
-        logger.debug("Failed to download %s: %s", pdf_url, e)
+        logger.warning("Failed to download %s: %s", pdf_url, e)
         return False
 
 
-def main():
+def main(args=None):
     parser = argparse.ArgumentParser(
         description="Headless search across multiple publication sources."
     )
@@ -171,8 +218,14 @@ def main():
         default=200,
         help="Maximum results per filter (default: 200)",
     )
+    parser.add_argument(
+        "--filters-path",
+        type=str,
+        default="filters.json",
+        help="Path to filters.json (default: filters.json)",
+    )
 
-    args = parser.parse_args()
+    parsed = parser.parse_args(args)
 
     # Setup logging
     logging.basicConfig(
@@ -182,7 +235,7 @@ def main():
     )
 
     # Load configs
-    filters = load_filters()
+    filters = load_filters(parsed.filters_path)
     if not filters:
         print("No filters loaded; exiting", file=sys.stderr)
         return 1
@@ -192,37 +245,41 @@ def main():
 
     # Determine which filters to run
     filters_to_run = []
-    if args.filter:
-        f = find_filter(filters, args.filter)
+    if parsed.filter:
+        f = find_filter(filters, parsed.filter)
         if f:
-            filters_to_run = [(args.filter, f)]
+            filters_to_run = [(parsed.filter, f)]
         else:
-            print(f"Filter '{args.filter}' not found", file=sys.stderr)
+            print(f"Filter '{parsed.filter}' not found", file=sys.stderr)
             return 1
-    elif args.all:
+    elif parsed.all:
         enabled = get_enabled_filters(filters)
-        filters_to_run = [(name, filters[name]) for name in enabled]
+        filters_to_run = [(f["name"], f) for f in enabled]
     else:
         parser.print_help()
         return 1
 
     # Setup download directory if requested
     download_dir = None
-    if args.download_dir and not args.dry_run:
-        download_dir = Path(args.download_dir)
+    if parsed.download_dir and not parsed.dry_run:
+        download_dir = Path(parsed.download_dir)
         download_dir.mkdir(parents=True, exist_ok=True)
         print(f"PDFs will be downloaded to: {download_dir}", file=sys.stderr)
 
     # Run searches and emit results
     all_records = []
+    all_sources_failed: list = []
+    total_downloaded = 0
+    total_failed_downloads = 0
 
     for filter_name, filter_dict in filters_to_run:
         records = run_search(
             orchestrator,
             filter_dict,
             filter_name,
-            max_results=args.max,
-            dry_run=args.dry_run,
+            max_results=parsed.max,
+            dry_run=parsed.dry_run,
+            sources_failed=all_sources_failed,
         )
 
         # Emit as JSONL to stdout (records are already filtered plain dicts)
@@ -230,20 +287,39 @@ def main():
             print(json.dumps(record_dict, separators=(",", ":")))
 
             # Download PDF if requested
-            if download_dir and not args.dry_run:
-                download_pdf(record_dict, download_dir)
+            if download_dir and not parsed.dry_run:
+                if download_pdf(record_dict, download_dir):
+                    total_downloaded += 1
+                else:
+                    total_failed_downloads += 1
 
         all_records.extend(records)
 
     # Write full JSON output if requested
-    if args.json and not args.dry_run:
-        output_path = Path(args.json)
+    if parsed.json and not parsed.dry_run:
+        output_path = Path(parsed.json)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w") as f:
             json.dump(all_records, f, indent=2)
         print(f"Wrote {len(all_records)} records to {output_path}", file=sys.stderr)
 
     print(f"Total: {len(all_records)} matching records across all filters", file=sys.stderr)
+
+    # PDF download summary (M2: failures must not be silent)
+    if download_dir:
+        print(
+            f"PDFs: {total_downloaded} downloaded / {total_failed_downloads} failed",
+            file=sys.stderr,
+        )
+
+    # Exit 2 when any source failed so cron operators can detect it (M1/CLI bug)
+    if all_sources_failed:
+        print(
+            f"Sources failed: {', '.join(all_sources_failed)}",
+            file=sys.stderr,
+        )
+        return 2
+
     return 0
 
 

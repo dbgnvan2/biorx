@@ -122,6 +122,7 @@ class ArxivAdapter:
         max_attempts = 3
 
         while attempts < max_attempts:
+            attempts += 1
             try:
                 self.last_request_time = time.time()
                 resp = requests.get(url, params=params, headers=headers, timeout=self.timeout)
@@ -129,16 +130,25 @@ class ArxivAdapter:
                 # Handle 429 (rate limited)
                 if resp.status_code == 429:
                     retry_after = int(resp.headers.get("Retry-After", 5))
-                    attempts += 1
                     if attempts >= max_attempts:
                         raise RateLimitedError(f"arXiv rate limited; gave up after {max_attempts} attempts")
                     logger.warning("arXiv rate limited; sleeping %d seconds", retry_after)
                     time.sleep(retry_after)
                     continue
 
-                # Handle 5xx
+                # Handle 5xx — retry with exponential backoff (M1: transient, not terminal)
                 if resp.status_code >= 500:
-                    raise SourceUnavailableError(f"arXiv returned {resp.status_code}")
+                    if attempts >= max_attempts:
+                        raise SourceUnavailableError(
+                            f"arXiv returned {resp.status_code} after {max_attempts} attempts"
+                        )
+                    backoff = 2 ** (attempts - 1)
+                    logger.warning(
+                        "arXiv returned %d; retrying in %ds (attempt %d/%d)",
+                        resp.status_code, backoff, attempts, max_attempts,
+                    )
+                    time.sleep(backoff)
+                    continue
 
                 # Handle other errors
                 resp.raise_for_status()
@@ -175,9 +185,15 @@ class ArxivAdapter:
                 return entries
 
             except requests.RequestException as e:
-                raise SourceUnavailableError(f"arXiv request failed: {e}") from e
+                if attempts >= max_attempts:
+                    raise SourceUnavailableError(f"arXiv request failed: {e}") from e
+                backoff = 2 ** (attempts - 1)
+                logger.warning(
+                    "arXiv request failed: %s; retrying in %ds (attempt %d/%d)",
+                    e, backoff, attempts, max_attempts,
+                )
+                time.sleep(backoff)
 
-        # Should not reach here
         raise SourceUnavailableError("arXiv request exhausted retries")
 
     def _parse_entry(self, entry: ET.Element) -> Optional[RawRecord]:
@@ -236,8 +252,11 @@ class ArxivAdapter:
     def normalize(self, raw: RawRecord) -> CanonicalRecord:
         """Normalize a raw arXiv entry to CanonicalRecord."""
         arxiv_id_full = raw.get("arxiv_id_full", "")
-        # Strip vN suffix for canonical identity
+        # Strip vN suffix for canonical identity; carry version number separately
+        # so the "2+ (revised only)" version filter can match arXiv papers.
         arxiv_id_no_version = re.sub(r"v\d+$", "", arxiv_id_full)
+        version_match = re.search(r"v(\d+)$", arxiv_id_full)
+        arxiv_version = version_match.group(1) if version_match else ""
 
         # Authors
         authors: List[AuthorRecord] = []
@@ -278,4 +297,5 @@ class ArxivAdapter:
             )],
             flags=RecordFlags(fulltext_reusable=True),
             source_trust_weight=self.source_trust_weight,
+            arxiv_version=arxiv_version,
         )
