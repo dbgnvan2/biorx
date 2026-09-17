@@ -1,13 +1,15 @@
 """
 SQLite-backed cache for publication source responses.
 
-Cache layers and TTLs:
-  raw_search_cache:     24 hours  — raw API responses by (source, query_hash, page)
-  oa_lookup_cache:       7 days   — Unpaywall OA lookups by DOI
-  id_resolution_cache:  30 days   — identifier → canonical_id mappings
+SearchCache is implemented here but not yet wired into the orchestrator.
+Wire it when caching is needed: pass a SearchCache instance into
+SourceOrchestrator and call get_raw/set_raw around each adapter.search() call.
+Every write location must honour an env override (BIORX_CACHE_PATH or DATA_DIR)
+before it is wired, per the repo invariant in src/db.py.
 """
 
 from __future__ import annotations
+import os
 import sqlite3
 import json
 import hashlib
@@ -24,11 +26,25 @@ _TTL_OA_LOOKUP    = 7 * 24
 _TTL_ID_RESOLVE   = 30 * 24
 
 
-class SearchCache:
-    """SQLite-backed multi-layer cache for source API responses."""
+def _default_cache_path() -> str:
+    """Resolve cache path: BIORX_CACHE_PATH → DATA_DIR/source_cache.db → ~/preprints."""
+    explicit = os.environ.get("BIORX_CACHE_PATH")
+    if explicit:
+        return explicit
+    data_dir = os.environ.get("DATA_DIR")
+    if data_dir:
+        return str(Path(data_dir) / "source_cache.db")
+    return "~/preprints/source_cache.db"
 
-    def __init__(self, cache_path: str = "~/preprints/source_cache.db"):
-        self.path = Path(cache_path).expanduser()
+
+class SearchCache:
+    """SQLite-backed multi-layer cache for source API responses.
+
+    Not yet wired into production (zero callers). See module docstring.
+    """
+
+    def __init__(self, cache_path: str | None = None):
+        self.path = Path(cache_path or _default_cache_path()).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.path))
         self._init_tables()
