@@ -168,11 +168,14 @@ class EuropePmcAdapter:
         """Return the total hit count for a query without fetching all results."""
         params = {"query": query, "resultType": "idlist", "pageSize": 1, "format": "json"}
         try:
-            resp = self.session.get(BASE_URL, params=params, timeout=self.timeout)
+            resp = with_retry(
+                lambda: self.session.get(BASE_URL, params=params, timeout=self.timeout),
+                source_label="Europe PMC get_total",
+            )
             if resp.ok:
                 return int(resp.json().get("hitCount", 0))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Europe PMC get_total failed: %s", e)
         return 0
 
     def get_by_id(self, identifier: str) -> Optional[RawRecord]:
@@ -185,11 +188,14 @@ class EuropePmcAdapter:
 
         params = {"query": query, "resultType": "core", "pageSize": 1, "format": "json"}
         try:
-            resp = self.session.get(BASE_URL, params=params, timeout=self.timeout)
+            resp = with_retry(
+                lambda: self.session.get(BASE_URL, params=params, timeout=self.timeout),
+                source_label="Europe PMC get_by_id",
+            )
             if resp.ok:
                 results = resp.json().get("resultList", {}).get("result", [])
                 return results[0] if results else None
-        except requests.RequestException as e:
+        except Exception as e:
             logger.error("Europe PMC get_by_id error: %s", e)
         return None
 
@@ -214,11 +220,14 @@ class EuropePmcAdapter:
 
         url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid_clean}/fullTextXML"
         try:
-            resp = self.session.get(url, timeout=20)
+            resp = with_retry(
+                lambda: self.session.get(url, timeout=20),
+                source_label="Europe PMC fullTextXML",
+            )
             if not resp.ok:
                 logger.debug("Full-text XML not available for %s: %s", pmcid_clean, resp.status_code)
                 return ""
-        except requests.RequestException as e:
+        except Exception as e:
             logger.debug("Full-text XML fetch failed for %s: %s", pmcid_clean, e)
             return ""
 

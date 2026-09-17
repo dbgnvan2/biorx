@@ -340,7 +340,7 @@ def test_d_monitor_counts_failed_downloads(tmp_path, caplog):
          caplog.at_level(logging.WARNING):
         result = monitor.download_pdf(record, tmp_path)
 
-    assert result is False
+    assert result == "fail"
     warning_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
     assert warning_msgs, "download failure must be logged at WARNING level"
 

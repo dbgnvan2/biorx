@@ -148,16 +148,17 @@ def run_search(
     return matched
 
 
-def download_pdf(record: dict, dest_dir: Path, timeout: int = 30) -> bool:
+def download_pdf(record: dict, dest_dir: Path, timeout: int = 30) -> str:
     """
     Download a record's PDF to dest_dir.
 
-    Returns True if successful or file already exists, False on error.
+    Returns "ok" if successful or already exists, "skip" if no pdf_url present,
+    "fail" on a genuine download error.
     Failures are logged at WARNING (not DEBUG) so they appear in cron logs.
     """
     pdf_url = record.get("pdf_url", "")
     if not pdf_url:
-        return False
+        return "skip"
 
     # Generate filename: use canonical_id or source_record_id as base
     canonical_id = record.get("canonical_id", "unknown")
@@ -168,7 +169,7 @@ def download_pdf(record: dict, dest_dir: Path, timeout: int = 30) -> bool:
 
     # Skip if already exists
     if filepath.exists():
-        return True
+        return "ok"
 
     try:
         import requests
@@ -177,10 +178,10 @@ def download_pdf(record: dict, dest_dir: Path, timeout: int = 30) -> bool:
         with open(filepath, "wb") as f:
             f.write(resp.content)
         print(f"  Downloaded {filename}", file=sys.stderr)
-        return True
+        return "ok"
     except Exception as e:
         logger.warning("Failed to download %s: %s", pdf_url, e)
-        return False
+        return "fail"
 
 
 def main(args=None):
@@ -288,10 +289,12 @@ def main(args=None):
 
             # Download PDF if requested
             if download_dir and not parsed.dry_run:
-                if download_pdf(record_dict, download_dir):
+                result = download_pdf(record_dict, download_dir)
+                if result == "ok":
                     total_downloaded += 1
-                else:
+                elif result == "fail":
                     total_failed_downloads += 1
+                # "skip" (no pdf_url) → neither counter
 
         all_records.extend(records)
 

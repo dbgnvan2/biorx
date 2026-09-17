@@ -248,7 +248,7 @@ def test_g_monitor_exits_2_on_failed_downloads(tmp_path, monkeypatch):
     ])
     monkeypatch.setattr(mon, "run_search", lambda *a, **kw: [fake_record])
     monkeypatch.setattr(mon, "filter_papers", lambda records, f: records)
-    monkeypatch.setattr(mon, "download_pdf", lambda rec, dest: False)  # always fails
+    monkeypatch.setattr(mon, "download_pdf", lambda rec, dest: "fail")  # always fails
 
     download_dir = tmp_path / "pdfs"
     download_dir.mkdir()

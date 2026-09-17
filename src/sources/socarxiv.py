@@ -84,24 +84,30 @@ class SocArxivAdapter:
             "page[size]": 1,
         }
         try:
-            resp = self.session.get(BASE_URL, params=params, timeout=self.timeout)
+            resp = with_retry(
+                lambda: self.session.get(BASE_URL, params=params, timeout=self.timeout),
+                source_label="SocArXiv get_total",
+            )
             if resp.ok:
                 return resp.json().get("meta", {}).get("total", 0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("SocArXiv get_total failed: %s", e)
         return 0
 
     def get_by_id(self, identifier: str) -> Optional[RawRecord]:
         """Fetch a single preprint by OSF ID or DOI."""
         try:
-            resp = self.session.get(
-                f"https://api.osf.io/v2/preprints/{identifier}/",
-                timeout=self.timeout
+            resp = with_retry(
+                lambda: self.session.get(
+                    f"https://api.osf.io/v2/preprints/{identifier}/",
+                    timeout=self.timeout,
+                ),
+                source_label="SocArXiv get_by_id",
             )
             if resp.ok:
                 return resp.json().get("data")
-        except requests.RequestException:
-            pass
+        except Exception as e:
+            logger.error("SocArXiv get_by_id error: %s", e)
         return None
 
     def normalize(self, raw: RawRecord) -> CanonicalRecord:
