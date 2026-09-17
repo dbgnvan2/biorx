@@ -34,14 +34,14 @@ def default_pdf_dir() -> str:
 class PDFHandler:
     """Handle PDF download and text extraction."""
 
-    def __init__(self, output_dir: str = DEFAULT_PDF_DIR):
+    def __init__(self, output_dir: str | None = None):
         """
         Initialize PDF handler.
 
         Args:
             output_dir: Directory to store downloaded PDFs
         """
-        self.output_dir = Path(output_dir).expanduser()
+        self.output_dir = Path(output_dir or default_pdf_dir()).expanduser()
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_safe_filename(self, title: str, doi: str) -> str:

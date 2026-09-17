@@ -125,7 +125,7 @@ def download_pdf(record: dict, dest_dir: Path, timeout: int = 30) -> bool:
 
     try:
         import requests
-        resp = requests.get(pdf_url, timeout=timeout)
+        resp = requests.get(pdf_url, timeout=timeout, headers={"User-Agent": "biorx/1.0"})
         resp.raise_for_status()
         with open(filepath, "wb") as f:
             f.write(resp.content)
