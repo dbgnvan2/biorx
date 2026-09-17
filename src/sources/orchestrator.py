@@ -232,12 +232,12 @@ class SourceOrchestrator:
             except SourceUnavailableError as e:
                 logger.error("Source unavailable (%s): %s", source_name, e)
                 if on_status:
-                    on_status(f"{label} unavailable — skipped")
+                    on_status(f"{label} {FAILURE_STATUS_MARKER} (unavailable)")
                 continue
             except Exception as e:
                 logger.error("Unexpected error from %s: %s", source_name, e, exc_info=True)
                 if on_status:
-                    on_status(f"{label} error — skipped")
+                    on_status(f"{label} {FAILURE_STATUS_MARKER} (error)")
                 continue
 
             if total_fetched >= max_results:
@@ -311,7 +311,7 @@ class SourceOrchestrator:
             except RateLimitedError:
                 logger.warning("Rate limited by %s — stopping", source_name)
                 if on_status:
-                    on_status(f"{_source_label(source_name)} rate-limited {FAILURE_STATUS_MARKER}")
+                    on_status(f"{_source_label(source_name)} {FAILURE_STATUS_MARKER} (rate-limited)")
                 break
             except SourceUnavailableError as e:
                 logger.error("Source %s unavailable: %s", source_name, e)
@@ -320,7 +320,7 @@ class SourceOrchestrator:
                 # Mid-pagination failure: records already yielded but source is now broken.
                 # Emit the marker so callers (monitor.py) count this as a source failure.
                 if on_status:
-                    on_status(f"{_source_label(source_name)} partial — skipped")
+                    on_status(f"{_source_label(source_name)} {FAILURE_STATUS_MARKER} (partial)")
                 break
 
             # An adapter may filter entries out of a page (arXiv drops withdrawn

@@ -135,7 +135,7 @@ def test_an_unknown_saved_filter_is_404(signed_in):
 
 def test_a_failed_source_is_reported_not_silently_zero(ctx, signed_in):
     ctx.orchestrator = _fake_orchestrator(
-        records=[], status_messages=["arXiv unavailable — skipped"]
+        records=[], status_messages=["arXiv — skipped (unavailable)"]
     )
     job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
     body = _await_status(signed_in, job_id)
@@ -166,13 +166,17 @@ def test_the_failure_marker_matches_what_the_orchestrator_actually_emits():
     from web.routes_searches import source_from_failure_status
 
     source = inspect.getsource(orch_module.SourceOrchestrator.search)
-    assert 'unavailable — skipped' in source, \
-        "the orchestrator no longer emits the status this detector matches"
-    assert 'error — skipped' in source
+    # The orchestrator uses the FAILURE_STATUS_MARKER constant; verify it's present
+    # (a rename of the constant would be caught here) and that at least one failure
+    # branch still formats label before marker.
+    assert 'FAILURE_STATUS_MARKER' in source, \
+        "the orchestrator no longer uses FAILURE_STATUS_MARKER in search()"
+    marker = orch_module.FAILURE_STATUS_MARKER
 
     for name, label in orch_module._SOURCE_LABELS.items():
-        assert source_from_failure_status(f"{label} unavailable — skipped") == name
-        assert source_from_failure_status(f"{label} error — skipped") == name
+        # New format: "<label> <marker> (<qualifier>)"
+        assert source_from_failure_status(f"{label} {marker} (unavailable)") == name
+        assert source_from_failure_status(f"{label} {marker} (error)") == name
         assert source_from_failure_status(f"{label}: 40 fetched") == ""
 
 

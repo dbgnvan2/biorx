@@ -26,18 +26,13 @@ from src.jobs import Job, JobLookup
 
 from .auth import current_user, get_context
 from .deps import AppContext
+from src.sources.orchestrator import FAILURE_STATUS_MARKER
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# The orchestrator has no structured failure callback: it reports an unreachable
-# source only through on_status, as "<Label> unavailable — skipped" or
-# "<Label> error — skipped" (orchestrator.py, the two `except` arms of the
-# per-source loop). Reading a human-readable string is a producer/consumer
-# contract that can drift silently (learnings P19), so the marker is named here
-# and a round-trip test drives the real orchestrator and asserts this matcher
-# fires on what it actually emits.
-FAILURE_STATUS_MARKER = "— skipped"
+# FAILURE_STATUS_MARKER is imported from orchestrator (P19: single source of truth;
+# wording change there breaks this import and the round-trip test, not silently).
 
 
 def source_from_failure_status(message: str) -> str:

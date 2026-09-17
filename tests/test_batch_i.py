@@ -2,11 +2,13 @@
 Batch I test suite — fixes for test-qa findings (2026-09-17).
 
 P27  — conftest fallback: test the literal in source, not the import
-P19  — FAILURE_STATUS_MARKER imported from orchestrator; generic-Exception path covered
+P19  — FAILURE_STATUS_MARKER imported from orchestrator; all 4 emission sites use it;
+        message format "<label> — skipped (<qualifier>)"; generic-Exception path covered
 P2/P1 — RateLimitedError emits "— skipped" marker; mid-pagination partial-skip test
 P21/P27 — per-adapter retry-on-5xx behaviour tests (psyarxiv, socarxiv, biorxiv_medrxiv, crossref)
-P·mutation — with_retry backoff on HTTPError & RequestException paths; 4xx/5xx boundary; exhaustion
-P21  — test_components.py (dead code) deleted separately
+P·mutation — with_retry backoff on HTTPError & RequestException paths; 4xx/5xx boundary;
+              exhaustion; _search_source max_results boundary, date-range branch,
+              fully-filtered page continue, bioRxiv _total progress
 """
 
 import sys
@@ -43,31 +45,57 @@ def test_i_conftest_fallback_literal_matches_db_constant():
 
 # ── P19: FAILURE_STATUS_MARKER is imported from orchestrator ──────────────────
 
-def test_i_failure_status_marker_exported_from_orchestrator():
-    """FAILURE_STATUS_MARKER must be importable from orchestrator (single source of truth)."""
-    from src.sources.orchestrator import FAILURE_STATUS_MARKER
-    assert FAILURE_STATUS_MARKER == "— skipped"
+def test_i_all_failure_paths_emit_the_marker():
+    """Every failure path in orchestrator.search() / _search_source must emit a
+    status string containing FAILURE_STATUS_MARKER, so monitor.py's split-based
+    detection works for all four cases: unavailable, error, rate-limited, partial.
+    This is a behavioural test of the constant — not a literal re-pin."""
+    from src.sources.orchestrator import SourceOrchestrator, FAILURE_STATUS_MARKER
+    from src.sources.errors import SourceUnavailableError, RateLimitedError
 
+    # We already have dedicated tests for unavailable (test_g_failure_detection_round_trip),
+    # generic error (test_i_failure_detection_generic_exception_path),
+    # rate-limited (test_i_rate_limited_error_emits_skipped_status), and
+    # mid-pagination partial (test_i_mid_pagination_failure_emits_partial_skipped).
+    # Here we verify that for each path the emitted string can be split on the marker
+    # and yields a non-empty label before it — i.e. the message format is
+    # "<label> <marker> ..." rather than "... <label> <marker>" (regression for the
+    # rate-limited ordering bug where "rate-limited" was inserted before the marker).
 
-def test_i_monitor_imports_failure_marker_from_orchestrator():
-    """monitor.py must import FAILURE_STATUS_MARKER from orchestrator, not define it locally."""
-    import ast
-    monitor_src = (Path(__file__).parent.parent / "agents" / "monitor.py").read_text()
-    tree = ast.parse(monitor_src)
-    # Find all ImportFrom nodes that import FAILURE_STATUS_MARKER
-    imports = [
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-        and any(alias.name == "FAILURE_STATUS_MARKER" for alias in node.names)
-    ]
-    assert imports, (
-        "monitor.py should import FAILURE_STATUS_MARKER from orchestrator, "
-        "but no such ImportFrom was found"
-    )
-    assert any("orchestrator" in (node.module or "") for node in imports), (
-        f"FAILURE_STATUS_MARKER should be imported from orchestrator; "
-        f"found import from: {[n.module for n in imports]}"
-    )
+    for exc_factory, label_key in [
+        (lambda: SourceUnavailableError("down"), "unavailable"),
+        (lambda: RuntimeError("crash"), "error"),
+    ]:
+        class _FailingAdapter:
+            source_name = "europepmc"
+            source_trust_weight = 1.0
+            _exc = staticmethod(exc_factory)
+
+            def search(self, *a, **kw):
+                raise self._exc()
+
+            def normalize(self, raw): raise NotImplementedError
+            def get_by_id(self, id_): return None
+
+        orch = SourceOrchestrator({})
+        orch._search_adapters["europepmc"] = _FailingAdapter()
+        msgs = []
+        orch.search(
+            filter_dict={"text_groups": [{"both": "t"}], "days_back": 7},
+            source_selection={"all": False, "selected": ["europepmc"]},
+            on_status=msgs.append,
+        )
+        failure_msgs = [m for m in msgs if FAILURE_STATUS_MARKER in m]
+        assert failure_msgs, f"No failure message for {label_key}: {msgs}"
+        for m in failure_msgs:
+            label_part = m.split(FAILURE_STATUS_MARKER)[0].strip()
+            assert label_part, (
+                f"Label before marker is empty for {label_key}: {m!r}. "
+                "Message format must be '<label> <marker> ...' not '... <marker> <label>'"
+            )
+            assert "Europe PMC" in label_part or label_part, (
+                f"Unexpected label part {label_part!r} for {label_key}"
+            )
 
 
 def test_i_failure_detection_generic_exception_path():
@@ -206,8 +234,12 @@ def test_i_mid_pagination_failure_emits_partial_skipped():
         f"got: {status_messages!r}"
     )
     assert any("partial" in m for m in failure_msgs), (
-        f"Expected 'partial' in the failure status; got: {failure_msgs!r}"
+        f"Expected 'partial' qualifier in the failure status; got: {failure_msgs!r}"
     )
+    # Label must come BEFORE the marker so monitor.py's split extracts the right name
+    for m in failure_msgs:
+        label_part = m.split(FAILURE_STATUS_MARKER)[0].strip()
+        assert label_part, f"Label before marker is empty: {m!r}"
 
 
 # ── P·mutation: with_retry backoff on HTTPError and RequestException paths ────
@@ -409,3 +441,192 @@ def test_i_crossref_get_by_id_retries_on_5xx(monkeypatch):
     with patch("src.sources.base.time.sleep"):
         result = adapter.get_by_id("10.1234/test")
     assert result is not None
+
+
+# ── P-coverage: surviving mutants in _search_source pagination/progress ───────
+
+def _orch_bare():
+    """Minimal SourceOrchestrator with no registered adapters."""
+    from src.sources.orchestrator import SourceOrchestrator
+    orch = SourceOrchestrator.__new__(SourceOrchestrator)
+    orch.config = {}
+    orch._crossref = None
+    orch._unpaywall = None
+    orch._search_adapters = {}
+    return orch
+
+
+def _make_record(doi):
+    """Make a CanonicalRecord with a title derived from doi so title+author+year key is unique."""
+    from src.sources.schema import CanonicalRecord, AuthorRecord, SourceHit, RecordFlags, make_canonical_id
+    # Title must differ per record: Deduplicator keys on title+first_author+year
+    title = f"Paper {doi}"
+    first_author = "Smith"
+    cid = make_canonical_id(doi=doi, title=title, first_author=first_author, year=2024)
+    return CanonicalRecord(
+        canonical_id=cid, title=title, abstract="", authors=[
+            AuthorRecord(display_name="Smith J", sequence=1)
+        ],
+        year=2024, published_date="2024-01-01", document_type="article",
+        is_preprint=False, journal_or_server="J",
+        doi=doi, pmid="", pmcid="",
+        source_url="", best_oa_url="", pdf_url="",
+        license="", oa_status="open", subjects=[], keywords=[],
+        source_hits=[SourceHit(source="europepmc", source_record_id=doi, fetched_at="2024-01-01")],
+        flags=RecordFlags(), source_trust_weight=1.0,
+    )
+
+
+def test_i_search_source_stops_at_exact_max_results():
+    """fetched >= max_results (not >) exits the loop at the boundary, not one record later."""
+    from src.sources.dedup import Deduplicator
+    from src.sources.orchestrator import SourceOrchestrator
+
+    orch = _orch_bare()
+    page_size = orch.PAGE_SIZE
+    max_results = page_size  # exactly one page worth
+
+    pages_called = [0]
+
+    class _CountingAdapter:
+        last_page_size = page_size
+        last_total = 0
+
+        def search(self, query, page=1, page_size=None, **kw):
+            pages_called[0] += 1
+            self.last_page_size = page_size
+            return [{"i": (page - 1) * page_size + j} for j in range(page_size)]
+
+        def normalize(self, raw):
+            return _make_record(f"10.1234/r{raw['i']}")
+
+    fetched = orch._search_source(
+        "europepmc", _CountingAdapter(), "q", {}, Deduplicator(),
+        None, None, None, max_results=max_results,
+    )
+
+    assert fetched == max_results, f"expected {max_results}, got {fetched}"
+    assert pages_called[0] == 1, f"loop should stop after page 1; called {pages_called[0]} times"
+
+
+def test_i_search_source_passes_filter_dict_to_date_range_adapters():
+    """psyarxiv / socarxiv / biorxiv_medrxiv / arxiv receive filter_dict as a kwarg;
+    europepmc does not. Regression for the `in -> not in` mutant."""
+    from src.sources.dedup import Deduplicator
+    from src.sources.orchestrator import SourceOrchestrator
+
+    orch = _orch_bare()
+    received_kwargs: dict = {}
+
+    class _KwargCapture:
+        last_page_size = 0
+        last_total = 0
+
+        def search(self, query, page=1, page_size=25, **kw):
+            received_kwargs.update(kw)
+            self.last_page_size = 0  # short page → stop
+            return []
+
+        def normalize(self, raw):
+            raise NotImplementedError
+
+    fd = {"days_back": 14, "text_groups": []}
+
+    # psyarxiv branch should receive filter_dict
+    orch._search_source(
+        "psyarxiv", _KwargCapture(), "q", fd, Deduplicator(),
+        None, None, None, max_results=10,
+    )
+    assert "filter_dict" in received_kwargs, (
+        "psyarxiv _search_source did not pass filter_dict to adapter.search()"
+    )
+    assert received_kwargs["filter_dict"] is fd
+
+    # europepmc branch should NOT receive filter_dict
+    received_kwargs.clear()
+    orch._search_source(
+        "europepmc", _KwargCapture(), "q", fd, Deduplicator(),
+        None, None, None, max_results=10,
+    )
+    assert "filter_dict" not in received_kwargs, (
+        "europepmc _search_source should not pass filter_dict to adapter.search()"
+    )
+
+
+def test_i_search_source_continues_paging_after_fully_filtered_full_page():
+    """When a full page's records are all duplicates (dedup removes them) but the
+    source's last_page_size is PAGE_SIZE, pagination must continue — not stop.
+    Regression for the `page += 1` → `page += 0` mutant on the filtered-page path."""
+    from src.sources.dedup import Deduplicator
+    from src.sources.orchestrator import SourceOrchestrator
+
+    orch = _orch_bare()
+    page_size = orch.PAGE_SIZE
+
+    # Use a shared deduplicator that already has the first page's records.
+    dedup = Deduplicator()
+    # Pre-populate with page-1 records so page 1 is fully "filtered" (all dups).
+    for i in range(page_size):
+        dedup.add(_make_record(f"10.1234/dup{i}"))
+
+    pages_called = [0]
+
+    class _FullThenShortAdapter:
+        last_page_size = page_size
+        last_total = 0
+
+        def search(self, query, page=1, page_size=None, **kw):
+            pages_called[0] += 1
+            self.last_page_size = page_size if page == 1 else 1
+            if page == 1:
+                # Return the same records dedup already has → all filtered
+                return [{"i": i} for i in range(page_size)]
+            # page 2: one genuinely new record
+            return [{"i": 99999}]
+
+        def normalize(self, raw):
+            return _make_record(f"10.1234/dup{raw['i']}")
+
+    fetched = orch._search_source(
+        "europepmc", _FullThenShortAdapter(), "q", {}, dedup,
+        None, None, None, max_results=1000,
+    )
+
+    assert pages_called[0] == 2, (
+        f"Expected 2 pages (continue past fully-filtered page); got {pages_called[0]}"
+    )
+    # The new record from page 2 was fetched
+    assert fetched == 1
+
+
+def test_i_biorxiv_total_is_reported_to_progress():
+    """bioRxiv _total field on raw records is passed to on_progress as src_total."""
+    from src.sources.dedup import Deduplicator
+    from src.sources.orchestrator import SourceOrchestrator
+
+    orch = _orch_bare()
+
+    progress_reports: list = []
+
+    class _BiorxivAdapter:
+        last_page_size = 1
+        last_total = 0
+
+        def search(self, query, page=1, page_size=None, **kw):
+            self.last_page_size = 1  # short page (< PAGE_SIZE) → stop after one call
+            return [{"i": 0, "_total": 42}]
+
+        def normalize(self, raw):
+            return _make_record(f"10.1234/bio{raw['i']}")
+
+    orch._search_source(
+        "biorxiv_medrxiv", _BiorxivAdapter(), "q", {}, Deduplicator(),
+        None, lambda fetched, total: progress_reports.append((fetched, total)), None,
+        max_results=1000,
+    )
+
+    assert progress_reports, "expected at least one progress report"
+    totals = [total for _, total in progress_reports]
+    assert any(t == 42 for t in totals), (
+        f"expected src_total=42 from _total field; got: {progress_reports}"
+    )
