@@ -254,8 +254,16 @@ class AbstractFetchWorker(QObject):
     def run(self):
         try:
             result = recover_abstract(self.paper)
-            self.finished.emit(result.text if result.found else self.NOT_FOUND_MESSAGE)
+            if result.found:
+                logger.debug("AbstractFetchWorker: recovered abstract via %s for doi=%s",
+                             result.source, self.paper.get("doi", "(no doi)"))
+                self.finished.emit(result.text)
+            else:
+                logger.warning("AbstractFetchWorker: no abstract found for doi=%s title=%r",
+                               self.paper.get("doi"), self.paper.get("title", "")[:80])
+                self.finished.emit(self.NOT_FOUND_MESSAGE)
         except Exception as e:
+            logger.error("AbstractFetchWorker: exception for doi=%s: %s", self.paper.get("doi"), e)
             self.error.emit(str(e))
 
 
@@ -288,6 +296,7 @@ class BatchPdfDownloadWorker(QObject):
             url = _pdf_url(paper)
             doi = paper.get("doi", "")
             if not url:
+                logger.warning("Batch PDF download: no URL for %r (doi=%s)", title, doi)
                 failed += 1
                 continue
             try:
@@ -487,6 +496,9 @@ def _attach_context_menu(table: "QTableWidget"):
         paper = item.data(Qt.ItemDataRole.UserRole)
         if not paper:
             return
+        # SavedReferencesTab stores {"paper": {...}, "item_id": N}; unwrap.
+        if isinstance(paper, dict) and "paper" in paper and "item_id" in paper:
+            paper = paper["paper"]
 
         menu = QMenu(table)
         view_action     = menu.addAction("View Abstract & Discussion")
@@ -1180,6 +1192,214 @@ class TextFiltersWidget(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Discover search terms via LLM
+# ---------------------------------------------------------------------------
+
+class DiscoverTermsWorker(QObject):
+    """
+    Search broadly with a natural-language description, then ask the local
+    LLM to suggest precise search terms from the papers found.
+    """
+    status   = pyqtSignal(str)
+    finished = pyqtSignal(list)   # list[str] of suggested terms
+    error    = pyqtSignal(str)
+
+    def __init__(self, orchestrator, query: str, days_back: int = 90, max_papers: int = 30):
+        super().__init__()
+        self.orchestrator = orchestrator
+        self.query = query
+        self.days_back = days_back
+        self.max_papers = max_papers
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        from src.llm import OllamaClient
+
+        self.status.emit("Searching for relevant papers…")
+        filter_dict = {
+            "days_back": self.days_back,
+            "text_groups": [{"title": "", "abstract": "", "both": self.query}],
+        }
+        papers = []
+
+        def on_batch(records):
+            papers.extend(records)
+
+        try:
+            self.orchestrator.search(
+                filter_dict=filter_dict,
+                on_batch=on_batch,
+                should_stop=lambda: self._stop,
+                max_results=self.max_papers,
+            )
+        except Exception as e:
+            if not self._stop:
+                self.error.emit(f"Search failed: {e}")
+            return
+
+        if self._stop:
+            return
+
+        if not papers:
+            self.error.emit(
+                "No papers found for that description. Try broader wording or a longer date range."
+            )
+            return
+
+        self.status.emit(f"Found {len(papers)} papers — asking LLM for search terms…")
+
+        paper_lines = "\n".join(
+            f"- {r.title}: {(r.abstract or '')[:200].strip()}"
+            for r in papers[:25]
+        )
+        prompt = (
+            f"Research interest: {self.query}\n\n"
+            f"Sample papers:\n{paper_lines}\n\n"
+            "Based on these papers, suggest 10-15 specific search terms (single words "
+            "or short 2-3 word phrases) for finding similar research. Focus on "
+            "methodology, technical concepts, and domain-specific vocabulary — avoid "
+            "generic words. Return ONLY a comma-separated list, no explanation."
+        )
+
+        client = OllamaClient()
+        if not client.is_available():
+            self.error.emit(
+                "Ollama is not running — start it with: ollama serve\n"
+                "The papers above were found; you can write terms manually."
+            )
+            # Still emit the paper titles so the user has something to work with
+            titles = ", ".join(r.title.split()[0] for r in papers[:5] if r.title)
+            self.finished.emit([])
+            return
+
+        result = client.generate(prompt)
+        if not result:
+            self.error.emit("LLM returned no response. Check Ollama logs.")
+            return
+
+        terms = [t.strip().strip('"').strip("'") for t in result.split(",") if t.strip()]
+        self.finished.emit(terms)
+
+
+class DiscoverTermsDialog(QDialog):
+    """Let the user describe their research interest and receive suggested search terms."""
+
+    def __init__(self, orchestrator, parent=None):
+        super().__init__(parent)
+        self.orchestrator = orchestrator
+        self.setWindowTitle("Discover Search Terms")
+        self.setMinimumSize(560, 480)
+        self._thread = None
+        self._worker = None
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout()
+
+        layout.addWidget(QLabel(
+            "Describe your research interest in plain language. The app will search "
+            "for relevant papers and ask the local LLM to suggest precise search terms."
+        ))
+
+        self.query_edit = QTextEdit()
+        self.query_edit.setPlaceholderText(
+            "e.g. agents modeling social behavior or social interactions"
+        )
+        self.query_edit.setMaximumHeight(80)
+        layout.addWidget(self.query_edit)
+
+        days_row = QHBoxLayout()
+        days_row.addWidget(QLabel("Look back (days):"))
+        self.days_spin = QSpinBox()
+        self.days_spin.setRange(7, 3650)
+        self.days_spin.setValue(180)
+        days_row.addWidget(self.days_spin)
+        days_row.addStretch()
+        self.discover_btn = QPushButton("Discover")
+        self.discover_btn.setDefault(True)
+        self.discover_btn.clicked.connect(self._start)
+        days_row.addWidget(self.discover_btn)
+        layout.addLayout(days_row)
+
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addWidget(self.status_label)
+
+        layout.addWidget(QLabel("Suggested terms (edit freely, comma-separated):"))
+        self.terms_edit = QTextEdit()
+        self.terms_edit.setPlaceholderText("Terms will appear here after discovery…")
+        layout.addWidget(self.terms_edit, 1)
+
+        btns = QHBoxLayout()
+        self.apply_btn = QPushButton("Add to filter as new group")
+        self.apply_btn.setEnabled(False)
+        self.apply_btn.clicked.connect(self.accept)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.reject)
+        btns.addStretch()
+        btns.addWidget(close_btn)
+        btns.addWidget(self.apply_btn)
+        layout.addLayout(btns)
+
+        self.setLayout(layout)
+
+    def _start(self):
+        query = self.query_edit.toPlainText().strip()
+        if not query:
+            self.status_label.setText("Enter a research description first.")
+            return
+
+        self._stop_worker()
+        self.discover_btn.setEnabled(False)
+        self.apply_btn.setEnabled(False)
+        self.terms_edit.setPlainText("")
+        self.status_label.setText("Starting…")
+
+        self._worker = DiscoverTermsWorker(
+            self.orchestrator, query, days_back=self.days_spin.value()
+        )
+        self._thread = QThread()
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.status.connect(self.status_label.setText)
+        self._worker.finished.connect(self._on_finished)
+        self._worker.error.connect(self._on_error)
+        self._thread.start()
+
+    def _on_finished(self, terms):
+        self._thread.quit()
+        self.discover_btn.setEnabled(True)
+        if terms:
+            self.terms_edit.setPlainText(", ".join(terms))
+            self.apply_btn.setEnabled(True)
+            self.status_label.setText(f"Done — {len(terms)} terms suggested. Edit as needed.")
+        else:
+            self.status_label.setText("Done (no terms returned). Search results may still help.")
+
+    def _on_error(self, msg):
+        self._thread.quit()
+        self.discover_btn.setEnabled(True)
+        self.status_label.setText(f"Error: {msg}")
+
+    def _stop_worker(self):
+        if self._worker:
+            self._worker.stop()
+        if self._thread and self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(3000)
+
+    def closeEvent(self, event):
+        self._stop_worker()
+        super().closeEvent(event)
+
+    def get_terms_text(self) -> str:
+        return self.terms_edit.toPlainText().strip()
+
+
+# ---------------------------------------------------------------------------
 
 class FiltersTab(QWidget):
     """Build, save, test, and manage search filters."""
@@ -1319,6 +1539,12 @@ class FiltersTab(QWidget):
         action_row.addWidget(save_as_btn)
         action_row.addWidget(del_btn)
         action_row.addStretch()
+        discover_btn = QPushButton("🔍  Discover terms…")
+        discover_btn.setToolTip(
+            "Search broadly for relevant papers and ask the local LLM to suggest search terms"
+        )
+        discover_btn.clicked.connect(self._open_discover_dialog)
+        action_row.addWidget(discover_btn)
         action_row.addWidget(self.test_btn)
         rl.addLayout(action_row)
 
@@ -1598,6 +1824,13 @@ class FiltersTab(QWidget):
             self.test_table.setItem(row, 2, QTableWidgetItem(p.get("date") or p.get("pub_date", "")))
             self.test_table.setItem(row, 3, QTableWidgetItem(p.get("category", "")))
             self.test_table.setItem(row, 4, QTableWidgetItem(p.get("type", "")))
+
+    def _open_discover_dialog(self):
+        dlg = DiscoverTermsDialog(self.orchestrator, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            terms_text = dlg.get_terms_text()
+            if terms_text:
+                self.text_filters.add_group({"both": terms_text})
 
 
 # ---------------------------------------------------------------------------

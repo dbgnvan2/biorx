@@ -58,7 +58,7 @@ ROOT = Path(__file__).parent.parent.parent
 #   exits 2 on truncated results — P2/P19 fix; interface addition, not retrieval logic
 #   change — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "a2607f8"
+BASELINE = "39a93ab"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
