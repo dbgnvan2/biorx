@@ -35,7 +35,12 @@ class SearchAgent:
             db_path: Path to SQLite database
         """
         self.key_terms_path = Path(key_terms_path)
-        self.api = BioRxivAPI()
+        from src.sources.config import load_sources_config, polite_user_agent
+        try:
+            sources_cfg = load_sources_config()
+        except Exception:
+            sources_cfg = {}
+        self.api = BioRxivAPI(user_agent=polite_user_agent(sources_cfg))
         self.db = Database(db_path)
         self.config = self._load_config()
 

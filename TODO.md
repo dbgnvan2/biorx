@@ -3,6 +3,20 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From batch-H gates (2026-09-16) — deferred, in-loop fix threshold not met
+
+- **Startup warnings not surfaced in web UI (P25)** — `/healthz` exposes
+  `startup_warnings` as JSON but `web/static/app.js` never reads or renders them.
+  Web users silently run degraded without knowing to set `BIORX_CONTACT_EMAIL`.
+  Fix: add a JS check on app load that reads `/healthz` and displays any
+  `startup_warnings` in the UI.
+
+- **`_root_md_files` scans root-level `.md` only** — `docs/` is intentionally
+  excluded because `docs/cycles/` gate files quote personal addresses for audit.
+  The latent risk is that a non-cycles file added to `docs/` could contain a
+  real address and escape the scan. Gate F4 — low risk given the exclusion is
+  documented in the test comment; revisit if `docs/` grows non-audit content.
+
 ## From the N2 gate (`docs/cycles/2026-09-16_n2-qa-gate.md`) — APPROVED at fix-loop 1
 
 - **Network guard limits.** It cannot see network use from a subprocess (a

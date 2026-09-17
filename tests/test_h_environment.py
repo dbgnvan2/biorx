@@ -440,6 +440,55 @@ def test_h_biorxiv_medrxiv_carries_config_contact_address(monkeypatch):
     )
 
 
+def test_h_europepmc_factory_carries_config_contact_address(monkeypatch):
+    """_europepmc() in paper_meta.py must pass sources_config to EuropePmcAdapter (F2/P5).
+
+    Sibling of test_h_crossref_abstract_carries_config_contact_address — the same
+    half-fix pattern that left _europepmc() bare while _crossref_abstract() was wired.
+    """
+    from src import paper_meta as pm
+    from src.sources import europepmc as europepmc_mod
+    from src.sources import config as sources_config_mod
+
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    captured = {}
+
+    class _FakeAdapter:
+        def __init__(self, timeout=30, sources_config=None):
+            captured["sources_config"] = sources_config
+
+    monkeypatch.setattr(europepmc_mod, "EuropePmcAdapter", _FakeAdapter)
+    monkeypatch.setattr(sources_config_mod, "load_sources_config",
+                        lambda: {"contact_email": "cfg@example.org"})
+
+    pm._europepmc()
+    assert captured.get("sources_config", {}).get("contact_email") == "cfg@example.org", (
+        "_europepmc() must pass sources_config with contact_email to EuropePmcAdapter; "
+        f"got: {captured.get('sources_config')}"
+    )
+
+
+def test_h_search_agent_biorxiv_api_carries_config_contact_address(monkeypatch, tmp_path):
+    """SearchAgent.api must be constructed with polite_user_agent(sources_config) (F1/P5)."""
+    from src.sources import config as sources_config_mod
+
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    monkeypatch.setattr(sources_config_mod, "load_sources_config",
+                        lambda: {"contact_email": "cfg@example.org"})
+
+    # Avoid touching real database and key_terms.json.
+    fake_db_path = str(tmp_path / "test.db")
+    fake_terms = tmp_path / "key_terms.json"
+    fake_terms.write_text('{"clusters": []}')
+
+    from agents.search_agent import SearchAgent
+    agent = SearchAgent(key_terms_path=str(fake_terms), db_path=fake_db_path)
+    assert agent.api.session.headers["User-Agent"] == "biorx/1.0 (mailto:cfg@example.org)", (
+        "SearchAgent.api must use config contact_email in UA; "
+        f"got: {agent.api.session.headers.get('User-Agent')}"
+    )
+
+
 def test_h_orchestrator_warns_about_openalex_when_no_email(monkeypatch):
     """
     The no-email startup warning names OpenAlex so users know the silent degradation

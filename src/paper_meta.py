@@ -250,7 +250,12 @@ def pmcid_of(paper: Dict[str, Any]) -> str:
 
 def _europepmc():
     from .sources.europepmc import EuropePmcAdapter
-    return EuropePmcAdapter()
+    from .sources.config import load_sources_config
+    try:
+        cfg = load_sources_config()
+    except Exception:
+        cfg = {}
+    return EuropePmcAdapter(sources_config=cfg)
 
 
 def _crossref_abstract(doi: str) -> str:
