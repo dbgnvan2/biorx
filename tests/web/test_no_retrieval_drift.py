@@ -44,8 +44,10 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from a55b83e → b0a7ca8 (batch D: arXiv wildcard strip, version carry,
 #   5xx retry, M3 author clause removed; schema.py adds arxiv_version field;
 #   query_builder.py drops normalize_authors — W1.a required changes)
+# Updated from b0a7ca8 → b973db1 (batch C: datetime.utcnow() → datetime.now(timezone.utc)
+#   across all adapters; P5 deprecation class fix; no logic change — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "b0a7ca8"
+BASELINE = "b973db1"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
