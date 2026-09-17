@@ -154,13 +154,13 @@ def build_psyarxiv_query(filter_dict: Dict[str, Any]) -> str:
         for field in ("title", "abstract", "both"):
             all_terms.extend(_split_terms(g.get(field, "")))
 
-    # Remove duplicates, strip wildcards for plain-text search
-    seen = set()
+    # Remove duplicates (case-insensitive), strip wildcards for plain-text search
+    seen: set = set()
     unique: List[str] = []
     for t in all_terms:
         clean = t.rstrip("*")
-        if clean and clean not in seen:
-            seen.add(clean)
+        if clean and clean.lower() not in seen:
+            seen.add(clean.lower())
             unique.append(clean)
 
     return " ".join(unique)

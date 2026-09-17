@@ -136,6 +136,12 @@ def test_h_healthz_surfaces_startup_warnings_when_no_contact_email(client, monke
     warning must appear in the healthz response, not be silently dropped.
     """
     monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    # Also clear any contact email the user may have set locally in
+    # sources_config.yaml so the warning path fires unconditionally.
+    ctx = client.app.state.ctx
+    ctx.sources_config = dict(ctx.sources_config)
+    ctx.sources_config.pop("contact_email", None)
+    ctx.orchestrator = None  # force a rebuild with the cleared config
     body = client.get("/healthz").json()
     assert "startup_warnings" in body, "/healthz must include startup_warnings key"
     assert any("BIORX_CONTACT_EMAIL" in w for w in body["startup_warnings"]), (

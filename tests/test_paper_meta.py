@@ -177,7 +177,10 @@ def test_openalex_contact_comes_from_the_environment(monkeypatch):
     """
     monkeypatch.setenv("BIORX_CONTACT_EMAIL", "ops@example.org")
     assert paper_meta.openalex_user_agent() == "biorx/1.0 (mailto:ops@example.org)"
+    # Env var takes priority; removing it should yield no mailto even when
+    # sources_config.yaml happens to have a personal email locally.
     monkeypatch.delenv("BIORX_CONTACT_EMAIL")
+    monkeypatch.setattr("src.sources.config.load_sources_config", lambda: {})
     assert paper_meta.openalex_user_agent() == "biorx/1.0"
 
 

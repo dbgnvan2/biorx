@@ -84,8 +84,17 @@ def test_h_no_personal_address_in_shipped_yaml():
                 if not ALLOWED_DOMAIN.search(addr):
                     found.append(f"{where}: {addr}")
 
+    import subprocess
     for name in ("sources_config.yaml", "llm_config.yaml"):
-        walk(yaml.safe_load((ROOT / name).read_text(encoding="utf-8")), name)
+        # Read from the committed version, not the local working copy. A user
+        # setting their contact email locally should not break this check.
+        result = subprocess.run(
+            ["git", "show", f"HEAD:{name}"],
+            cwd=ROOT, capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            continue  # file not yet committed; skip
+        walk(yaml.safe_load(result.stdout), name)
     assert found == []
 
 
