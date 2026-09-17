@@ -84,7 +84,7 @@ class SourceOrchestrator:
 
         if is_source_enabled(self.config, "pubmed"):
             from .pubmed import PubMedAdapter
-            self._search_adapters["pubmed"] = PubMedAdapter()
+            self._search_adapters["pubmed"] = PubMedAdapter(sources_config=self.config)
             logger.info("Registered adapter: pubmed")
 
         if is_source_enabled(self.config, "psyarxiv"):
@@ -134,9 +134,10 @@ class SourceOrchestrator:
         from .config import get_contact_email
         if not get_contact_email(self.config):
             msg = (
-                "Requests to polite-pool APIs (Crossref, arXiv, Europe PMC, PsyArXiv, "
-                "SocArXiv, OpenAlex) will send no contact email (BIORX_CONTACT_EMAIL "
-                "not set). Set BIORX_CONTACT_EMAIL or contact_email in sources_config.yaml."
+                "Requests to polite-pool APIs (Crossref, arXiv, Europe PMC, PubMed, "
+                "PsyArXiv, SocArXiv, OpenAlex) will send no contact email "
+                "(BIORX_CONTACT_EMAIL not set). Set BIORX_CONTACT_EMAIL or "
+                "contact_email in sources_config.yaml."
             )
             logger.warning(msg)
             self.warnings.append(msg)

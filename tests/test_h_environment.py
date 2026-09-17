@@ -418,6 +418,17 @@ def test_h_socarxiv_carries_config_contact_address(monkeypatch):
     )
 
 
+def test_h_pubmed_carries_config_contact_address(monkeypatch):
+    """PubMedAdapter subclasses EuropePmcAdapter; sources_config must reach it too (F1/P5)."""
+    from src.sources.pubmed import PubMedAdapter
+
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    adapter = PubMedAdapter(sources_config={"contact_email": "cfg@example.org"})
+    assert adapter.session.headers["User-Agent"] == "biorx/1.0 (mailto:cfg@example.org)", (
+        f"PubMedAdapter must use config contact_email in UA; got: {adapter.session.headers.get('User-Agent')}"
+    )
+
+
 def test_h_orchestrator_warns_about_openalex_when_no_email(monkeypatch):
     """
     The no-email startup warning names OpenAlex so users know the silent degradation
