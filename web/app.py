@@ -23,7 +23,8 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import routes_filters, routes_searches, routes_session, routes_summaries
+from . import (routes_discover, routes_filters, routes_references,
+               routes_searches, routes_session, routes_settings, routes_summaries)
 from .deps import AppContext, build_context
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,9 @@ def create_app(ctx: AppContext = None) -> FastAPI:
     application.include_router(routes_filters.router)
     application.include_router(routes_searches.router)
     application.include_router(routes_summaries.router)
+    application.include_router(routes_references.router)
+    application.include_router(routes_settings.router)
+    application.include_router(routes_discover.router)
 
     @application.get("/healthz")
     def healthz():
@@ -72,7 +76,13 @@ def create_app(ctx: AppContext = None) -> FastAPI:
 
         provider = default_provider(c.llm_config)
         pconf = provider_config(c.llm_config, provider)
-        c.get_orchestrator()
+        orch = c.get_orchestrator()
+        enabled_sources = orch.get_enabled_sources() if orch else []
+        from src.sources.orchestrator import _SOURCE_LABELS
+        sources_list = [
+            {"id": sid, "label": _SOURCE_LABELS.get(sid, sid), "enabled": True}
+            for sid in enabled_sources
+        ]
         return {
             "ok": True,
             "access_code_set": bool(c.access_code),
@@ -82,6 +92,7 @@ def create_app(ctx: AppContext = None) -> FastAPI:
             "owner_key_set": bool(pconf.owner_key()) if pconf else False,
             "db_path": str(c.db.db_path),
             "startup_warnings": list(c.startup_warnings),
+            "sources": sources_list,
         }
 
     if STATIC_DIR.exists():

@@ -279,3 +279,129 @@ def seed_filters_from_file(db, user_id: str, filters: List[Dict[str, Any]]) -> i
         upsert_filter(db, user_id, name, f, enabled=bool(f.get("enabled", True)))
         count += 1
     return count
+
+
+# ── Per-user reference lists ──────────────────────────────────────────────────
+
+def list_reference_lists(db, user_id: str) -> List[Dict[str, Any]]:
+    rows = db.conn.execute(
+        """
+        SELECT l.id, l.name, l.created_at,
+               COUNT(i.id) AS item_count
+          FROM user_reference_lists l
+     LEFT JOIN user_reference_list_items i ON i.list_id = l.id
+         WHERE l.user_id = ?
+      GROUP BY l.id
+      ORDER BY l.created_at DESC
+        """,
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_reference_list(db, user_id: str, list_id: int) -> Optional[Dict[str, Any]]:
+    row = db.conn.execute(
+        "SELECT id, name, created_at FROM user_reference_lists "
+        "WHERE user_id = ? AND id = ?",
+        (user_id, list_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def create_reference_list(db, user_id: str, name: str) -> int:
+    cur = db.conn.execute(
+        "INSERT INTO user_reference_lists (user_id, name) VALUES (?, ?)",
+        (user_id, name.strip()),
+    )
+    db.conn.commit()
+    return cur.lastrowid
+
+
+def delete_reference_list(db, user_id: str, list_id: int) -> None:
+    db.conn.execute(
+        "DELETE FROM user_reference_lists WHERE user_id = ? AND id = ?",
+        (user_id, list_id),
+    )
+    db.conn.commit()
+
+
+def list_reference_items(db, list_id: int) -> List[Dict[str, Any]]:
+    """Return items with their paper dicts joined in."""
+    rows = db.conn.execute(
+        """
+        SELECT i.id AS item_id, i.added_at,
+               p.id AS paper_id, p.title, p.authors, p.pub_date,
+               p.doi, p.url, p.abstract, p.source, p.server,
+               p.canonical_id, p.pdf_path, p.best_oa_url
+          FROM user_reference_list_items i
+          JOIN papers p ON p.id = i.paper_id
+         WHERE i.list_id = ?
+         ORDER BY i.added_at DESC
+        """,
+        (list_id,),
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        result.append({
+            "item_id": d.pop("item_id"),
+            "added_at": d.pop("added_at"),
+            "paper": d,
+        })
+    return result
+
+
+def get_reference_list_item(db, list_id: int, item_id: int) -> Optional[Dict[str, Any]]:
+    row = db.conn.execute(
+        "SELECT id AS item_id, list_id, paper_id, added_at "
+        "FROM user_reference_list_items WHERE list_id = ? AND id = ?",
+        (list_id, item_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_reference_item_by_paper(db, list_id: int, paper_id: int) -> Optional[Dict[str, Any]]:
+    row = db.conn.execute(
+        "SELECT id AS item_id, list_id, paper_id, added_at "
+        "FROM user_reference_list_items WHERE list_id = ? AND paper_id = ?",
+        (list_id, paper_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def add_reference_item(db, list_id: int, paper_id: int) -> int:
+    """Insert paper into list; ignore if already present. Returns item id."""
+    db.conn.execute(
+        "INSERT OR IGNORE INTO user_reference_list_items (list_id, paper_id) "
+        "VALUES (?, ?)",
+        (list_id, paper_id),
+    )
+    db.conn.commit()
+    row = db.conn.execute(
+        "SELECT id FROM user_reference_list_items WHERE list_id = ? AND paper_id = ?",
+        (list_id, paper_id),
+    ).fetchone()
+    return row["id"]
+
+
+def remove_reference_item(db, list_id: int, item_id: int) -> None:
+    db.conn.execute(
+        "DELETE FROM user_reference_list_items WHERE list_id = ? AND id = ?",
+        (list_id, item_id),
+    )
+    db.conn.commit()
+
+
+def create_reference_list_with_papers(
+    db, user_id: str, name: str, paper_ids: List[int]
+) -> int:
+    """Create a list and populate it atomically. Returns list_id."""
+    list_id = create_reference_list(db, user_id, name)
+    for pid in paper_ids:
+        db.conn.execute(
+            "INSERT OR IGNORE INTO user_reference_list_items (list_id, paper_id) "
+            "VALUES (?, ?)",
+            (list_id, pid),
+        )
+    db.conn.commit()
+    return list_id

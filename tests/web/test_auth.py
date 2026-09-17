@@ -24,7 +24,7 @@ PUBLIC = {
 # The exact number of authenticated operations. An exact count, not a floor:
 # a floor stays satisfied while the route table halves (learnings P29). Update
 # this deliberately when a route is added or removed.
-PROTECTED_ROUTE_COUNT = 17
+PROTECTED_ROUTE_COUNT = 30
 
 
 def test_wrong_access_code_is_rejected(client):
@@ -59,7 +59,8 @@ def test_no_route_can_be_reached_without_a_session(app, client):
             if (path, method) in PUBLIC:
                 continue
             url = (path.replace("{filter_id}", "1").replace("{job_id}", "abc")
-                       .replace("{paper_id}", "1"))
+                       .replace("{paper_id}", "1").replace("{list_id}", "1")
+                       .replace("{item_id}", "1").replace("{filename}", "sources_config.yaml"))
             response = client.request(method.upper(), url, json={})
             assert response.status_code == 401, (
                 f"{method.upper()} {path} answered {response.status_code} "

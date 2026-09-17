@@ -37,7 +37,7 @@
 
     <div id="notice" class="banner hidden"></div>
 
-    <!-- LLM settings -->
+    <!-- LLM settings panel (collapsible) -->
     <div id="settings" class="card hidden">
       <h2>LLM settings</h2>
       <p id="key-state" class="muted small"></p>
@@ -58,60 +58,276 @@
       </div>
     </div>
 
-    <!-- Saved filters -->
-    <div class="card">
-      <h2>Saved searches</h2>
-      <ul id="filter-list" class="filters"></ul>
+    <!-- Tab navigation -->
+    <div class="tab-bar">
+      <button id="tab-search" class="tab active">Search</button>
+      <button id="tab-filters" class="tab">Filters</button>
+      <button id="tab-references" class="tab">References</button>
+      <button id="tab-settings" class="tab">Settings</button>
     </div>
 
-    <!-- Manual search -->
-    <div class="card">
-      <h2>Search</h2>
-      <div class="row">
-        <label><span>Words in title or abstract (comma-separated)</span>
-          <input id="q-both" type="text" placeholder="generative agents, agent-based model"></label>
-        <label class="shrink" style="min-width:110px"><span>Days back</span>
-          <input id="q-days" type="number" value="14" min="1" max="3650"></label>
-        <label class="shrink" style="min-width:110px"><span>Max results</span>
-          <input id="q-max" type="number" value="200" min="1" max="2000"></label>
-        <div class="shrink">
-          <button id="run-search" class="primary">Search</button>
-          <button id="cancel-search" disabled>Stop</button>
+    <!-- ═══ Search tab ═══════════════════════════════════════════════════════ -->
+    <div id="panel-search">
+
+      <!-- Saved filter runner -->
+      <div class="card">
+        <h2>Saved searches</h2>
+        <ul id="search-filter-list" class="filters"></ul>
+      </div>
+
+      <!-- Search controls -->
+      <div class="card">
+        <h2>Search</h2>
+        <div class="row">
+          <label><span>Words in title or abstract (comma-separated)</span>
+            <input id="q-both" type="text" placeholder="generative agents, agent-based model"></label>
+          <label class="shrink" style="min-width:160px"><span>Category</span>
+            <select id="search-category"></select></label>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <label class="shrink"><span><input id="search-date-range-toggle" type="checkbox"> Use date range</span></label>
+          <label class="shrink" id="search-days-wrap" style="min-width:110px"><span>Days back</span>
+            <input id="search-days" type="number" value="14" min="1" max="3650"></label>
+          <span id="search-date-range-wrap" class="hidden row">
+            <label class="shrink"><span>From</span><input id="search-start-date" type="date"></label>
+            <label class="shrink"><span>To</span><input id="search-end-date" type="date"></label>
+          </span>
+          <label class="shrink" style="min-width:110px"><span>Max results</span>
+            <input id="q-max" type="number" value="200" min="1" max="2000"></label>
+          <div class="shrink">
+            <button id="run-search" class="primary">Search</button>
+            <button id="cancel-search" disabled>Stop</button>
+          </div>
+        </div>
+        <!-- Source picker -->
+        <div style="margin-top:8px">
+          <span class="muted small">Sources: </span>
+          <span id="search-sources"></span>
+        </div>
+        <div id="progress-wrap" class="hidden" style="margin-top:10px">
+          <progress id="progress" max="100" value="0"></progress>
+          <p id="phase" class="muted small" style="margin:4px 0 0"></p>
         </div>
       </div>
-      <div id="progress-wrap" class="hidden" style="margin-top:10px">
-        <progress id="progress" max="100" value="0"></progress>
-        <p id="phase" class="muted small" style="margin:4px 0 0"></p>
+
+      <!-- Results -->
+      <div id="results-card" class="card hidden">
+        <div class="row" style="align-items:center;margin-bottom:8px">
+          <h2 id="results-heading" style="margin:0;flex:1">Results</h2>
+          <label class="shrink small"><input id="select-all-results" type="checkbox"> All</label>
+          <button id="btn-save-as-list" class="primary shrink" disabled>Save as reference list</button>
+          <span id="save-list-name-wrap" class="shrink hidden">
+            <input id="save-list-name-input" type="text" placeholder="List name" style="width:160px">
+            <button id="btn-confirm-save-list" class="primary">Save</button>
+          </span>
+        </div>
+        <div id="sources-failed" class="banner warn hidden small"></div>
+        <p id="empty-note" class="muted small hidden"></p>
+        <table>
+          <thead><tr>
+            <th style="width:2%"></th>
+            <th style="width:44%">Title</th><th>Authors</th><th>Date</th>
+            <th>Source</th><th style="width:150px"></th>
+          </tr></thead>
+          <tbody id="results-body"></tbody>
+        </table>
+        <div class="pager">
+          <button id="prev-page">Previous</button>
+          <span id="page-label" class="muted small"></span>
+          <button id="next-page">Next</button>
+        </div>
+      </div>
+
+      <!-- Summary output -->
+      <div id="summary-card" class="card hidden">
+        <h2 id="summary-title">Summary</h2>
+        <p id="summary-meta" class="muted small"></p>
+        <div id="summary-body" class="summary"></div>
+      </div>
+    </div><!-- /panel-search -->
+
+    <!-- ═══ Filters tab ══════════════════════════════════════════════════════ -->
+    <div id="panel-filters" class="hidden">
+
+      <!-- Discover terms -->
+      <div class="card">
+        <h3>Discover Search Terms with AI</h3>
+        <div class="row">
+          <label style="flex:1"><span>Describe your research interest</span>
+            <textarea id="discover-desc" rows="2" style="width:100%"
+              placeholder="e.g. CRISPR off-target effects in neural tissue"></textarea></label>
+          <div class="shrink" style="align-self:flex-end">
+            <button id="btn-discover">Discover terms…</button>
+          </div>
+        </div>
+        <div id="discover-terms-chips" class="chips hidden"></div>
+      </div>
+
+      <!-- Filter editor -->
+      <div class="row" style="align-items:flex-start;gap:16px">
+
+        <!-- Left: filter list -->
+        <div class="card" style="min-width:200px;max-width:240px">
+          <div class="row" style="justify-content:space-between;margin-bottom:8px">
+            <strong>Saved Filters</strong>
+            <button id="btn-filter-new" class="link small">+ New</button>
+          </div>
+          <ul id="filter-list" class="filters" style="min-height:120px"></ul>
+        </div>
+
+        <!-- Right: editor form -->
+        <div class="card" style="flex:1">
+          <div class="row" style="gap:8px;margin-bottom:8px">
+            <button id="btn-filter-save" class="primary">Save</button>
+            <button id="btn-filter-saveas">Save as…</button>
+            <button id="btn-filter-delete">Delete</button>
+            <button id="btn-filter-test">Test</button>
+          </div>
+
+          <div class="row" style="gap:16px;flex-wrap:wrap">
+            <label style="flex:1;min-width:200px"><span>Filter name</span>
+              <input id="filter-name" type="text" placeholder="My filter"></label>
+            <label class="shrink"><span><input id="filter-enabled" type="checkbox" checked> Enabled</span></label>
+          </div>
+
+          <div class="row" style="gap:16px;flex-wrap:wrap;margin-top:8px">
+            <label class="shrink" style="min-width:200px"><span>Category</span>
+              <select id="filter-category"></select></label>
+            <label class="shrink"><span><input id="filter-date-range-toggle" type="checkbox"> Use date range</span></label>
+            <label class="shrink" id="filter-days-wrap"><span>Days back</span>
+              <input id="filter-days" type="number" value="7" min="1" max="3650"></label>
+            <span id="filter-date-range-wrap" class="hidden row">
+              <label class="shrink"><span>From</span><input id="filter-start-date" type="date"></label>
+              <label class="shrink"><span>To</span><input id="filter-end-date" type="date"></label>
+            </span>
+          </div>
+
+          <div style="margin-top:8px">
+            <span class="muted small">Sources: </span>
+            <span id="filter-sources-picker"></span>
+          </div>
+
+          <fieldset style="margin-top:8px">
+            <legend class="small muted">Text Search Groups — OR between groups, AND within a group</legend>
+            <div id="filter-text-groups"></div>
+            <button id="btn-add-group" class="link small" style="margin-top:4px">+ Add group</button>
+          </fieldset>
+
+          <div class="row" style="gap:16px;flex-wrap:wrap;margin-top:8px">
+            <label style="flex:1"><span class="small">Authors (comma-sep)</span>
+              <input id="filter-authors" type="text" placeholder="Smith J, Jones A"></label>
+            <label style="flex:1"><span class="small">Institution (comma-sep)</span>
+              <input id="filter-institution" type="text"></label>
+          </div>
+
+          <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+            <label class="shrink"><span class="small">Paper type</span>
+              <select id="filter-paper-type"></select></label>
+            <label class="shrink"><span class="small">Version</span>
+              <select id="filter-version"></select></label>
+            <label class="shrink"><span class="small">Published</span>
+              <select id="filter-published"></select></label>
+            <label class="shrink"><span class="small">License</span>
+              <select id="filter-license"></select></label>
+            <label class="shrink"><span class="small">Species</span>
+              <select id="filter-species"></select></label>
+          </div>
+
+          <!-- Test results -->
+          <div id="filter-test-results" class="hidden" style="margin-top:12px">
+            <hr>
+            <h4 style="margin:8px 0">Test results</h4>
+            <div id="filter-test-status" class="muted small"></div>
+            <table style="margin-top:8px">
+              <thead><tr>
+                <th style="width:50%">Title</th><th>Authors</th><th>Date</th><th>Source</th>
+              </tr></thead>
+              <tbody id="filter-test-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+      </div><!-- /row -->
+    </div><!-- /panel-filters -->
+
+    <!-- ═══ References tab ══════════════════════════════════════════════════ -->
+    <div id="panel-references" class="hidden">
+      <div class="row" style="align-items:flex-start;gap:16px">
+
+        <!-- Left: list of reference lists -->
+        <div class="card" style="min-width:200px;max-width:240px">
+          <div class="row" style="justify-content:space-between;margin-bottom:8px">
+            <strong>Reference Lists</strong>
+            <button id="btn-ref-new-list" class="link small">+ New</button>
+          </div>
+          <ul id="ref-lists" class="filters" style="min-height:120px"></ul>
+          <button id="btn-ref-delete-list" class="small" style="margin-top:8px">Delete list</button>
+        </div>
+
+        <!-- Right: papers in selected list -->
+        <div class="card" style="flex:1">
+          <h3 id="ref-list-title" class="muted small" style="margin:0 0 8px">Select a list</h3>
+
+          <table>
+            <thead><tr>
+              <th style="width:2%"></th>
+              <th style="width:50%">Title</th><th>Authors</th><th>Date</th><th>Source</th>
+            </tr></thead>
+            <tbody id="ref-papers-body"></tbody>
+          </table>
+
+          <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">
+            <span id="ref-checked-count" class="muted small">0 selected</span>
+            <button id="btn-ref-remove-selected" class="small">Remove selected</button>
+            <span class="spacer"></span>
+            <button id="btn-ref-dl-selected" class="small">⬇ Download selected PDFs</button>
+            <button id="btn-ref-dl-all" class="small">⬇ Download all PDFs</button>
+            <button id="btn-ref-export-csv" class="small">Export CSV</button>
+          </div>
+          <div id="ref-dl-status" class="muted small hidden" style="margin-top:4px"></div>
+        </div>
+
+      </div>
+    </div><!-- /panel-references -->
+
+    <!-- ═══ Settings tab ════════════════════════════════════════════════════ -->
+    <div id="panel-settings" class="hidden">
+      <div class="card">
+        <h2>Configuration files</h2>
+        <p class="muted small">Changes take effect on the server's next request.</p>
+        <div class="row" style="margin-bottom:8px;gap:8px">
+          <label class="shrink"><span>Edit:</span>
+            <select id="settings-file-select">
+              <option value="sources_config.yaml">Sources — which APIs are enabled and your contact email</option>
+              <option value="llm_config.yaml">LLM — provider, model, and token budget</option>
+            </select></label>
+          <button id="btn-settings-reload">Reload from disk</button>
+          <button id="btn-settings-save" class="primary">Save</button>
+        </div>
+        <p id="settings-status" class="muted small"></p>
+        <textarea id="settings-editor" rows="24"
+          style="width:100%;font-family:monospace;font-size:12px"></textarea>
+      </div>
+    </div><!-- /panel-settings -->
+
+  </section><!-- /app -->
+
+  <!-- Paper detail modal -->
+  <div id="paper-modal" class="modal-overlay hidden">
+    <div class="modal-box card">
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <h3 id="modal-title" style="margin:0;flex:1"></h3>
+        <button id="btn-modal-close" class="link">✕</button>
+      </div>
+      <p id="modal-abstract" class="small" style="margin-top:8px"></p>
+      <div id="modal-summary" style="margin-top:8px"></div>
+      <div style="margin-top:8px">
+        <a id="modal-pdf-link" class="tag" target="_blank" rel="noopener noreferrer"></a>
       </div>
     </div>
+  </div>
 
-    <!-- Results -->
-    <div id="results-card" class="card hidden">
-      <h2 id="results-heading">Results</h2>
-      <div id="sources-failed" class="banner warn hidden small"></div>
-      <p id="empty-note" class="muted small hidden"></p>
-      <table>
-        <thead><tr>
-          <th style="width:46%">Title</th><th>Authors</th><th>Date</th>
-          <th>Source</th><th style="width:150px"></th>
-        </tr></thead>
-        <tbody id="results-body"></tbody>
-      </table>
-      <div class="pager">
-        <button id="prev-page">Previous</button>
-        <span id="page-label" class="muted small"></span>
-        <button id="next-page">Next</button>
-      </div>
-    </div>
-
-    <!-- Summary output -->
-    <div id="summary-card" class="card hidden">
-      <h2 id="summary-title">Summary</h2>
-      <p id="summary-meta" class="muted small"></p>
-      <div id="summary-body" class="summary"></div>
-    </div>
-  </section>
-</div>
+</div><!-- /wrap -->
 <script src="/static/app.js"></script>
 </body>
 </html>

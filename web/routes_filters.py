@@ -19,6 +19,7 @@ from src import user_store
 
 from .auth import current_user, get_context
 from .deps import AppContext
+from .routes_searches import SearchRequest, _run_search
 
 router = APIRouter()
 
@@ -71,3 +72,21 @@ def delete_filter(filter_id: int,
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No such filter.")
     return {"ok": True}
+
+
+@router.post("/api/filters/{filter_id}/test", status_code=status.HTTP_202_ACCEPTED)
+def test_filter(filter_id: int,
+                ctx: AppContext = Depends(get_context),
+                user_id: str = Depends(current_user)):
+    """Run a filter as a search job. Returns job_id; poll /api/searches/{job_id}."""
+    filter_dict = user_store.get_filter(ctx.db, user_id, filter_id)
+    if filter_dict is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="No such filter.")
+    selection = filter_dict.get("source_selection", {"all": True, "selected": []})
+    from .routes_searches import DEFAULT_MAX_RESULTS
+    job = ctx.jobs.submit(
+        "filter_test", user_id,
+        _run_search(ctx, filter_dict, selection, DEFAULT_MAX_RESULTS),
+    )
+    return job.to_dict()

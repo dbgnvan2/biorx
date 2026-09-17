@@ -354,6 +354,29 @@ class Database:
             "ON usage_events(user_id, created_at)"
         )
 
+        # Per-user reference lists (web app, multi-user; distinct from the
+        # desktop-app reference_lists which have no user_id).
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_reference_lists (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    TEXT NOT NULL,
+                name       TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                UNIQUE(user_id, name),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_reference_list_items (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                list_id  INTEGER NOT NULL
+                             REFERENCES user_reference_lists(id) ON DELETE CASCADE,
+                paper_id INTEGER NOT NULL REFERENCES papers(id),
+                added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                UNIQUE(list_id, paper_id)
+            )
+        """)
+
         self.conn.commit()
         self._run_migrations(cursor)
         self.conn.commit()

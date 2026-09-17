@@ -127,12 +127,23 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/me/llm-key",
         "/api/me/llm-model",
         "/api/filters",
+        "/api/filters/{param}",
+        "/api/filters/{param}/test",
         "/api/searches",
         "/api/searches/{param}",
         "/api/searches/{param}/results",
+        "/api/searches/{param}/save-as-list",
         "/api/summaries",
         "/api/summaries/lookup",
         "/api/summaries/{param}",
+        "/api/references",
+        "/api/references/{param}",
+        "/api/references/{param}/items",
+        "/api/references/{param}/items/{param}",
+        "/api/references/{param}/export.csv",
+        "/api/references/{param}/pdf/{param}",
+        "/api/settings/{param}",
+        "/api/discover-terms",
     }
 
 

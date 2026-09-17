@@ -186,3 +186,42 @@ def cancel_search(job_id: str,
     _job_or_404(ctx, job_id, user_id)
     cancelled = ctx.jobs.cancel(job_id, user_id)
     return {"ok": True, "cancelled": cancelled}
+
+
+class SaveAsListBody(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    paper_ids: Optional[List[str]] = None   # canonical_ids; None means save all
+
+
+@router.post("/api/searches/{job_id}/save-as-list", status_code=status.HTTP_201_CREATED)
+def save_search_as_list(job_id: str, body: SaveAsListBody,
+                        ctx: AppContext = Depends(get_context),
+                        user_id: str = Depends(current_user)):
+    """Save a completed search (or a subset) as a new reference list.
+
+    paper_ids, when provided, is a list of canonical_id strings from the
+    search results — the caller sends only the papers the user checked.
+    """
+    job = _job_or_404(ctx, job_id, user_id)
+    if job.status not in ("done", "running"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Job has no results yet.")
+
+    results: List[Dict[str, Any]] = job.result or []
+    if body.paper_ids is not None:
+        selected_ids = set(body.paper_ids)
+        results = [p for p in results
+                   if p.get("canonical_id") in selected_ids or p.get("doi") in selected_ids]
+
+    # Upsert each paper and collect integer ids
+    db_ids: List[int] = []
+    for paper in results:
+        pid = ctx.db.insert_paper(paper)
+        if not pid:
+            existing = ctx.db.find_paper(paper)
+            pid = existing["id"] if existing else None
+        if pid:
+            db_ids.append(pid)
+
+    list_id = user_store.create_reference_list_with_papers(ctx.db, user_id, body.name, db_ids)
+    return user_store.get_reference_list(ctx.db, user_id, list_id)
