@@ -2000,7 +2000,9 @@ class MainWindow(QMainWindow):
     def _show_startup_warnings(self, warnings: list) -> None:
         for msg in warnings:
             logger.warning("Startup: %s", msg)
-            self.statusBar().showMessage(f"⚠ {msg}", 0)  # 0 = persistent
+        if warnings:
+            # Join all warnings so each is visible; individual lines go to the log.
+            self.statusBar().showMessage("⚠ " + " | ".join(warnings), 0)
 
     def closeEvent(self, event):
         self.db.close()

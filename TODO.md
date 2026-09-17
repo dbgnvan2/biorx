@@ -5,11 +5,13 @@
 
 ## From batch-H gates (2026-09-16) — deferred, in-loop fix threshold not met
 
-- **Startup warnings not surfaced in web UI (P25)** — `/healthz` exposes
-  `startup_warnings` as JSON but `web/static/app.js` never reads or renders them.
-  Web users silently run degraded without knowing to set `BIORX_CONTACT_EMAIL`.
-  Fix: add a JS check on app load that reads `/healthz` and displays any
-  `startup_warnings` in the UI.
+- **paper_meta recovery paths emit no warning (P5/MEDIUM)** — `openalex_user_agent()`,
+  `_europepmc()`, and `_crossref_abstract()` load sources_config but never warn when
+  no contact email is found. The orchestrator's startup warning covers the GUI/web
+  paths; this gap is only when these functions are called standalone (e.g. CLI
+  summaries). Fix: add `get_contact_email()` check + log.warning in each. Deferred
+  because the primary orchestrator warning already fires, and per-call warnings
+  would be noisy in batch runs.
 
 - **`_root_md_files` scans root-level `.md` only** — `docs/` is intentionally
   excluded because `docs/cycles/` gate files quote personal addresses for audit.

@@ -142,3 +142,19 @@ def test_h_healthz_surfaces_startup_warnings_when_no_contact_email(client, monke
         "expected at least one warning mentioning BIORX_CONTACT_EMAIL; "
         f"got: {body['startup_warnings']}"
     )
+
+
+def test_h_app_js_reads_healthz_startup_warnings_on_boot():
+    """
+    app.js must call /healthz and display startup_warnings on boot so web users
+    see the degraded-mode banner (P25 — wired at the JS layer, not only the API).
+
+    Tests the source text because the JS runs in a browser; a browser test is an
+    integration-only path. A code-removal/rename would break this assertion.
+    """
+    from pathlib import Path
+    src = (Path(__file__).parent.parent.parent / "web" / "static" / "app.js").read_text()
+    assert "/healthz" in src and "startup_warnings" in src, (
+        "app.js must fetch /healthz and reference startup_warnings to display "
+        "the degraded-mode banner; neither token was found in the file"
+    )

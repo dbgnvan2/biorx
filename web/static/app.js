@@ -495,6 +495,13 @@ async function boot() {
   try {
     state.me = await api("GET", "/api/me");
     showApp();
+    // Surface any startup degradation (missing contact email, disabled sources).
+    try {
+      const health = await api("GET", "/healthz");
+      if (health && health.startup_warnings && health.startup_warnings.length) {
+        notice("⚠ " + health.startup_warnings.join(" | "), "warn");
+      }
+    } catch (_) { /* healthz failure is non-fatal */ }
   } catch (e) {
     $("gate").classList.remove("hidden");
   }

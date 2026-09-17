@@ -121,6 +121,7 @@ def test_the_client_calls_the_endpoints_that_matter():
     the client, this fails rather than a floor quietly still being met.
     """
     assert _api_paths_called_by_js() == {
+        "/healthz",
         "/api/session",
         "/api/me",
         "/api/me/llm-key",
