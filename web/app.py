@@ -66,6 +66,18 @@ def create_app(ctx: AppContext = None) -> FastAPI:
     application.include_router(routes_references.router)
     application.include_router(routes_discover.router)
 
+    def _codes_file_warning(c: AppContext) -> list:
+        # Public route: a count only, never names or codes (they are in the log).
+        if c.codes is None:
+            return []
+        n = len(c.codes.current_warnings())
+        out = ([f"The access codes file has {n} problem(s) — see the server log."]
+               if n else [])
+        if c.codes.missing:
+            out.append("There is no access codes file, so nobody can sign in with a "
+                       "personal code — see the server log.")
+        return out
+
     @application.get("/healthz")
     def healthz():
         """Liveness plus the effective configuration. Never reports a secret —
@@ -74,6 +86,7 @@ def create_app(ctx: AppContext = None) -> FastAPI:
         c: AppContext = application.state.ctx
         from src import crypto
         from src.llm_config import default_provider, provider_config
+        from src.accounts import pin_min_length as accounts_pin_min_length
 
         provider = default_provider(c.llm_config)
         pconf = provider_config(c.llm_config, provider)
@@ -97,7 +110,9 @@ def create_app(ctx: AppContext = None) -> FastAPI:
             "model": pconf.model if pconf else "",
             "owner_key_set": bool(pconf.owner_key()) if pconf else False,
             "db_path": str(c.db.db_path),
-            "startup_warnings": list(c.startup_warnings),
+            "startup_warnings": list(c.startup_warnings) + _codes_file_warning(c),
+            "codes_in_use": bool(c.codes and c.codes.entries()),
+            "pin_min_length": accounts_pin_min_length(),
             "sources": sources_list,
         }
 

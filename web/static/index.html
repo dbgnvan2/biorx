@@ -9,39 +9,74 @@
 <body>
 <div class="wrap">
 
-  <!-- Access code gate -->
+  <!-- Sign in: personal access code + PIN
+       (docs/implementation_plan_2026-09-18_invite_codes.md#PC13) -->
   <section id="gate" class="hidden">
     <header><h1>BioRx</h1></header>
     <div class="card" style="max-width:420px">
       <h2>Sign in</h2>
-      <p class="muted small">The access code comes from whoever runs this server. Your
-        name and PIN are yours: the same name and PIN always bring back your filters
-        and Saved References, on any browser.</p>
       <div id="gate-error" class="banner error hidden"></div>
-      <label><span>Access code</span>
-        <input id="access-code" type="password" autocomplete="off"></label>
-      <label><span>Your name</span>
-        <input id="login-name" type="text" autocomplete="username"></label>
-      <div id="pin-wrap">
-        <label><span>PIN (at least 6 characters)</span>
-          <input id="login-pin" type="password" autocomplete="current-password"></label>
+
+      <!-- Step 1: the code (skipped when this device remembers it) -->
+      <div id="code-step">
+        <p class="muted small">Enter the access code you were given. If you have lost it,
+          ask whoever runs this server.</p>
+        <label><span>Your access code</span>
+          <input id="my-code" type="text" autocomplete="off" autocapitalize="characters"
+                 spellcheck="false" placeholder="XXXX-XXXX-XXXX"></label>
+        <label class="source-pick"><input id="remember-code" type="checkbox" checked>
+          Remember my code on this device</label>
         <div class="row" style="gap:8px">
-          <button id="sign-in" class="primary shrink">Sign in</button>
-          <button id="create-account" class="shrink">Create account</button>
+          <button id="code-next" class="primary shrink">Continue</button>
           <span class="spacer"></span>
-          <button id="show-recover" class="link shrink">Forgot PIN?</button>
+          <button id="show-legacy" class="link shrink hidden">Sign in with name (old way)</button>
         </div>
       </div>
-      <div id="recover-wrap" class="hidden">
-        <label><span>Recovery code</span>
-          <input id="recovery-code" type="text" autocomplete="off" placeholder="XXXX-XXXX-XXXX-XXXX"></label>
-        <label><span>New PIN</span>
-          <input id="new-pin" type="password" autocomplete="new-password"></label>
+
+      <!-- Step 2: the PIN -->
+      <div id="pin-step" class="hidden">
+        <p id="welcome" class="small"></p>
+        <label><span id="my-pin-label">PIN</span>
+          <input id="my-pin" type="password" autocomplete="current-password"></label>
+        <label id="my-pin-confirm-wrap" class="hidden"><span>Type the PIN again</span>
+          <input id="my-pin-confirm" type="password" autocomplete="new-password"></label>
+        <p id="pin-help" class="muted small"></p>
         <div class="row" style="gap:8px">
-          <button id="recover" class="primary shrink">Set new PIN and sign in</button>
+          <button id="pin-sign-in" class="primary shrink">Sign in</button>
           <span class="spacer"></span>
-          <button id="hide-recover" class="link shrink">Back</button>
+          <button id="use-other-code" class="link shrink">Not you? Use a different code</button>
         </div>
+      </div>
+
+      <!-- The old way, for accounts made before personal codes, while the
+           shared access code is still set (PC8). -->
+      <div id="legacy-step" class="hidden">
+        <p class="muted small">For accounts made before personal codes.</p>
+        <label><span>Shared access code</span>
+          <input id="access-code" type="password" autocomplete="off"></label>
+        <label><span>Your name</span>
+          <input id="login-name" type="text" autocomplete="username"></label>
+        <div id="pin-wrap">
+          <label><span>PIN</span>
+            <input id="login-pin" type="password" autocomplete="current-password"></label>
+          <div class="row" style="gap:8px">
+            <button id="sign-in" class="primary shrink">Sign in</button>
+            <span class="spacer"></span>
+            <button id="show-recover" class="link shrink">Forgot PIN?</button>
+          </div>
+        </div>
+        <div id="recover-wrap" class="hidden">
+          <label><span>Recovery code</span>
+            <input id="recovery-code" type="text" autocomplete="off" placeholder="XXXX-XXXX-XXXX-XXXX"></label>
+          <label><span>New PIN</span>
+            <input id="new-pin" type="password" autocomplete="new-password"></label>
+          <div class="row" style="gap:8px">
+            <button id="recover" class="primary shrink">Set new PIN and sign in</button>
+            <span class="spacer"></span>
+            <button id="hide-recover" class="link shrink">Back</button>
+          </div>
+        </div>
+        <button id="hide-legacy" class="link shrink">Use a personal access code instead</button>
       </div>
     </div>
   </section>
@@ -299,16 +334,6 @@
       <div class="card">
         <h2>Your account</h2>
         <p id="account-state" class="muted small"></p>
-        <div id="claim-wrap" class="hidden">
-          <p class="small">This account has no name and PIN yet, so it is only reachable
-            from this browser. Choose them to keep your filters and Saved References.</p>
-          <div class="row">
-            <label><span>Name</span><input id="claim-name" type="text" autocomplete="username"></label>
-            <label><span>PIN (at least 6 characters)</span>
-              <input id="claim-pin" type="password" autocomplete="new-password"></label>
-            <div class="shrink"><button id="claim-account" class="primary">Save name and PIN</button></div>
-          </div>
-        </div>
       </div>
       <div class="card">
         <div class="row" style="align-items:center">

@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-09-18 (late) — personal access codes
+
+### Added
+- **One access code per person**, kept readable in `DATA_DIR/access_codes.yaml`
+  (git-ignored; format in `access_codes.example.yaml`). Sign-in is code + PIN;
+  the browser can remember the code, so usually only the PIN is asked for
+  ("Welcome back, NAME"). A new code creates its account on first use, with a
+  PIN chosen then. One account per code.
+- `python -m src.access_codes add | renew | reset-pin | list`. Codes last
+  `ACCESS_CODE_DAYS` (180). `disabled: true` or deleting an entry turns a person
+  off; an expired or disabled code also ends their open session on the next
+  request. The file is re-read when it changes; bad entries are skipped and
+  logged, and `/healthz` shows how many.
+- `POST /api/session/lookup` (public): the name for a code and whether a PIN is
+  set, for the "Welcome back" step. Nothing else.
+
+### Changed
+- The shared `ACCESS_CODE` no longer creates accounts. While set, accounts made
+  before codes can still sign in with it + name + PIN; `account:` in the codes
+  file ties a code to such an account, keeping its PIN and data.
+- Forgotten PINs are reset by the owner (`reset-pin`); new accounts get no
+  recovery code.
+
+### Removed
+- "Create account" by name, and Settings → "Your account" name + PIN claim
+  (`POST /api/me/account`). A code now does both.
+
+
 ## 2026-09-18 (night) — DeepSeek Flash, thinking off, key help
 
 ### Changed

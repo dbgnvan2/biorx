@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import pytest
 
-from tests.web.conftest import ACCESS_CODE, account_body
+from tests.web.conftest import ACCESS_CODE, TEST_PIN, account_body
 
 # Routes that must be reachable without a session, each with its reason. A
 # route added to this set is a deliberate decision, not an oversight.
@@ -18,6 +18,7 @@ PUBLIC = {
     ("/healthz", "get"),          # liveness, for the platform
     ("/api/session", "post"),     # the sign-in itself
     ("/api/session/recover", "post"),  # forgot PIN: gated by the access code, not a session
+    ("/api/session/lookup", "post"),   # "Welcome back, NAME" before sign-in (PC14/PC15)
     ("/api/session", "delete"),   # signing out must work from a stale session
     ("/", "get"),                 # the page shell, so a visitor sees the form
 }
@@ -25,7 +26,7 @@ PUBLIC = {
 # The exact number of authenticated operations. An exact count, not a floor:
 # a floor stays satisfied while the route table halves (learnings P29). Update
 # this deliberately when a route is added or removed.
-PROTECTED_ROUTE_COUNT = 32
+PROTECTED_ROUTE_COUNT = 31
 
 
 def test_wrong_access_code_is_rejected(client):
@@ -34,8 +35,10 @@ def test_wrong_access_code_is_rejected(client):
     assert "biorx_session" not in client.cookies
 
 
-def test_an_empty_access_code_is_rejected(client):
-    assert client.post("/api/session", json={"access_code": ""}).status_code == 422
+def test_an_empty_request_is_rejected(client):
+    assert client.post("/api/session", json={"access_code": ""}).status_code == 401
+    assert client.post("/api/session", json={}).status_code == 401
+    assert "biorx_session" not in client.cookies
 
 
 def test_the_right_access_code_issues_a_session(client):
@@ -143,43 +146,51 @@ def test_display_name_change_does_not_change_user_id(client, signed_in):
     assert client.get("/api/me").json()["user_id"] == before
 
 
-def test_typing_another_users_name_without_the_pin_does_not_reach_their_key(
+def test_typing_another_users_name_or_code_without_the_pin_does_not_reach_their_key(
     ctx, app, enc_secret
 ):
     """
-    The attack the PIN exists to prevent: with a shared access code, a second
-    person types the first person's name. Without Alice's PIN they get neither
-    her account nor her stored key — creating "Alice" again is refused, and
-    signing in as Alice with a wrong PIN is refused.
+    The attack the PIN exists to prevent. Alice's code is not secret (it sits in
+    a readable file), so a second person may know it — without her PIN they get
+    neither her account nor her stored key. Typing her name the old way does
+    not work either, and cannot create an account.
     """
     from fastapi.testclient import TestClient
 
     alice = TestClient(app)
-    assert alice.post("/api/session", json=account_body(name="Alice", pin="alice-pin-1")).status_code == 200
+    body = account_body(name="Alice", pin="alice-pin-1")
+    assert alice.post("/api/session", json=body).status_code == 200
     alice.put("/api/me/llm-key",
               json={"provider": "anthropic", "api_key": "sk-ant-ALICEKEY9999"})
     assert alice.get("/api/me").json()["key_source"] == "user"
 
     impostor = TestClient(app)
-    r = impostor.post("/api/session", json=account_body(name="Alice", pin="guess-123"))
-    assert r.status_code == 409
+    r = impostor.post("/api/session", json={"code": body["code"], "pin": "guess-123"})
+    assert r.status_code == 401
+    r = impostor.post("/api/session", json=account_body(name="Alice", pin="guess-123", create=False)
+                      | {"create": True})
+    assert r.status_code == 403
     r = impostor.post("/api/session", json=account_body(name="alice ", pin="guess-123", create=False))
     assert r.status_code == 401
     assert impostor.get("/api/me").status_code == 401
     assert "biorx_session" not in impostor.cookies
 
 
-def test_an_unset_access_code_refuses_everyone(tmp_path):
+def test_no_shared_code_and_no_codes_file_refuses_everyone(tmp_path):
     from fastapi.testclient import TestClient
     from web.app import create_app
     from web.deps import build_context
 
     empty = build_context(db_path=str(tmp_path / "e.db"), access_code="",
-                          session_secret="y" * 32, cookie_secure=False)
+                          session_secret="y" * 32, cookie_secure=False,
+                          access_codes_file=str(tmp_path / "none.yaml"))
     try:
         with TestClient(create_app(empty)) as c:
-            assert c.post("/api/session", json={"access_code": ""}).status_code == 422
-            assert c.post("/api/session", json={"access_code": "anything"}).status_code == 401
+            assert c.post("/api/session", json={"access_code": ""}).status_code == 401
+            assert c.post("/api/session", json={"access_code": "anything", "name": "x",
+                                                "pin": "whatever-1"}).status_code == 401
+            assert c.post("/api/session", json={"code": "ABCD-EFGH-JKLM",
+                                                "pin": "whatever-1"}).status_code == 401
     finally:
         empty.jobs.shutdown(); empty.db.close()
 
@@ -227,9 +238,11 @@ def test_the_placeholder_access_code_is_not_a_live_credential(tmp_path, monkeypa
                              access_code=placeholder,
                              session_secret="z" * 32, cookie_secure=False)
         try:
+            from src import accounts, user_store
+            accounts.create_account(ctx_.db, "Old User", TEST_PIN, user_store.new_user_id)
             client = TestClient(create_app(ctx_))
-            assert client.post("/api/session",
-                               json=account_body(placeholder)).status_code == 401
+            assert client.post("/api/session", json=account_body(
+                placeholder, name="Old User", create=False)).status_code == 401
         finally:
             ctx_.jobs.shutdown(); ctx_.db.close()
 
@@ -243,7 +256,10 @@ def test_a_real_access_code_that_merely_resembles_one_still_works(tmp_path):
     ctx_ = build_context(db_path=str(tmp_path / "real.db"), access_code=code,
                          session_secret="z" * 32, cookie_secure=False)
     try:
+        from src import accounts, user_store
+        accounts.create_account(ctx_.db, "Old User", TEST_PIN, user_store.new_user_id)
         client = TestClient(create_app(ctx_))
-        assert client.post("/api/session", json=account_body(code)).status_code == 200
+        assert client.post("/api/session", json=account_body(
+            code, name="Old User", create=False)).status_code == 200
     finally:
         ctx_.jobs.shutdown(); ctx_.db.close()

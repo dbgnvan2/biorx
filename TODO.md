@@ -3,6 +3,18 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From personal access codes (2026-09-18) — adjacent issues found, not fixed
+
+- **No per-IP rate limit** on `POST /api/session` or `POST /api/session/lookup`.
+  PIN lockout is per account; codes are 60 bits, so guessing a code is not
+  practical, but a limit is still defence in depth.
+- **End of the switch-over:** once `ACCESS_CODE` is removed everywhere, delete
+  the old name sign-in, `POST /api/session/recover`, the recovery-code dialog,
+  and `accounts.sign_in`/`create_account`/`recover` if nothing else uses them.
+- Per-user spend is not visible in the web app (usage plan, not yet approved).
+- `account:` in the codes file is read only on a code's first use; later edits
+  to it are ignored. `list` could flag an entry whose binding differs.
+
 ## From the web-parity /csdp review (2026-09-17) — adjacent issues found, not fixed
 
 - **Any user can overwrite the shared summary for a DOI (security, pre-existing).**
@@ -134,16 +146,15 @@ were rewritten to run the script instead of grepping it. Carried findings:
   its guarantee rests partly on a hand-kept list.
 - **No Content-Security-Policy header.** The client sets text rather than
   markup and checks URL schemes, but a CSP would be defence in depth.
-- **Unbounded job and user creation**: anyone with the access code can create
-  users and queue jobs without limit. The spend cap bounds money, not memory.
+- **Unbounded job creation**: any signed-in user can queue jobs without limit.
+  (User creation is now bounded: one account per personal access code.) The spend cap bounds money, not memory.
 
 ## From the chunk-4 QA gate (`docs/cycles/2026-09-15_chunk4-qa-gate.md`)
 
 REJECTED, then APPROVED at fix-loop 1. The two blocking findings are fixed; three
 low findings are carried:
 
-- Job and user creation are unbounded: anyone with the access code can create
-  users and queue jobs without limit. The spend cap bounds money, not memory.
+- Job creation is unbounded (user creation is now one account per access code). The spend cap bounds money, not memory.
 - The shared summary endpoint returns `created_by_user_id`, which tells one
   colleague who ran a summary. Fine among colleagues; note it before the
   audience widens.

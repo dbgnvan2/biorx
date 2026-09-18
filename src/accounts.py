@@ -202,6 +202,71 @@ def sign_in(db, name: str, pin: str, now: Optional[datetime] = None) -> str:
     return resolve_user_id(db, row["user_id"]) or row["user_id"]
 
 
+def _by_id(db, user_id: str):
+    return db.conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+
+
+def check_new_pin(pin: str) -> None:
+    if len(pin or "") < pin_min_length():
+        raise AccountError(f"Choose a PIN of at least {pin_min_length()} characters.")
+
+
+def has_pin(db, user_id: str) -> bool:
+    row = _by_id(db, user_id)
+    return bool(row and row["pin_hash"])
+
+
+def sign_in_user(db, user_id: str, pin: str, now: Optional[datetime] = None) -> str:
+    """Check the PIN of a user already picked out by their access code
+    (docs/implementation_plan_2026-09-18_invite_codes.md#PC4). Same lockout as
+    sign_in. A user with no PIN (new, or reset by the owner) sets it here."""
+    now = now or _now()
+    row = _by_id(db, user_id)
+    if row is None:
+        verify_secret(pin, None)
+        raise BadCredentials("That code or PIN is not right.")
+    _check_lock(row, now)
+    if not row["pin_hash"]:
+        check_new_pin(pin)
+        # Only set if still unset, so two people racing to choose a PIN for
+        # one code cannot overwrite each other.
+        cur = db.conn.execute(
+            "UPDATE users SET pin_hash = ?, failed_logins = 0, locked_until = NULL "
+            "WHERE user_id = ? AND pin_hash IS NULL", (hash_secret(pin), user_id))
+        db.conn.commit()
+        if cur.rowcount != 1:
+            return sign_in_user(db, user_id, pin, now)
+        return resolve_user_id(db, user_id) or user_id
+    if not verify_secret(pin, row["pin_hash"]):
+        _record_failure(db, row, now)
+        raise BadCredentials("That code or PIN is not right.")
+    _record_success(db, user_id)
+    return resolve_user_id(db, user_id) or user_id
+
+
+def create_code_account(db, display_name: str, pin: str, code_key: str,
+                        new_user_id: Callable[[], str]) -> Optional[str]:
+    """Make the account for a code's first use, with its PIN, and bind the code
+    in the same transaction. None if another request bound the code first
+    (PC9) — the caller then signs in against that account instead."""
+    check_new_pin(pin)
+    user_id = new_user_id()
+    conn = db.conn
+    try:
+        conn.execute("INSERT INTO users (user_id, display_name, pin_hash) VALUES (?, ?, ?)",
+                     (user_id, display_name, hash_secret(pin)))
+        cur = conn.execute("INSERT OR IGNORE INTO access_code_bindings (code_key, user_id) "
+                           "VALUES (?, ?)", (code_key, user_id))
+        if cur.rowcount != 1:
+            conn.rollback()
+            return None
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return user_id
+
+
 def recover(db, name: str, code: str, new_pin: str,
             now: Optional[datetime] = None) -> Tuple[str, str]:
     """Set a new PIN with the recovery code. (user_id, new recovery code)."""
@@ -224,28 +289,6 @@ def recover(db, name: str, code: str, new_pin: str,
     )
     db.conn.commit()
     return row["user_id"], fresh
-
-
-def claim(db, user_id: str, name: str, pin: str) -> str:
-    """Give a cookie-only user a name + PIN. Returns the recovery code."""
-    clean = _check_new(name, pin)
-    row = db.conn.execute("SELECT login_name FROM users WHERE user_id = ?", (user_id,)).fetchone()
-    if row is None:
-        raise AccountError("No such user.")
-    if row["login_name"]:
-        raise AccountError("This account already has a name and PIN.")
-    code = new_recovery_code()
-    try:
-        db.conn.execute(
-            "UPDATE users SET login_name = ?, display_name = ?, pin_hash = ?, recovery_hash = ? "
-            "WHERE user_id = ?",
-            (clean, clean, hash_secret(pin), hash_secret(_normalise_code(code)), user_id),
-        )
-        db.conn.commit()
-    except sqlite3.IntegrityError as e:
-        db.conn.rollback()
-        raise NameTaken("That name is already taken. Choose another name.") from e
-    return code
 
 
 def merge_users(db, source_id: str, target_id: str) -> dict:
@@ -287,6 +330,11 @@ def merge_users(db, source_id: str, target_id: str) -> dict:
                 moved[key] += 1
         conn.execute("UPDATE usage_events SET user_id = ? WHERE user_id = ?", (target_id, source_id))
         conn.execute("UPDATE summaries SET created_by_user_id = ? WHERE created_by_user_id = ?",
+                     (target_id, source_id))
+        # Personal access codes follow the data (invite_codes plan; learning-qa
+        # finding 3: otherwise a merged person's code signs into an account
+        # whose next request refuses them).
+        conn.execute("UPDATE access_code_bindings SET user_id = ? WHERE user_id = ?",
                      (target_id, source_id))
         conn.execute("UPDATE users SET merged_into = ? WHERE user_id = ?", (target_id, source_id))
         conn.commit()

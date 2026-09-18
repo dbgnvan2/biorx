@@ -47,6 +47,9 @@ def _isolated_env(monkeypatch, tmp_path):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("BIORX_DB_PATH", str(tmp_path / "web-test.db"))
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("ACCESS_CODE_DAYS", raising=False)
+    # Personal access codes live here for every test (account_body adds them).
+    monkeypatch.setenv("ACCESS_CODES_FILE", str(tmp_path / "access_codes.yaml"))
 
 
 @pytest.fixture(autouse=True)
@@ -116,18 +119,30 @@ def other_client(app):
 TEST_PIN = "test-pin-123"
 
 
+def add_code(for_name: str = None, account: str = "") -> str:
+    """Add a personal access code to this test's codes file and return it."""
+    import uuid
+    from src.access_codes import add_entry
+    return add_entry(os.environ["ACCESS_CODES_FILE"],
+                     for_name or f"user-{uuid.uuid4().hex[:10]}", account=account)
+
+
 def account_body(access_code: str = ACCESS_CODE, name: str = None, pin: str = TEST_PIN,
                  create: bool = True) -> dict:
-    """A /api/session body that creates a fresh account (name + PIN, 2026-09-18).
-    A unique name per call, so tests never collide on the unique login name."""
-    import uuid
-    return {"access_code": access_code, "name": name or f"user-{uuid.uuid4().hex[:10]}",
-            "pin": pin, "create": create}
+    """A /api/session body.
+
+    create=True: a fresh personal access code for `name` + a PIN — its first
+    use creates the account (docs/implementation_plan_2026-09-18_invite_codes.md#PC3).
+    create=False: the old way, shared access code + name + PIN (PC8).
+    """
+    if create:
+        return {"code": add_code(name), "pin": pin}
+    return {"access_code": access_code, "name": name, "pin": pin}
 
 
 @pytest.fixture
 def signed_in(client):
-    """A client that has already exchanged the access code for a cookie."""
+    """A client signed in with a personal access code + PIN."""
     resp = client.post("/api/session", json=account_body(name="Tester"))
     assert resp.status_code == 200, resp.text
     return client

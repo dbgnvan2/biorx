@@ -10,6 +10,9 @@ That distinction is the whole point. With a shared access code and a
 self-declared name, anyone holding the code could type a colleague's name and
 spend that colleague's API key. A name selects a user only together with that
 user's PIN (src/accounts.py, 2026-09-18); the cookie then carries the opaque id.
+Since personal access codes (docs/implementation_plan_2026-09-18_invite_codes.md)
+the code picks the user and the PIN proves it; every request also checks that
+the user's code is still valid.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from .deps import SESSION_COOKIE, SESSION_MAX_AGE_SECONDS, AppContext
 logger = logging.getLogger(__name__)
 
 SALT = "biorx-session-v1"
+SIGN_IN_MESSAGE = "Sign in to continue."
 
 
 def _serializer(secret: str) -> URLSafeTimedSerializer:
@@ -99,12 +103,19 @@ async def current_user(
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Enter the access code to continue.",
+            detail=SIGN_IN_MESSAGE,
         )
     if user_store.get_user(ctx.db, user_id) is None:
         # A validly-signed cookie for a user row that no longer exists.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="This session is no longer valid. Enter the access code again.",
+            detail="This session is no longer valid. Sign in again.",
         )
+    if ctx.codes is not None:
+        # A code that has expired, been turned off or deleted ends the session
+        # on the next request, not when the 30-day cookie runs out (PC5).
+        from src.access_codes import session_refusal
+        reason = session_refusal(ctx.db, ctx.codes, user_id, bool(ctx.access_code))
+        if reason:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=reason)
     return user_id

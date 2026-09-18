@@ -91,12 +91,13 @@ and adapters are unchanged.
 
 ```bash
 pip install -r requirements-web.txt
-cp .env.example .env          # then fill in ACCESS_CODE at minimum
+cp .env.example .env          # then fill in SESSION_SECRET at minimum
 set -a && source .env && set +a
+python -m src.access_codes add --for "Your Name"    # prints your access code
 SESSION_COOKIE_INSECURE=1 uvicorn web.app:app --reload --port 8000
 ```
 
-Open http://127.0.0.1:8000 and enter the access code. `SESSION_COOKIE_INSECURE=1`
+Open http://127.0.0.1:8000, enter that code, and choose a PIN. `SESSION_COOKIE_INSECURE=1`
 is needed only over plain HTTP; never set it in a deployment.
 
 `GET /healthz` reports the effective configuration — which provider and model
@@ -105,26 +106,44 @@ without ever reporting a secret. Check it first when something looks wrong.
 
 ### How access works
 
-Two steps. The shared `ACCESS_CODE` (in `.env`) opens the door; give it to the
-people you want to let in. Each person then signs in with **their own name and
-PIN**: the same name and PIN always bring back the same account — its filters,
-Saved References and API key — on any browser. Identity in the cookie is still a
-server-issued opaque id; a name selects an account only together with its PIN.
+Everyone has **their own access code** and a **PIN**. The code says who you
+are; the PIN proves it. The codes are kept in a plain file,
+`DATA_DIR/access_codes.yaml` (or `ACCESS_CODES_FILE`), on purpose: when someone
+forgets theirs, look it up and tell them. The file is git-ignored; see
+`access_codes.example.yaml` for the format.
 
-- **Create account** shows a **recovery code** once. "Forgot PIN?" takes the
-  name, that code and a new PIN, and issues a new code.
-- PINs and recovery codes are stored as scrypt hashes. After
-  `LOGIN_MAX_FAILURES` wrong attempts (default 5) an account is locked for
-  `LOGIN_LOCK_MINUTES` (default 15) — the access code is shared, so this is what
-  stops someone who has it from guessing a colleague's PIN.
-- Accounts made before names and PINs existed keep working from the browser
-  that made them; Settings → Your account lets them choose a name and PIN.
-- To combine two accounts: `python -m src.accounts list --db PATH`, then
-  `python -m src.accounts merge --db PATH --from ID --into ID`. Nothing is
-  deleted; the old account's cookie leads to the merged one.
+- **Give someone access:** `python -m src.access_codes add --for "Alice"`
+  (run after `set -a && source .env && set +a`, so it uses the same data folder
+  as the server). Send Alice the code it prints. The first time she enters it,
+  she chooses a PIN and her account is made. A code makes one account only.
+- **Codes last 6 months** (`ACCESS_CODE_DAYS`, default 180).
+  `python -m src.access_codes renew --for "Alice"` gives her more time with the
+  same code. Editing `expires:` in the file does the same.
+- **Forgot PIN:** `python -m src.access_codes reset-pin --for "Alice"`; she
+  chooses a new one the next time she enters her code. Her data is kept.
+- **Turn someone off:** add `disabled: true` to their entry, or delete it. Their
+  open session ends on their next click. Nothing of theirs is deleted.
+- **See everyone:** `python -m src.access_codes list`.
+- Changes to the file apply without a restart. A bad entry (duplicate, too
+  short, unreadable date) is skipped and logged; `/healthz` shows how many.
+- The browser can remember the code ("Remember my code on this device"), so
+  most sign-ins ask only for the PIN, and a sign-in lasts 30 days.
+- After `reset-pin`, whoever enters the code first chooses the new PIN, so tell
+  the person straight away.
+- PINs are stored as scrypt hashes. After `LOGIN_MAX_FAILURES` wrong PINs
+  (default 5) an account is locked for `LOGIN_LOCK_MINUTES` (default 15), so
+  someone who sees a code cannot guess the PIN.
 
-Rotate `ACCESS_CODE` when someone leaves: it stops them reaching the sign-in
-page. Their account and data remain.
+**Accounts made before personal codes** (name + PIN + the shared
+`ACCESS_CODE`): give each one a code tied to it with
+`python -m src.access_codes add --for "Dave" --account dave` — it keeps its PIN
+and data. While `ACCESS_CODE` is set, those accounts can still sign in the old
+way ("Sign in with name (old way)"), but it no longer creates accounts. Remove
+`ACCESS_CODE` from `.env` once everyone has a code.
+
+To combine two accounts: `python -m src.accounts list --db PATH`, then
+`python -m src.accounts merge --db PATH --from ID --into ID`. Nothing is
+deleted; the old account's cookie leads to the merged one.
 
 ### LLM backends and keys
 
@@ -166,16 +185,18 @@ desktop GUI into a headless container.
 1. Create a Railway project from this repository; it picks up `railway.json`.
 2. **Attach a volume mounted at `/data`.** Without it the database and any
    downloaded PDFs are lost on every redeploy.
-3. Set the variables from `.env.example`. At minimum: `ACCESS_CODE`,
+3. Set the variables from `.env.example`. At minimum:
    `SESSION_SECRET`, `KEY_ENC_SECRET`, `LLM_PROVIDER`, and the matching
    provider key.
-4. Deploy, then walk the checklist below.
+4. Deploy, then make access codes inside the container:
+   `python -m src.access_codes add --for "Alice"` (they go to
+   `/data/access_codes.yaml`, on the volume). Then walk the checklist below.
 
 #### Deploy checklist (manual — these cannot be tested in CI)
 
-- [ ] `GET /healthz` returns `access_code_set: true`, the expected `provider`
-      and `model`, and `owner_key_set: true`.
-- [ ] The wrong access code is refused; the right one signs you in.
+- [ ] `GET /healthz` returns `codes_in_use: true`, the expected `provider`
+      and `model`, `owner_key_set: true`, and no access-code warnings.
+- [ ] A wrong access code is refused; your code + PIN signs you in.
 - [ ] A saved search returns results, and "Stop" stops it.
 - [ ] One summary completes, and the model shown matches what you configured.
 - [ ] Saving a personal key shows only its last four characters.

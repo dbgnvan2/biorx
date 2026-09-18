@@ -423,6 +423,18 @@ class Database:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login_name "
             "ON users(lower(login_name)) WHERE login_name IS NOT NULL"
         )
+        # Personal access codes (docs/implementation_plan_2026-09-18_invite_codes.md):
+        # the codes themselves live in access_codes.yaml; this records which
+        # account each code belongs to. PRIMARY KEY makes first use atomic (PC9).
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS access_code_bindings (
+                code_key TEXT PRIMARY KEY,
+                user_id  TEXT NOT NULL,
+                bound_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_access_code_bindings_user "
+                       "ON access_code_bindings(user_id)")
 
     # SQLite cannot change a column constraint in place, so relaxing NOT NULL
     # means rebuilding the table. The rewrite targets exactly this declaration.

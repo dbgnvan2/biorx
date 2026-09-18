@@ -1,0 +1,20 @@
+# Personal access codes — one per person.
+# Copy to DATA_DIR/access_codes.yaml (or set ACCESS_CODES_FILE), or just run
+#   python -m src.access_codes add --for "Alice"
+# which creates the file for you.
+#
+# Kept readable on purpose: when someone forgets their code, look it up here.
+# Each entry: code, for (who it is for), created or expires (YYYY-MM-DD).
+# Codes last ACCESS_CODE_DAYS (180) from `created` unless `expires` says otherwise.
+# Optional: account (ties the code to an account made before codes, by its
+#           sign-in name), disabled: true (turns this person off).
+# Changes take effect without restarting the server.
+codes:
+  - code: K7QM-3RTX-9WPA
+    for: Alice
+    created: 2026-09-18
+  - code: B4ZN-HT2C-M8QE
+    for: Dave
+    account: dave
+    created: 2026-09-18
+    expires: 2027-03-17

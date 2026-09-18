@@ -21,10 +21,15 @@ def _client(app):
 
 
 def _create(app, name="Dave", pin="dave-pin-1"):
-    c = _client(app)
-    r = c.post("/api/session", json=account_body(name=name, pin=pin))
+    """An account from before personal codes (name + PIN), signed in the old
+    way. The web page no longer creates these (invite_codes plan PC8)."""
+    ctx = app.state.ctx
+    _, code = accounts.create_account(ctx.db, name, pin, user_store.new_user_id)
+    c, r = _sign_in(app, name, pin)
     assert r.status_code == 200, r.text
-    return c, r.json()
+    me = r.json()
+    me["recovery_code"] = code
+    return c, me
 
 
 def _sign_in(app, name, pin):
@@ -44,13 +49,6 @@ def test_ac1_same_name_and_pin_return_the_same_user_and_data(app):
     assert any(f["id"] == fid for f in c2.get("/api/filters").json()["filters"])
 
 
-def test_ac1_new_account_gets_seeded_filters_and_a_recovery_code(app):
-    c, me = _create(app, name="Newbie")
-    assert me["login_name"] == "Newbie"
-    assert len(me["recovery_code"].replace("-", "")) == 16
-    assert c.get("/api/filters").json()["filters"], "no seeded filters"
-
-
 # ── AC2 ───────────────────────────────────────────────────────────────────────
 
 def test_ac2_wrong_pin_and_unknown_name_look_the_same(app):
@@ -61,24 +59,26 @@ def test_ac2_wrong_pin_and_unknown_name_look_the_same(app):
     assert wrong.json()["detail"] == unknown.json()["detail"]
 
 
-def test_ac2_taken_name_is_409(app):
-    _create(app)
-    c = _client(app)
-    assert c.post("/api/session", json=account_body(name="DAVE", pin="other-pin-1")).status_code == 409
+def test_ac2_taken_name_is_refused(ctx):
+    accounts.create_account(ctx.db, "Dave", "dave-pin-1", user_store.new_user_id)
+    with pytest.raises(accounts.NameTaken):
+        accounts.create_account(ctx.db, "DAVE", "other-pin-1", user_store.new_user_id)
 
 
-def test_ac2_short_pin_and_bad_name_are_400(app):
+def test_ac2_short_pin_and_bad_name_are_refused(ctx, app):
+    with pytest.raises(accounts.AccountError):
+        accounts.create_account(ctx.db, "Ok name", "123", user_store.new_user_id)
+    with pytest.raises(accounts.AccountError):
+        accounts.create_account(ctx.db, "x", "long-enough", user_store.new_user_id)
     c = _client(app)
-    assert c.post("/api/session", json=account_body(name="Ok name", pin="123")).status_code == 400
-    assert c.post("/api/session", json=account_body(name="x", pin="long-enough")).status_code == 400
     assert c.post("/api/session", json={"access_code": ACCESS_CODE}).status_code == 400
 
 
 def test_ac2_access_code_still_required(app):
-    c = _client(app)
-    body = account_body(name="Sneaky", pin="sneaky-pin")
+    _create(app, name="Sneaky", pin="sneaky-pin")
+    body = account_body(name="Sneaky", pin="sneaky-pin", create=False)
     body["access_code"] = "wrong"
-    assert c.post("/api/session", json=body).status_code == 401
+    assert _client(app).post("/api/session", json=body).status_code == 401
 
 
 # ── AC3 ───────────────────────────────────────────────────────────────────────
@@ -178,24 +178,8 @@ def test_ac5_recover_needs_the_access_code(app):
     assert r.status_code == 401
 
 
-# ── AC6 ───────────────────────────────────────────────────────────────────────
-
-def test_ac6_cookie_only_user_can_claim_a_name(ctx, app):
-    from web.auth import issue_session
-    from fastapi import Response
-    legacy_id = user_store.create_user(ctx.db, "old cookie user")
-    user_store.create_reference_list(ctx.db, legacy_id, "Old list")
-    c = _client(app)
-    resp = Response()
-    issue_session(resp, ctx, legacy_id, secure=False)
-    c.cookies.set("biorx_session", resp.headers["set-cookie"].split(";")[0].split("=", 1)[1])
-    r = c.post("/api/me/account", json={"name": "Claimer", "pin": "claim-pin-1"})
-    assert r.status_code == 200, r.text
-    assert r.json()["recovery_code"]
-    c2, r2 = _sign_in(app, "claimer", "claim-pin-1")
-    assert r2.json()["user_id"] == legacy_id
-    assert [l["name"] for l in c2.get("/api/references").json()["lists"]] == ["Old list"]
-    assert c.post("/api/me/account", json={"name": "Again", "pin": "claim-pin-2"}).status_code == 400
+# AC6 (claim a name for a cookie-only user) was removed with personal access
+# codes: a code now makes the account (invite_codes plan PC3).
 
 
 # ── AC7 ───────────────────────────────────────────────────────────────────────

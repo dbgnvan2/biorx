@@ -15,6 +15,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from src.access_codes import CodeStore, codes_file_path
 from src.db import Database
 from src.jobs import JobRegistry
 from src.llm_config import load_llm_config
@@ -45,6 +46,8 @@ class AppContext:
     # http://localhost, and the test client, set this false explicitly rather
     # than production code branching on a magic value.
     cookie_secure: bool = True
+    # Personal access codes (docs/implementation_plan_2026-09-18_invite_codes.md).
+    codes: Optional[CodeStore] = None
     orchestrator: Any = None
     startup_warnings: list = field(default_factory=list)
 
@@ -69,7 +72,8 @@ class AppContext:
 def build_context(db_path: Optional[str] = None,
                   access_code: Optional[str] = None,
                   session_secret: Optional[str] = None,
-                  cookie_secure: Optional[bool] = None) -> AppContext:
+                  cookie_secure: Optional[bool] = None,
+                  access_codes_file: Optional[str] = None) -> AppContext:
     """Assemble the app context from the environment, with test overrides."""
     import secrets
 
@@ -80,11 +84,14 @@ def build_context(db_path: Optional[str] = None,
             "every request. Set it to a code of your own."
         )
         code = ""
-    if not code:
+    codes = CodeStore(access_codes_file or codes_file_path())
+    if not code and not codes.entries():
         logger.warning(
-            "ACCESS_CODE is not set — every request will be refused. Set it to "
-            "the shared code colleagues will enter."
-        )
+            "No ACCESS_CODE and no personal access codes in %s — nobody can sign "
+            "in. Add codes with: python -m src.access_codes add --for NAME", codes.path)
+    elif code:
+        logger.info("Shared ACCESS_CODE is set: accounts from before personal codes "
+                    "can still sign in by name. Remove it once everyone has a code.")
 
     secret = session_secret or os.environ.get("SESSION_SECRET", "")
     if not secret:
@@ -108,4 +115,5 @@ def build_context(db_path: Optional[str] = None,
         access_code=code,
         session_secret=secret,
         cookie_secure=cookie_secure,
+        codes=codes,
     )

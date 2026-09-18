@@ -45,3 +45,6 @@ biorxiv.db
 
 # Local env backups (hold secrets)
 .env.bak*
+
+# Personal access codes (readable on purpose, but not for GitHub)
+access_codes.yaml

@@ -1,6 +1,6 @@
 # Plan — personal access codes (code + PIN, no name)
 **Date:** 2026-09-18
-**Status:** proposed, awaiting approval (third revision)
+**Status:** implemented 2026-09-18 (865 passed). Approved in chat ("go ahead").
 **Request:** "I want each user have their own code." / "The codes are NOT a big
 secret — they expire after 6 months by default. Write them to a config file so I
 can read them easily. Users will forget them." / "I want this to be easy to use.
@@ -33,8 +33,8 @@ code could use their account and their share of the API key.
 
 ## Design
 
-- **Codes in a plain file you can read.** `access_codes.yaml` (path from
-  `ACCESS_CODES_FILE`), git-ignored; `access_codes.example.yaml` committed.
+- **Codes in a plain file you can read.** `DATA_DIR/access_codes.yaml` (or
+  `ACCESS_CODES_FILE`) — the data folder, so it survives redeploys; git-ignored; `access_codes.example.yaml` committed.
   ```yaml
   # Personal access codes. One per person. Readable on purpose.
   codes:
@@ -50,7 +50,8 @@ code could use their account and their share of the API key.
 - **Commands:** `add --for NAME` (appends and prints a code), `renew --for NAME`
   (new expiry, same code), `reset-pin --for NAME`, `list` (code, who, expiry,
   status: new / active / expired / disabled). Hand edits work too; any code of
-  8+ letters/digits is accepted.
+  10+ letters/digits is accepted (raised from 8 after review: the lookup is
+  public and has no per-IP limit yet).
 - **Expiry:** 180 days by default (`ACCESS_CODE_DAYS`).
 - **One account per code.** The first sign-in with a new code creates the
   account (named from `for:`) and asks for a PIN. The code then belongs to that
@@ -121,3 +122,48 @@ Not code-testable: that the right person gets the right code.
 ## Not in scope
 
 A web admin page for codes; emailing codes; changing the 25-a-day cap.
+
+## Accepted risks (Dave's choice of readable codes)
+
+- **PIN reset window.** After `reset-pin`, whoever enters the code first sets the
+  new PIN. Codes are not secret, so tell the person right after resetting.
+- **Lookup tells expired/disabled apart from unknown** (403 vs 401), which
+  confirms a code exists. Kept so people see "ask the owner to renew it".
+- **`account:` is read only on first use.** Once a code is bound, changing its
+  `account:` line has no effect (`list` shows the bound account).
+
+## Review (learning-qa, 2026-09-18)
+
+8 findings, all fixed with tests: impossible date / non-UTF-8 file crashed every
+request (now a warning); renew could change the wrong entry or break the file
+(now finds entries by any first key, keeps the indent, re-parses and leaves the
+file untouched if the result is wrong); merged accounts looped at sign-in (codes
+move on merge; sign-in runs the same check as each request); add to an empty
+file made a dead code (header added, result verified); `disabled:` failed open
+(now fails closed, unknown keys warned); a missing file was silent (logged and in
+`/healthz`); writes were not atomic (temp file + rename); PIN length label was a
+constant (now from `/healthz`).
+
+## Status
+
+| ID | Status | Proof |
+|---|---|---|
+| PC1 | done | `tests/web/test_access_codes.py::test_pc1_file_loads_with_default_expiry` |
+| PC2 | done | `test_pc2_*` (6 tests) |
+| PC3 | done | `test_pc3_new_code_creates_account_with_pin` |
+| PC4 | done | `test_pc4_code_and_pin_sign_in` |
+| PC5 | done | `test_pc5_cut_off_and_renew`, `test_pc5_expiry_is_checked_against_the_day` |
+| PC6 | done | `test_pc6_reset_pin`, `test_pc6_reset_pin_for_an_unused_code_says_so` |
+| PC7 | done | `test_pc7_existing_account_keeps_pin_and_data`, `test_pc7_unknown_account_is_refused_not_a_new_account` |
+| PC8 | done | `test_pc8_switch_over`, `test_pc8_an_old_account_with_a_disabled_code_cannot_use_the_old_way` |
+| PC9 | done | `test_pc9_first_use_is_atomic`, `test_pc9_the_request_that_loses_the_race_signs_in_to_the_winner`, `test_pc9_a_merged_account_keeps_working_with_its_code` |
+| PC10 | done | `test_pc10_file_change_picked_up` |
+| PC11 | done | `test_pc11_*` (6 tests, including the CLI run as a subprocess) |
+| PC12 | done | `test_pc12_ignored_and_documented` |
+| PC13 | done | `tests/web/test_frontend_wiring.py::test_pc13_*` (5); browser check on a throwaway server: code step, "Welcome, Tess Tester. Choose a PIN" with confirm box, "Welcome back, Old Dave." without it, unknown code message, old-way form, phone width. Entering a PIN and signing in were not driven by Claude — left to Dave. |
+| PC14 | done | `test_pc14_lookup_reveals_only_name` |
+| PC15 | done | `tests/web/test_auth.py::test_no_route_can_be_reached_without_a_session` (lookup in `PUBLIC`; protected count 31 after removing `/api/me/account`) |
+
+Changes from the plan: `POST /api/me/account` (claim a name) removed — a code
+now makes the account, and the route could overwrite a code user's PIN. Codes
+file lives in `DATA_DIR`, not the project folder.

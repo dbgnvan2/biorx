@@ -82,6 +82,11 @@ async function api(method, path, body, opts) {
     const detail = (payload && payload.detail) || `${response.status} ${response.statusText}`;
     const error = new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
     error.status = response.status;
+    // Signed out mid-session (code expired or turned off, PC5): back to the
+    // sign-in page with the reason, rather than a stray error banner.
+    if (response.status === 401 && state.me && !path.startsWith("/api/session")) {
+      showGate(error.message);
+    }
     throw error;
   }
   return payload;
@@ -96,25 +101,123 @@ function notice(message, kind = "error") {
 
 /* ── Sign in / out ───────────────────────────────────────────────────────── */
 
-/* Sign in / create account with the access code + name + PIN (AC8). */
+/* Sign in: personal access code + PIN
+   (docs/implementation_plan_2026-09-18_invite_codes.md#PC13). The code says
+   who you are and this device can remember it; the PIN proves it is you. */
+const LS_MY_CODE = "biorx_my_code";
+const SIGN_IN_MESSAGE = "Sign in to continue.";
+let gateCode = "";       // the code the PIN step is for
+let gatePinSet = true;   // false: a new code, or a PIN the owner reset
+let gatePinMin = 6;      // LOGIN_PIN_MIN_LENGTH, from /healthz
+
 function gateError(message) {
   $("gate-error").textContent = message;
   $("gate-error").classList.toggle("hidden", !message);
 }
 
-async function signIn(create = false) {
+function rememberedCode() {
+  try { return localStorage.getItem(LS_MY_CODE) || ""; } catch (e) { return ""; }
+}
+
+function rememberCode(code) {
+  try {
+    if (code) localStorage.setItem(LS_MY_CODE, code);
+    else localStorage.removeItem(LS_MY_CODE);
+  } catch (e) { /* private window: the code is simply not remembered */ }
+}
+
+function showGateStep(step) {
+  $("code-step").classList.toggle("hidden", step !== "code-step");
+  $("pin-step").classList.toggle("hidden", step !== "pin-step");
+  $("legacy-step").classList.toggle("hidden", step !== "legacy-step");
+}
+
+async function showGate(message) {
+  state.me = null;
+  $("app").classList.add("hidden");
+  $("gate").classList.remove("hidden");
+  gateError(message && message !== SIGN_IN_MESSAGE ? message : "");
+  try {
+    const health = await api("GET", "/healthz");
+    // The old name sign-in only while the shared access code is still set (PC8).
+    $("show-legacy").classList.toggle("hidden", !health.access_code_set);
+    if (health.pin_min_length) gatePinMin = health.pin_min_length;
+  } catch (e) { /* the sign-in form still works */ }
+  const code = rememberedCode();
+  if (code && !(message && message !== SIGN_IN_MESSAGE)) {
+    $("my-code").value = code;
+    await lookupCode(code);
+  } else {
+    $("my-code").value = code;
+    showGateStep("code-step");
+  }
+}
+
+async function lookupCode(code) {
+  let who;
+  try { who = await api("POST", "/api/session/lookup", { code }); }
+  catch (e) { gateError(e.message); showGateStep("code-step"); return false; }
+  gateError("");
+  gateCode = code;
+  gatePinSet = !!who.pin_set;
+  $("welcome").textContent = gatePinSet
+    ? `Welcome back, ${who.name}.`
+    : `Welcome, ${who.name}. Choose a PIN you will remember.`;
+  $("my-pin-label").textContent = gatePinSet ? "PIN" : `New PIN (at least ${gatePinMin} characters)`;
+  $("my-pin-confirm-wrap").classList.toggle("hidden", gatePinSet);
+  $("pin-help").textContent = gatePinSet
+    ? "Forgot your PIN? Ask whoever runs this server to reset it." : "";
+  $("my-pin").value = "";
+  $("my-pin-confirm").value = "";
+  showGateStep("pin-step");
+  $("my-pin").focus();
+  return true;
+}
+
+async function codeNext() {
+  const code = $("my-code").value.trim();
+  if (!code) { gateError("Enter your access code."); return; }
+  await lookupCode(code);
+}
+
+async function pinSignIn() {
+  gateError("");
+  const pin = $("my-pin").value;
+  if (!gatePinSet && pin !== $("my-pin-confirm").value) {
+    gateError("The two PINs are not the same.");
+    return;
+  }
+  try {
+    state.me = await api("POST", "/api/session", { code: gateCode, pin });
+  } catch (e) { gateError(e.message); return; }
+  $("my-pin").value = "";
+  $("my-pin-confirm").value = "";
+  rememberCode($("remember-code").checked ? gateCode : "");
+  showApp();
+}
+
+function useOtherCode() {
+  rememberCode("");
+  gateCode = "";
+  $("my-code").value = "";
+  gateError("");
+  showGateStep("code-step");
+  $("my-code").focus();
+}
+
+/* The old way: shared access code + name + PIN, for accounts made before
+   personal codes (PC8). It no longer creates accounts. */
+async function signIn() {
   gateError("");
   try {
     state.me = await api("POST", "/api/session", {
       access_code: $("access-code").value,
       name: $("login-name").value,
       pin: $("login-pin").value,
-      create,
     });
   } catch (e) { gateError(e.message); return; }
   $("login-pin").value = "";
   showApp();
-  if (state.me.recovery_code) showRecoveryCode(state.me.recovery_code);
 }
 
 async function recoverAccount() {
@@ -143,22 +246,9 @@ function showRecoveryCode(code) {
   $("recovery-modal").classList.remove("hidden");
 }
 
-async function claimAccount() {
-  try {
-    state.me = await api("POST", "/api/me/account", {
-      name: $("claim-name").value, pin: $("claim-pin").value,
-    });
-  } catch (e) { notice(e.message); return; }
-  $("claim-pin").value = "";
-  renderMe();
-  showRecoveryCode(state.me.recovery_code);
-}
-
 async function signOut() {
   await api("DELETE", "/api/session");
-  state.me = null;
-  $("app").classList.add("hidden");
-  $("gate").classList.remove("hidden");
+  await showGate("");
 }
 
 function showApp() {
@@ -214,10 +304,8 @@ function renderMe() {
   const me = state.me;
   const local = localSettings();
   const name = me.login_name || me.display_name || "unnamed";
-  $("account-state").textContent = me.login_name
-    ? `Signed in as ${me.login_name}. Your name and PIN bring this account back on any browser.`
-    : "";
-  $("claim-wrap").classList.toggle("hidden", !!me.login_name);
+  $("account-state").textContent =
+    `Signed in as ${name}. Your access code and PIN bring this account back on any device.`;
   const displayProvider = local.key ? (local.provider || me.provider) : me.provider;
   const displayModel    = local.key ? (local.model    || me.model)    : me.model;
   $("who").textContent = `${name} · ${displayProvider} (${displayModel || "no model"})`;
@@ -1668,9 +1756,16 @@ async function exportRefCsv() {
 
 function wire() {
   // Auth
-  $("sign-in").addEventListener("click", () => signIn(false));
-  $("create-account").addEventListener("click", () => signIn(true));
-  $("login-pin").addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(false); });
+  $("code-next").addEventListener("click", codeNext);
+  $("my-code").addEventListener("keydown", (e) => { if (e.key === "Enter") codeNext(); });
+  $("pin-sign-in").addEventListener("click", pinSignIn);
+  $("my-pin").addEventListener("keydown", (e) => { if (e.key === "Enter") pinSignIn(); });
+  $("my-pin-confirm").addEventListener("keydown", (e) => { if (e.key === "Enter") pinSignIn(); });
+  $("use-other-code").addEventListener("click", useOtherCode);
+  $("show-legacy").addEventListener("click", () => { gateError(""); showGateStep("legacy-step"); });
+  $("hide-legacy").addEventListener("click", () => { gateError(""); showGateStep("code-step"); });
+  $("sign-in").addEventListener("click", signIn);
+  $("login-pin").addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(); });
   $("show-recover").addEventListener("click", () => showRecoverForm(true));
   $("hide-recover").addEventListener("click", () => showRecoverForm(false));
   $("recover").addEventListener("click", recoverAccount);
@@ -1678,7 +1773,6 @@ function wire() {
     $("recovery-modal").classList.add("hidden");
     $("recovery-code-text").textContent = "";
   });
-  $("claim-account").addEventListener("click", claimAccount);
   $("help-deepseek-toggle").addEventListener("click", () =>
     $("help-deepseek").classList.toggle("hidden"));
   $("sign-out").addEventListener("click", signOut);
@@ -1762,7 +1856,7 @@ async function boot() {
     state.me = await api("GET", "/api/me");
     showApp();
   } catch (e) {
-    $("gate").classList.remove("hidden");
+    await showGate(e.status === 401 ? e.message : "");
   }
 }
 
