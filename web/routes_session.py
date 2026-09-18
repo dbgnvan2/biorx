@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
-from src import crypto, user_store
+from src import accounts, crypto, user_store
 from src.filters_store import load_filters_file
 from src.llm_config import default_provider, provider_config, summary_daily_cap
 
@@ -24,8 +24,24 @@ router = APIRouter()
 
 
 class SessionRequest(BaseModel):
+    """Sign in (create=False) or create an account (create=True).
+    Spec: docs/implementation_plan_2026-09-18_accounts.md#AC1-AC2"""
     access_code: str = Field(min_length=1, max_length=200)
-    display_name: str = Field(default="", max_length=100)
+    name: str = Field(default="", max_length=100)
+    pin: str = Field(default="", max_length=200)
+    create: bool = False
+
+
+class RecoverRequest(BaseModel):
+    access_code: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=100)
+    recovery_code: str = Field(min_length=1, max_length=100)
+    new_pin: str = Field(min_length=1, max_length=200)
+
+
+class ClaimRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    pin: str = Field(min_length=1, max_length=200)
 
 
 class DisplayNameRequest(BaseModel):
@@ -72,6 +88,7 @@ def _me(ctx: AppContext, user_id: str) -> dict:
     return {
         "user_id": user_id,
         "display_name": user.get("display_name", ""),
+        "login_name": user.get("login_name") or "",
         "provider": effective,
         "model": effective_model,
         "default_model": default_model,
@@ -87,20 +104,26 @@ def _me(ctx: AppContext, user_id: str) -> dict:
     }
 
 
-@router.post("/api/session")
-def create_session(body: SessionRequest, response: Response,
-                   ctx: AppContext = Depends(get_context)):
-    """Exchange the shared access code for a signed session cookie.
-
-    The display name is stored as a label. It is never used to look a user up;
-    identity is the opaque id minted here.
-    """
-    if not check_access_code(body.access_code, ctx.access_code):
+def _gate(ctx: AppContext, access_code: str) -> None:
+    if not check_access_code(access_code, ctx.access_code):
         logger.info("Rejected a session request with a wrong access code")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail="That access code is not right.")
 
-    user_id = user_store.create_user(ctx.db, body.display_name)
+
+def _account_error(e: accounts.AccountError) -> HTTPException:
+    if isinstance(e, accounts.AccountLocked):
+        code = status.HTTP_429_TOO_MANY_REQUESTS
+    elif isinstance(e, accounts.BadCredentials):
+        code = status.HTTP_401_UNAUTHORIZED
+    elif isinstance(e, accounts.NameTaken):
+        code = status.HTTP_409_CONFLICT
+    else:
+        code = status.HTTP_400_BAD_REQUEST
+    return HTTPException(status_code=code, detail=str(e))
+
+
+def _seed_filters(ctx: AppContext, user_id: str) -> None:
     try:
         seeded = user_store.seed_filters_from_file(
             ctx.db, user_id, load_filters_file("filters.json")
@@ -110,8 +133,65 @@ def create_session(body: SessionRequest, response: Response,
         # A missing or unreadable filters.json must not stop someone signing in.
         logger.exception("Could not seed filters for %s", user_id)
 
+
+@router.post("/api/session")
+def create_session(body: SessionRequest, response: Response,
+                   ctx: AppContext = Depends(get_context)):
+    """Access code, then name + PIN: sign in, or create an account.
+
+    The name + PIN select the user (accounts.py); identity in the cookie is
+    still the opaque server id. A new account's response carries its recovery
+    code once — it is not stored in a readable form.
+    """
+    _gate(ctx, body.access_code)
+    if not body.name.strip() or not body.pin:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Enter your name and PIN.")
+    recovery_code = None
+    try:
+        if body.create:
+            user_id, recovery_code = accounts.create_account(
+                ctx.db, body.name, body.pin, user_store.new_user_id)
+            _seed_filters(ctx, user_id)
+        else:
+            user_id = accounts.sign_in(ctx.db, body.name, body.pin)
+    except accounts.AccountError as e:
+        raise _account_error(e) from e
     issue_session(response, ctx, user_id, secure=ctx.cookie_secure)
-    return _me(ctx, user_id)
+    out = _me(ctx, user_id)
+    if recovery_code:
+        out["recovery_code"] = recovery_code
+    return out
+
+
+@router.post("/api/session/recover")
+def recover_session(body: RecoverRequest, response: Response,
+                    ctx: AppContext = Depends(get_context)):
+    """Forgot PIN: name + recovery code + new PIN. Returns a new recovery code."""
+    _gate(ctx, body.access_code)
+    try:
+        user_id, code = accounts.recover(ctx.db, body.name, body.recovery_code, body.new_pin)
+    except accounts.AccountError as e:
+        raise _account_error(e) from e
+    user_id = accounts.resolve_user_id(ctx.db, user_id) or user_id
+    issue_session(response, ctx, user_id, secure=ctx.cookie_secure)
+    out = _me(ctx, user_id)
+    out["recovery_code"] = code
+    return out
+
+
+@router.post("/api/me/account")
+def claim_account(body: ClaimRequest,
+                  ctx: AppContext = Depends(get_context),
+                  user_id: str = Depends(current_user)):
+    """Give the account you are in (cookie only) a name + PIN (AC6)."""
+    try:
+        code = accounts.claim(ctx.db, user_id, body.name, body.pin)
+    except accounts.AccountError as e:
+        raise _account_error(e) from e
+    out = _me(ctx, user_id)
+    out["recovery_code"] = code
+    return out
 
 
 @router.delete("/api/session")

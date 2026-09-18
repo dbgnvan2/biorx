@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.sources.schema import AuthorRecord, CanonicalRecord, RecordFlags, SourceHit
-from tests.web.conftest import ACCESS_CODE
+from tests.web.conftest import ACCESS_CODE, account_body
 
 FILTER = {
     "days_back": 14,
@@ -250,13 +250,13 @@ def test_one_user_cannot_read_or_cancel_anothers_search(ctx, app):
     ctx.orchestrator = _fake_orchestrator()
     alice = TestClient(app)
     if True:
-        alice.post("/api/session", json={"access_code": ACCESS_CODE})
+        alice.post("/api/session", json=account_body(ACCESS_CODE))
         job_id = alice.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
         _await_status(alice, job_id)
 
     bob = TestClient(app)
     if True:
-        bob.post("/api/session", json={"access_code": ACCESS_CODE})
+        bob.post("/api/session", json=account_body(ACCESS_CODE))
         assert bob.get(f"/api/searches/{job_id}").status_code == 404
         assert bob.get(f"/api/searches/{job_id}/results").status_code == 404
         assert bob.delete(f"/api/searches/{job_id}").status_code == 404

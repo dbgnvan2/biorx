@@ -115,9 +115,9 @@ def test_dt2_search_routes_do_not_serve_a_discover_job(signed_in, ctx):
 
 
 def test_dt2_poll_endpoint_is_per_user(signed_in, other_client, ctx):
-    from tests.web.conftest import ACCESS_CODE
+    from tests.web.conftest import ACCESS_CODE, account_body
     body = _run(signed_in, ctx, FakeOrchestrator(), '{"terms": ["a"]}')
-    other_client.post("/api/session", json={"access_code": ACCESS_CODE, "display_name": "B"})
+    other_client.post("/api/session", json=account_body(ACCESS_CODE))
     assert other_client.get(f"/api/discover-terms/{body['job_id']}").status_code == 404
 
 

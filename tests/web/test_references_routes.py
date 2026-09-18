@@ -50,9 +50,9 @@ def test_delete_nonexistent_list_is_404(signed_in):
 
 def test_other_user_cannot_see_or_delete_list(app, signed_in, other_client):
     """A list is private to the user who created it."""
-    from tests.web.conftest import ACCESS_CODE
+    from tests.web.conftest import ACCESS_CODE, account_body
     other_client.post("/api/session",
-                      json={"access_code": ACCESS_CODE, "display_name": "Other"})
+                      json=account_body(ACCESS_CODE))
     list_id = signed_in.post("/api/references", json={"name": "Private"}).json()["id"]
 
     # Other user's list endpoint sees no lists owned by signed_in
@@ -111,10 +111,10 @@ def test_ref1_delete_list_removes_its_item_rows(signed_in, ctx):
 
 
 def test_ref1_delete_does_not_touch_another_users_items(signed_in, other_client, ctx):
-    from tests.web.conftest import ACCESS_CODE
+    from tests.web.conftest import ACCESS_CODE, account_body
     list_id = signed_in.post("/api/references", json={"name": "Mine"}).json()["id"]
     _add(signed_in, ctx, list_id, PAPER)
-    other_client.post("/api/session", json={"access_code": ACCESS_CODE, "display_name": "B"})
+    other_client.post("/api/session", json=account_body(ACCESS_CODE))
     assert other_client.delete(f"/api/references/{list_id}").status_code == 404
     assert len(signed_in.get(f"/api/references/{list_id}/items").json()["items"]) == 1
 

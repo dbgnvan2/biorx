@@ -8,7 +8,8 @@ name is a label with no authority.
 
 That distinction is the whole point. With a shared access code and a
 self-declared name, anyone holding the code could type a colleague's name and
-spend that colleague's API key. Nothing here ever selects a user by name.
+spend that colleague's API key. A name selects a user only together with that
+user's PIN (src/accounts.py, 2026-09-18); the cookie then carries the opaque id.
 """
 
 from __future__ import annotations
@@ -90,6 +91,11 @@ async def current_user(
     write endpoint cannot be reached unauthenticated (security S3).
     """
     user_id = read_session(ctx, biorx_session)
+    if user_id:
+        # A user merged into another (src/accounts.py) keeps working: the
+        # cookie resolves to the account the data now lives in.
+        from src.accounts import resolve_user_id
+        user_id = resolve_user_id(ctx.db, user_id) or user_id
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

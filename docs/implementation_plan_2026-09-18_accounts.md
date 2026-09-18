@@ -1,6 +1,6 @@
 # Plan — web accounts: name + PIN, recovery code, merge duplicate users
 **Date:** 2026-09-18
-**Status:** approved in chat 2026-09-18 ("do option 1 and merge the two daves and option 2")
+**Status:** implemented 2026-09-18 (832 passed). Approved in chat ("do option 1 and merge the two daves and option 2")
 
 ## Problem
 
@@ -56,3 +56,21 @@ existing `_add_column_if_missing` migration.
 ## Not in scope
 - Per-person invite codes (the shared ACCESS_CODE stays).
 - Changing a PIN while signed in (use Forgot PIN, or ask for it).
+
+## Status
+
+| ID | Status | Proof |
+|---|---|---|
+| AC1 | done | `tests/web/test_accounts.py::test_ac1_*` (2) |
+| AC2 | done | `test_ac2_*` (4) |
+| AC3 | done | `test_ac3_*` (2) |
+| AC4 | done | `test_ac4_*` (3) |
+| AC5 | done | `test_ac5_*` (3) |
+| AC6 | done | `test_ac6_cookie_only_user_can_claim_a_name` |
+| AC7 | done | `test_ac7_*` (2); run on `~/biorx-webtest/biorxiv.db`: 1 filter moved (renamed "Agent Simulation (merged)"), 10 identical left, backup `~/biorx-webtest/biorxiv-premerge-backup.db` |
+| AC8 | done | `tests/web/test_frontend_wiring.py::test_ac8_*` (2); browser: sign-in page and Forgot PIN form render. Account creation and PIN entry were not driven through the browser by Claude — left to Dave. |
+| AC9 | done | `test_ac9_thresholds_come_from_env_and_are_documented` |
+
+Change from the plan: merge leaves identical filters with the merged user rather
+than copying them as "(merged)" duplicates (every account starts with the same
+seeded filters).

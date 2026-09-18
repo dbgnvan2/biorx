@@ -105,14 +105,26 @@ without ever reporting a secret. Check it first when something looks wrong.
 
 ### How access works
 
-One shared `ACCESS_CODE` is the gate. Entering it mints a **server-issued opaque
-user id** and puts it in a signed cookie; the display name someone types is only
-a label. That distinction matters: with a shared code and a name-based identity,
-anyone holding the code could type a colleague's name and spend that colleague's
-API key.
+Two steps. The shared `ACCESS_CODE` (in `.env`) opens the door; give it to the
+people you want to let in. Each person then signs in with **their own name and
+PIN**: the same name and PIN always bring back the same account — its filters,
+Saved References and API key — on any browser. Identity in the cookie is still a
+server-issued opaque id; a name selects an account only together with its PIN.
 
-There are no accounts and no password reset. Rotate `ACCESS_CODE` when someone
-leaves — it invalidates nothing else, but it stops new sign-ins.
+- **Create account** shows a **recovery code** once. "Forgot PIN?" takes the
+  name, that code and a new PIN, and issues a new code.
+- PINs and recovery codes are stored as scrypt hashes. After
+  `LOGIN_MAX_FAILURES` wrong attempts (default 5) an account is locked for
+  `LOGIN_LOCK_MINUTES` (default 15) — the access code is shared, so this is what
+  stops someone who has it from guessing a colleague's PIN.
+- Accounts made before names and PINs existed keep working from the browser
+  that made them; Settings → Your account lets them choose a name and PIN.
+- To combine two accounts: `python -m src.accounts list --db PATH`, then
+  `python -m src.accounts merge --db PATH --from ID --into ID`. Nothing is
+  deleted; the old account's cookie leads to the merged one.
+
+Rotate `ACCESS_CODE` when someone leaves: it stops them reaching the sign-in
+page. Their account and data remain.
 
 ### LLM backends and keys
 

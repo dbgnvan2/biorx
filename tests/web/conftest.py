@@ -113,11 +113,22 @@ def other_client(app):
     return TestClient(app)
 
 
+TEST_PIN = "test-pin-123"
+
+
+def account_body(access_code: str = ACCESS_CODE, name: str = None, pin: str = TEST_PIN,
+                 create: bool = True) -> dict:
+    """A /api/session body that creates a fresh account (name + PIN, 2026-09-18).
+    A unique name per call, so tests never collide on the unique login name."""
+    import uuid
+    return {"access_code": access_code, "name": name or f"user-{uuid.uuid4().hex[:10]}",
+            "pin": pin, "create": create}
+
+
 @pytest.fixture
 def signed_in(client):
     """A client that has already exchanged the access code for a cookie."""
-    resp = client.post("/api/session",
-                       json={"access_code": ACCESS_CODE, "display_name": "Tester"})
+    resp = client.post("/api/session", json=account_body(name="Tester"))
     assert resp.status_code == 200, resp.text
     return client
 

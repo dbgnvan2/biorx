@@ -13,15 +13,36 @@
   <section id="gate" class="hidden">
     <header><h1>BioRx</h1></header>
     <div class="card" style="max-width:420px">
-      <h2>Enter the access code</h2>
-      <p class="muted small">Ask whoever runs this server for the code. Your name
-        is just a label so you can tell your own searches apart.</p>
+      <h2>Sign in</h2>
+      <p class="muted small">The access code comes from whoever runs this server. Your
+        name and PIN are yours: the same name and PIN always bring back your filters
+        and Saved References, on any browser.</p>
       <div id="gate-error" class="banner error hidden"></div>
       <label><span>Access code</span>
         <input id="access-code" type="password" autocomplete="off"></label>
-      <label><span>Your name (optional)</span>
-        <input id="display-name" type="text" autocomplete="off"></label>
-      <button id="sign-in" class="primary">Continue</button>
+      <label><span>Your name</span>
+        <input id="login-name" type="text" autocomplete="username"></label>
+      <div id="pin-wrap">
+        <label><span>PIN (at least 6 characters)</span>
+          <input id="login-pin" type="password" autocomplete="current-password"></label>
+        <div class="row" style="gap:8px">
+          <button id="sign-in" class="primary shrink">Sign in</button>
+          <button id="create-account" class="shrink">Create account</button>
+          <span class="spacer"></span>
+          <button id="show-recover" class="link shrink">Forgot PIN?</button>
+        </div>
+      </div>
+      <div id="recover-wrap" class="hidden">
+        <label><span>Recovery code</span>
+          <input id="recovery-code" type="text" autocomplete="off" placeholder="XXXX-XXXX-XXXX-XXXX"></label>
+        <label><span>New PIN</span>
+          <input id="new-pin" type="password" autocomplete="new-password"></label>
+        <div class="row" style="gap:8px">
+          <button id="recover" class="primary shrink">Set new PIN and sign in</button>
+          <span class="spacer"></span>
+          <button id="hide-recover" class="link shrink">Back</button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -276,6 +297,20 @@
       <p class="muted small">These settings are yours alone. They do not change the app
         for anyone else.</p>
       <div class="card">
+        <h2>Your account</h2>
+        <p id="account-state" class="muted small"></p>
+        <div id="claim-wrap" class="hidden">
+          <p class="small">This account has no name and PIN yet, so it is only reachable
+            from this browser. Choose them to keep your filters and Saved References.</p>
+          <div class="row">
+            <label><span>Name</span><input id="claim-name" type="text" autocomplete="username"></label>
+            <label><span>PIN (at least 6 characters)</span>
+              <input id="claim-pin" type="password" autocomplete="new-password"></label>
+            <div class="shrink"><button id="claim-account" class="primary">Save name and PIN</button></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
         <h2>LLM settings</h2>
         <p id="key-state" class="muted small"></p>
         <div id="byo-disabled" class="banner warn hidden small"></div>
@@ -308,6 +343,17 @@
     </div><!-- /panel-settings -->
 
   </section><!-- /app -->
+
+  <!-- Recovery code, shown once (AC8) -->
+  <div id="recovery-modal" class="modal-overlay hidden">
+    <div class="modal-box card" style="width:min(460px,100%)">
+      <h3 style="margin-top:0">Save your recovery code</h3>
+      <p class="small">If you forget your PIN, this code lets you set a new one. It is
+        shown only now — write it down or store it in your password manager.</p>
+      <p id="recovery-code-text" style="font-family:monospace;font-size:20px;letter-spacing:1px"></p>
+      <button id="recovery-done" class="primary">I've saved it</button>
+    </div>
+  </div>
 
   <!-- Paper detail modal -->
   <div id="paper-modal" class="modal-overlay hidden">

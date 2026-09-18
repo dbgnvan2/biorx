@@ -10,13 +10,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import pytest
 
-from tests.web.conftest import ACCESS_CODE
+from tests.web.conftest import ACCESS_CODE, account_body
 
 # Routes that must be reachable without a session, each with its reason. A
 # route added to this set is a deliberate decision, not an oversight.
 PUBLIC = {
     ("/healthz", "get"),          # liveness, for the platform
     ("/api/session", "post"),     # the sign-in itself
+    ("/api/session/recover", "post"),  # forgot PIN: gated by the access code, not a session
     ("/api/session", "delete"),   # signing out must work from a stale session
     ("/", "get"),                 # the page shell, so a visitor sees the form
 }
@@ -24,7 +25,7 @@ PUBLIC = {
 # The exact number of authenticated operations. An exact count, not a floor:
 # a floor stays satisfied while the route table halves (learnings P29). Update
 # this deliberately when a route is added or removed.
-PROTECTED_ROUTE_COUNT = 31
+PROTECTED_ROUTE_COUNT = 32
 
 
 def test_wrong_access_code_is_rejected(client):
@@ -38,8 +39,7 @@ def test_an_empty_access_code_is_rejected(client):
 
 
 def test_the_right_access_code_issues_a_session(client):
-    r = client.post("/api/session",
-                    json={"access_code": ACCESS_CODE, "display_name": "Dave"})
+    r = client.post("/api/session", json=account_body(ACCESS_CODE, name="Dave"))
     assert r.status_code == 200
     assert client.cookies.get("biorx_session")
     assert r.json()["display_name"] == "Dave"
@@ -106,7 +106,7 @@ def test_a_valid_cookie_for_a_deleted_user_is_refused(ctx, client, signed_in):
 
 
 def test_the_cookie_is_httponly_and_samesite(client):
-    r = client.post("/api/session", json={"access_code": ACCESS_CODE})
+    r = client.post("/api/session", json=account_body(ACCESS_CODE))
     header = r.headers["set-cookie"].lower()
     assert "httponly" in header
     assert "samesite=lax" in header
@@ -123,7 +123,7 @@ def test_the_cookie_is_secure_when_configured(tmp_path):
                                session_secret="x" * 32)
     try:
         with TestClient(create_app(secure_ctx)) as c:
-            r = c.post("/api/session", json={"access_code": ACCESS_CODE})
+            r = c.post("/api/session", json=account_body(ACCESS_CODE))
             assert "secure" in r.headers["set-cookie"].lower()
     finally:
         secure_ctx.jobs.shutdown(); secure_ctx.db.close()
@@ -143,35 +143,30 @@ def test_display_name_change_does_not_change_user_id(client, signed_in):
     assert client.get("/api/me").json()["user_id"] == before
 
 
-def test_typing_another_users_display_name_does_not_reach_their_key(
+def test_typing_another_users_name_without_the_pin_does_not_reach_their_key(
     ctx, app, enc_secret
 ):
     """
-    The attack the opaque id exists to prevent: with a shared access code, a
-    second person types the first person's name and would otherwise inherit
-    their stored API key.
+    The attack the PIN exists to prevent: with a shared access code, a second
+    person types the first person's name. Without Alice's PIN they get neither
+    her account nor her stored key — creating "Alice" again is refused, and
+    signing in as Alice with a wrong PIN is refused.
     """
     from fastapi.testclient import TestClient
 
     alice = TestClient(app)
-    if True:
-        alice.post("/api/session",
-                   json={"access_code": ACCESS_CODE, "display_name": "Alice"})
-        alice.put("/api/me/llm-key",
-                  json={"provider": "anthropic", "api_key": "sk-ant-ALICEKEY9999"})
-        alice_me = alice.get("/api/me").json()
-        assert alice_me["key_source"] == "user"
+    assert alice.post("/api/session", json=account_body(name="Alice", pin="alice-pin-1")).status_code == 200
+    alice.put("/api/me/llm-key",
+              json={"provider": "anthropic", "api_key": "sk-ant-ALICEKEY9999"})
+    assert alice.get("/api/me").json()["key_source"] == "user"
 
     impostor = TestClient(app)
-    if True:
-        impostor.post("/api/session",
-                      json={"access_code": ACCESS_CODE, "display_name": "Alice"})
-        me = impostor.get("/api/me").json()
-
-    assert me["user_id"] != alice_me["user_id"]
-    assert me["key_source"] != "user"
-    assert me["key_last4"] == ""
-
+    r = impostor.post("/api/session", json=account_body(name="Alice", pin="guess-123"))
+    assert r.status_code == 409
+    r = impostor.post("/api/session", json=account_body(name="alice ", pin="guess-123", create=False))
+    assert r.status_code == 401
+    assert impostor.get("/api/me").status_code == 401
+    assert "biorx_session" not in impostor.cookies
 
 
 def test_an_unset_access_code_refuses_everyone(tmp_path):
@@ -234,7 +229,7 @@ def test_the_placeholder_access_code_is_not_a_live_credential(tmp_path, monkeypa
         try:
             client = TestClient(create_app(ctx_))
             assert client.post("/api/session",
-                               json={"access_code": placeholder}).status_code == 401
+                               json=account_body(placeholder)).status_code == 401
         finally:
             ctx_.jobs.shutdown(); ctx_.db.close()
 
@@ -249,6 +244,6 @@ def test_a_real_access_code_that_merely_resembles_one_still_works(tmp_path):
                          session_secret="z" * 32, cookie_secure=False)
     try:
         client = TestClient(create_app(ctx_))
-        assert client.post("/api/session", json={"access_code": code}).status_code == 200
+        assert client.post("/api/session", json=account_body(code)).status_code == 200
     finally:
         ctx_.jobs.shutdown(); ctx_.db.close()

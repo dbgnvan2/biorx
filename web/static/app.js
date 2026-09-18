@@ -96,19 +96,62 @@ function notice(message, kind = "error") {
 
 /* ── Sign in / out ───────────────────────────────────────────────────────── */
 
-async function signIn() {
-  $("gate-error").classList.add("hidden");
+/* Sign in / create account with the access code + name + PIN (AC8). */
+function gateError(message) {
+  $("gate-error").textContent = message;
+  $("gate-error").classList.toggle("hidden", !message);
+}
+
+async function signIn(create = false) {
+  gateError("");
   try {
     state.me = await api("POST", "/api/session", {
       access_code: $("access-code").value,
-      display_name: $("display-name").value,
+      name: $("login-name").value,
+      pin: $("login-pin").value,
+      create,
     });
-  } catch (e) {
-    $("gate-error").textContent = e.message;
-    $("gate-error").classList.remove("hidden");
-    return;
-  }
+  } catch (e) { gateError(e.message); return; }
+  $("login-pin").value = "";
   showApp();
+  if (state.me.recovery_code) showRecoveryCode(state.me.recovery_code);
+}
+
+async function recoverAccount() {
+  gateError("");
+  try {
+    state.me = await api("POST", "/api/session/recover", {
+      access_code: $("access-code").value,
+      name: $("login-name").value,
+      recovery_code: $("recovery-code").value,
+      new_pin: $("new-pin").value,
+    });
+  } catch (e) { gateError(e.message); return; }
+  $("recovery-code").value = ""; $("new-pin").value = "";
+  showRecoverForm(false);
+  showApp();
+  showRecoveryCode(state.me.recovery_code);
+}
+
+function showRecoverForm(on) {
+  $("pin-wrap").classList.toggle("hidden", on);
+  $("recover-wrap").classList.toggle("hidden", !on);
+}
+
+function showRecoveryCode(code) {
+  $("recovery-code-text").textContent = code;
+  $("recovery-modal").classList.remove("hidden");
+}
+
+async function claimAccount() {
+  try {
+    state.me = await api("POST", "/api/me/account", {
+      name: $("claim-name").value, pin: $("claim-pin").value,
+    });
+  } catch (e) { notice(e.message); return; }
+  $("claim-pin").value = "";
+  renderMe();
+  showRecoveryCode(state.me.recovery_code);
 }
 
 async function signOut() {
@@ -170,7 +213,11 @@ function clearLocalSettings() {
 function renderMe() {
   const me = state.me;
   const local = localSettings();
-  const name = me.display_name || "unnamed";
+  const name = me.login_name || me.display_name || "unnamed";
+  $("account-state").textContent = me.login_name
+    ? `Signed in as ${me.login_name}. Your name and PIN bring this account back on any browser.`
+    : "";
+  $("claim-wrap").classList.toggle("hidden", !!me.login_name);
   const displayProvider = local.key ? (local.provider || me.provider) : me.provider;
   const displayModel    = local.key ? (local.model    || me.model)    : me.model;
   $("who").textContent = `${name} · ${displayProvider} (${displayModel || "no model"})`;
@@ -1621,8 +1668,17 @@ async function exportRefCsv() {
 
 function wire() {
   // Auth
-  $("sign-in").addEventListener("click", signIn);
-  $("access-code").addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(); });
+  $("sign-in").addEventListener("click", () => signIn(false));
+  $("create-account").addEventListener("click", () => signIn(true));
+  $("login-pin").addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(false); });
+  $("show-recover").addEventListener("click", () => showRecoverForm(true));
+  $("hide-recover").addEventListener("click", () => showRecoverForm(false));
+  $("recover").addEventListener("click", recoverAccount);
+  $("recovery-done").addEventListener("click", () => {
+    $("recovery-modal").classList.add("hidden");
+    $("recovery-code-text").textContent = "";
+  });
+  $("claim-account").addEventListener("click", claimAccount);
   $("sign-out").addEventListener("click", signOut);
 
   // LLM settings panel

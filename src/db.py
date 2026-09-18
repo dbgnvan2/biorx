@@ -412,6 +412,18 @@ class Database:
         self._add_column_if_missing(cursor, "summaries", "created_by_user_id", "TEXT")
         self._add_column_if_missing(cursor, "users", "preferred_model", "TEXT DEFAULT ''")
 
+        # Web accounts (docs/implementation_plan_2026-09-18_accounts.md): a
+        # name + PIN that always return the same user; secrets stored hashed.
+        for col, definition in (("login_name", "TEXT"), ("pin_hash", "TEXT"),
+                                ("recovery_hash", "TEXT"),
+                                ("failed_logins", "INTEGER DEFAULT 0"),
+                                ("locked_until", "TEXT"), ("merged_into", "TEXT")):
+            self._add_column_if_missing(cursor, "users", col, definition)
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login_name "
+            "ON users(lower(login_name)) WHERE login_name IS NOT NULL"
+        )
+
     # SQLite cannot change a column constraint in place, so relaxing NOT NULL
     # means rebuilding the table. The rewrite targets exactly this declaration.
     _DOI_NOT_NULL = re.compile(r"\bdoi\s+TEXT\s+UNIQUE\s+NOT\s+NULL\b", re.IGNORECASE)

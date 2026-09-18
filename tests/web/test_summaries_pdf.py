@@ -59,9 +59,9 @@ def test_sp1_route_returns_a_pdf(signed_in, ctx):
 
 
 def test_sp1_another_users_list_is_404(signed_in, other_client, ctx):
-    from tests.web.conftest import ACCESS_CODE
+    from tests.web.conftest import ACCESS_CODE, account_body
     list_id = _list_with_papers(signed_in, ctx)
-    other_client.post("/api/session", json={"access_code": ACCESS_CODE, "display_name": "B"})
+    other_client.post("/api/session", json=account_body(ACCESS_CODE))
     assert other_client.get(f"/api/references/{list_id}/summaries.pdf").status_code == 404
 
 
@@ -186,9 +186,9 @@ def test_s1_is_read_only_for_unstored_results(signed_in, ctx):
 
 
 def test_s1_other_users_search_is_404(signed_in, other_client, ctx):
-    from tests.web.conftest import ACCESS_CODE
+    from tests.web.conftest import ACCESS_CODE, account_body
     job_id = _finished_search(signed_in, ctx, [SUMMARIZED])
-    other_client.post("/api/session", json={"access_code": ACCESS_CODE, "display_name": "B"})
+    other_client.post("/api/session", json=account_body(ACCESS_CODE))
     assert other_client.get(f"/api/searches/{job_id}/summaries").status_code == 404
     assert other_client.post(f"/api/searches/{job_id}/summaries.pdf", json={}).status_code == 404
 

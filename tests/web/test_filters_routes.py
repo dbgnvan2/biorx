@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.web.conftest import ACCESS_CODE
+from tests.web.conftest import ACCESS_CODE, account_body
 
 FILTER = {
     "days_back": 14,
@@ -68,13 +68,13 @@ def test_deleting_a_missing_filter_is_404(signed_in):
 def test_one_user_cannot_see_or_delete_anothers_filter(app):
     alice = TestClient(app)
     if True:
-        alice.post("/api/session", json={"access_code": ACCESS_CODE})
+        alice.post("/api/session", json=account_body(ACCESS_CODE))
         created = alice.post("/api/filters",
                              json={"name": "Alice only", "filter": FILTER}).json()
 
     bob = TestClient(app)
     if True:
-        bob.post("/api/session", json={"access_code": ACCESS_CODE})
+        bob.post("/api/session", json=account_body(ACCESS_CODE))
         names = [f["name"] for f in bob.get("/api/filters").json()["filters"]]
         assert "Alice only" not in names
         assert bob.delete(f"/api/filters/{created['id']}").status_code == 404

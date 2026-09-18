@@ -108,7 +108,7 @@ def test_an_undecryptable_stored_key_does_not_silently_spend_the_owners(
 # ── The profile payload is an exact, enumerated shape ─────────────────────────
 
 PROFILE_FIELDS = {
-    "user_id", "display_name", "provider", "model", "default_model",
+    "user_id", "display_name", "login_name", "provider", "model", "default_model",
     "preferred_model", "key_source", "key_last4",
     "byo_enabled", "byo_disabled_reason", "owner_summaries_used_today",
     "owner_summaries_cap", "owner_summaries_remaining", "available_providers",

@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-18 (evening) — web accounts: name + PIN
+
+### Added
+- **Accounts.** After the shared access code, each person signs in with a name
+  and PIN; the same name and PIN always return the same account, on any browser.
+  Previously every sign-in created a new, cookie-only user, so filters and Saved
+  References were lost with the cookie.
+- **Recovery code**, shown once at account creation; "Forgot PIN?" sets a new PIN
+  with it and issues a new code.
+- Lockout after repeated wrong PINs or recovery codes (`LOGIN_MAX_FAILURES`,
+  `LOGIN_LOCK_MINUTES`); PINs and codes stored as scrypt hashes.
+- Settings → Your account: give an existing cookie-only account a name and PIN.
+- `python -m src.accounts merge` combines two users (used to merge the two
+  "dave" users in the test database; identical seeded filters are not copied).
+
+
 ## 2026-09-18 (later) — no stale pages; summaries accumulate and save from Search
 
 ### Added

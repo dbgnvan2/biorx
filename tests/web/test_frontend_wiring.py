@@ -123,6 +123,8 @@ def test_the_client_calls_the_endpoints_that_matter():
     assert _api_paths_called_by_js() == {
         "/healthz",
         "/api/session",
+        "/api/session/recover",
+        "/api/me/account",
         "/api/me",
         "/api/me/llm-key",
         "/api/me/llm-model",
@@ -803,3 +805,26 @@ def test_s2_panel_is_above_the_results_and_refreshed_after_a_summary():
     code = _js_without_comments()
     body = re.search(r"async function startSummary\(paper, button\) \{.*?\n\}", code, re.DOTALL).group(0)
     assert "mergeSummaries(" in body and "refreshSearchSummaries()" in body
+
+
+# ── AC8: sign-in page and recovery dialog (docs/implementation_plan_2026-09-18_accounts.md) ──
+
+def test_ac8_sign_in_page_has_name_pin_create_and_recover():
+    ids = _element_ids_in_html()
+    for el in ("login-name", "login-pin", "sign-in", "create-account", "show-recover",
+               "recovery-code", "new-pin", "recover", "recovery-modal", "recovery-code-text",
+               "claim-name", "claim-pin", "claim-account"):
+        assert el in ids, el
+    assert "display-name" not in ids
+    html = INDEX.read_text()
+    assert 'id="login-pin" type="password"' in html
+    assert 'id="new-pin" type="password"' in html
+
+
+def test_ac8_recovery_code_is_shown_after_create_recover_and_claim():
+    code = _js_without_comments()
+    for fn in ("signIn", "recoverAccount", "claimAccount"):
+        body = re.search(rf"async function {fn}\(.*?\n\}}", code, re.DOTALL).group(0)
+        assert "showRecoveryCode(" in body, fn
+    close = re.search(r'\$\("recovery-done"\)\.addEventListener.*?\}\);', code, re.DOTALL).group(0)
+    assert 'textContent = ""' in close          # the code is cleared from the page
