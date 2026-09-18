@@ -99,3 +99,76 @@ def test_save_completed_search_as_list(signed_in, ctx):
 def test_save_as_list_requires_auth(client):
     assert client.post("/api/searches/abc/save-as-list",
                        json={"name": "x"}).status_code == 401
+
+
+# ── SAL: save-as-list fixes from the 2026-09-17 /csdp review ──────────────────
+
+def _search_job(signed_in, ctx, search_fn):
+    from unittest.mock import patch, MagicMock
+    orch = MagicMock()
+    orch.search = search_fn
+    with patch.object(ctx, "get_orchestrator", return_value=orch):
+        r = signed_in.post("/api/searches", json={
+            "filter": {"text_groups": []},
+            "source_selection": {"all": True, "selected": []},
+        })
+    assert r.status_code == 202
+    return r.json()["job_id"]
+
+
+def _wait(signed_in, job_id, want="done"):
+    for _ in range(50):
+        status = signed_in.get(f"/api/searches/{job_id}").json()["status"]
+        if status == want:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"job never reached {want}")
+
+
+def test_sal1_running_search_cannot_be_saved(signed_in, ctx):
+    """job.result is only set when the job finishes: saving earlier created an
+    empty list and took the name."""
+    import threading
+    release = threading.Event()
+
+    def slow_search(**_):
+        release.wait(5)
+
+    job_id = _search_job(signed_in, ctx, slow_search)
+    try:
+        r = signed_in.post(f"/api/searches/{job_id}/save-as-list", json={"name": "Early"})
+        assert r.status_code == 409
+        assert signed_in.get("/api/references").json()["lists"] == []
+    finally:
+        release.set()
+    _wait(signed_in, job_id)
+    assert signed_in.post(f"/api/searches/{job_id}/save-as-list",
+                          json={"name": "Early"}).status_code == 201
+
+
+def test_sal2_unstorable_papers_are_reported(signed_in, ctx):
+    """A paper with neither DOI nor canonical_id cannot be stored; it must be
+    counted and named, not dropped silently (P2)."""
+    from types import SimpleNamespace
+    good = dict(PAPER)
+    bad = {"title": "No identifiers at all", "abstract": "An abstract.", "authors": "X"}
+
+    def search(on_batch, **_):
+        on_batch([SimpleNamespace(to_dict=lambda p=p: dict(p)) for p in (good, bad)])
+
+    job_id = _search_job(signed_in, ctx, search)
+    _wait(signed_in, job_id)
+    r = signed_in.post(f"/api/searches/{job_id}/save-as-list", json={"name": "Mixed"})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert (body["saved"], body["requested"]) == (1, 2)
+    assert body["skipped"] == ["No identifiers at all"]
+
+
+def test_sal3_duplicate_name_is_409(signed_in, ctx):
+    job_id = _search_job(signed_in, ctx, lambda **_: None)
+    _wait(signed_in, job_id)
+    assert signed_in.post(f"/api/searches/{job_id}/save-as-list",
+                          json={"name": "Twice"}).status_code == 201
+    assert signed_in.post(f"/api/searches/{job_id}/save-as-list",
+                          json={"name": "Twice"}).status_code == 409

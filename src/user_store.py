@@ -18,6 +18,7 @@ import json
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
+import sqlite3
 from typing import Any, Dict, List, Optional
 
 from .crypto import KeyEncryptionUnavailable, decrypt_key, encrypt_key, last4
@@ -283,6 +284,9 @@ def seed_filters_from_file(db, user_id: str, filters: List[Dict[str, Any]]) -> i
 
 # ── Per-user reference lists ──────────────────────────────────────────────────
 
+class DuplicateListName(ValueError):
+    """The user already has a reference list with this name."""
+
 def list_reference_lists(db, user_id: str) -> List[Dict[str, Any]]:
     rows = db.conn.execute(
         """
@@ -308,21 +312,51 @@ def get_reference_list(db, user_id: str, list_id: int) -> Optional[Dict[str, Any
     return dict(row) if row else None
 
 
-def create_reference_list(db, user_id: str, name: str) -> int:
-    cur = db.conn.execute(
-        "INSERT INTO user_reference_lists (user_id, name) VALUES (?, ?)",
-        (user_id, name.strip()),
-    )
-    db.conn.commit()
+def _insert_reference_list(db, user_id: str, name: str) -> int:
+    """Insert without committing. Raises DuplicateListName."""
+    try:
+        cur = db.conn.execute(
+            "INSERT INTO user_reference_lists (user_id, name) VALUES (?, ?)",
+            (user_id, name.strip()),
+        )
+    except sqlite3.IntegrityError as e:
+        raise DuplicateListName(name) from e
     return cur.lastrowid
 
 
-def delete_reference_list(db, user_id: str, list_id: int) -> None:
-    db.conn.execute(
-        "DELETE FROM user_reference_lists WHERE user_id = ? AND id = ?",
-        (user_id, list_id),
-    )
+def create_reference_list(db, user_id: str, name: str) -> int:
+    try:
+        list_id = _insert_reference_list(db, user_id, name)
+    except DuplicateListName:
+        db.conn.rollback()
+        raise
     db.conn.commit()
+    return list_id
+
+
+def delete_reference_list(db, user_id: str, list_id: int) -> None:
+    """Delete a list and its items in one transaction.
+
+    The items are deleted explicitly: the schema's ON DELETE CASCADE does
+    nothing because SQLite leaves foreign keys off unless each connection
+    enables them, and this codebase does not.
+    """
+    try:
+        owned = db.conn.execute(
+            "SELECT 1 FROM user_reference_lists WHERE user_id = ? AND id = ?",
+            (user_id, list_id),
+        ).fetchone()
+        if owned:
+            db.conn.execute(
+                "DELETE FROM user_reference_list_items WHERE list_id = ?", (list_id,))
+            db.conn.execute(
+                "DELETE FROM user_reference_lists WHERE user_id = ? AND id = ?",
+                (user_id, list_id),
+            )
+        db.conn.commit()
+    except BaseException:
+        db.conn.rollback()
+        raise
 
 
 def list_reference_items(db, list_id: int) -> List[Dict[str, Any]]:
@@ -332,7 +366,7 @@ def list_reference_items(db, list_id: int) -> List[Dict[str, Any]]:
         SELECT i.id AS item_id, i.added_at,
                p.id AS paper_id, p.title, p.authors, p.pub_date,
                p.doi, p.url, p.abstract, p.source, p.server,
-               p.canonical_id, p.pdf_path, p.best_oa_url
+               p.canonical_id, p.pdf_path, p.best_oa_url, p.version
           FROM user_reference_list_items i
           JOIN papers p ON p.id = i.paper_id
          WHERE i.list_id = ?
@@ -395,13 +429,18 @@ def remove_reference_item(db, list_id: int, item_id: int) -> None:
 def create_reference_list_with_papers(
     db, user_id: str, name: str, paper_ids: List[int]
 ) -> int:
-    """Create a list and populate it atomically. Returns list_id."""
-    list_id = create_reference_list(db, user_id, name)
-    for pid in paper_ids:
-        db.conn.execute(
-            "INSERT OR IGNORE INTO user_reference_list_items (list_id, paper_id) "
-            "VALUES (?, ?)",
-            (list_id, pid),
-        )
-    db.conn.commit()
+    """Create a list and populate it in one transaction. Returns list_id.
+    Raises DuplicateListName, leaving nothing behind."""
+    try:
+        list_id = _insert_reference_list(db, user_id, name)
+        for pid in paper_ids:
+            db.conn.execute(
+                "INSERT OR IGNORE INTO user_reference_list_items (list_id, paper_id) "
+                "VALUES (?, ?)",
+                (list_id, pid),
+            )
+        db.conn.commit()
+    except BaseException:
+        db.conn.rollback()
+        raise
     return list_id

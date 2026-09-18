@@ -57,6 +57,8 @@ def test_every_dependency_is_pinned():
     ("requests", "requests"),
     ("PyYAML", "yaml"),
     ("pdfplumber", "pdfplumber"),
+    ("urllib3", "urllib3"),       # src/safe_fetch.py imports it directly
+    ("certifi", "certifi"),
 ])
 def test_each_pinned_package_is_real_and_importable(name, module):
     """

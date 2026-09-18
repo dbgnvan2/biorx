@@ -70,3 +70,13 @@ not_summarizable_title_prefixes:
   - "expression of concern"
   - "publisher correction"
   - "author correction"
+
+# Discover Terms (desktop and web): search broadly with the user's description,
+# then ask the model for search terms. The stop words are removed from the
+# description before it is searched — editorial content, so it lives here.
+discover:
+  days_back: 90
+  max_papers: 30
+  stop_words: [a, an, the, and, or, of, for, in, to, by, on, at, is, are, was,
+               were, be, been, being, that, this, with, from, how, what, where,
+               which, about, as]

@@ -421,8 +421,8 @@ function manualFilter() {
   const cat = $("search-category").value;
   if (cat && cat !== "(any)") f.category = cat;
   if (useRange) {
-    f.date_from = $("search-start-date").value;
-    f.date_to   = $("search-end-date").value;
+    f.start_date = $("search-start-date").value;
+    f.end_date   = $("search-end-date").value;
   } else {
     f.days_back = Number($("search-days").value) || 14;
   }
@@ -640,11 +640,16 @@ async function confirmSaveList() {
   if (!name) { notice("Enter a list name."); return; }
   if (!state.jobId) { notice("No search to save."); return; }
   try {
-    await api("POST", `/api/searches/${state.jobId}/save-as-list`, {
+    const saved = await api("POST", `/api/searches/${state.jobId}/save-as-list`, {
       name,
       paper_ids: Array.from(state.checkedPapers),
     });
-    notice(`Saved "${name}" to References.`, "ok");
+    if (saved.skipped && saved.skipped.length) {
+      notice(`Saved "${name}": ${saved.saved} of ${saved.requested} papers. ` +
+             `Could not store: ${saved.skipped.join("; ")}`, "warn");
+    } else {
+      notice(`Saved "${name}" to References (${saved.saved} papers).`, "ok");
+    }
     $("save-list-name-wrap").classList.add("hidden");
     $("save-list-name-input").value = "";
   } catch (e) { notice(e.message); }
@@ -851,23 +856,29 @@ function selectFilter(filterId) {
   const cat = fd.category || "(any)";
   $("filter-category").value = cat;
 
-  const useRange = !!(fd.date_from || fd.date_to);
+  // start_date/end_date are what the query builder reads; date_from/date_to
+  // were written by an earlier web build and are read here only to migrate.
+  const startDate = fd.start_date || fd.date_from || "";
+  const endDate   = fd.end_date   || fd.date_to   || "";
+  const useRange = !!(startDate || endDate);
   $("filter-date-range-toggle").checked = useRange;
   $("filter-days-wrap").classList.toggle("hidden", useRange);
   $("filter-date-range-wrap").classList.toggle("hidden", !useRange);
   $("filter-days").value = fd.days_back || 7;
-  $("filter-start-date").value = fd.date_from || "";
-  $("filter-end-date").value   = fd.date_to   || "";
+  $("filter-start-date").value = startDate;
+  $("filter-end-date").value   = endDate;
 
   $("filter-authors").value    = (fd.authors    || []).join(", ");
-  $("filter-institution").value = (fd.institution || []).join(", ");
+  // A string in the desktop format; an earlier web build saved a list.
+  $("filter-institution").value = Array.isArray(fd.institution)
+    ? fd.institution.join(", ") : (fd.institution || "");
   $("filter-paper-type").value = fd.paper_type || "(any)";
   $("filter-version").value    = fd.version    || "(any)";
   $("filter-published").value  = fd.published  || "(any)";
   $("filter-license").value    = fd.license    || "(any)";
   $("filter-species").value    = fd.species    || "(any)";
 
-  renderTextGroups(fd.text_groups || [{ keywords: "" }]);
+  renderTextGroups(fd.text_groups || [{}]);
 
   // Show the filter's own saved sources, so saving it does not silently
   // replace them with whatever the picker last held.
@@ -880,12 +891,32 @@ function selectFilter(filterId) {
   });
 }
 
+/* A text group has three comma-separated term fields, matching the desktop
+   editor and what src/filtering.py and the query builder read: title,
+   abstract, and both (title or abstract). Groups are ORed; fields within a
+   group are ANDed. `keywords` was written by an earlier web build and is read
+   only to migrate it into `both`. */
+const TEXT_GROUP_FIELDS = [
+  ["title", "Title words"],
+  ["abstract", "Abstract words"],
+  ["both", "Title or abstract words"],
+];
+
+function normaliseTextGroup(g) {
+  g = g || {};
+  return {
+    title: g.title || "",
+    abstract: g.abstract || "",
+    both: g.both || g.keywords || "",
+  };
+}
+
 function renderTextGroups(groups) {
   const container = $("filter-text-groups");
   container.textContent = "";
-  if (!groups.length) groups = [{ keywords: "" }];
+  if (!groups.length) groups = [{}];
   for (let gi = 0; gi < groups.length; gi++) {
-    const g = groups[gi];
+    const g = normaliseTextGroup(groups[gi]);
     const div = document.createElement("div");
     div.className = "text-group";
     div.style.cssText = "border:1px solid #ccc;padding:6px;margin-bottom:6px;border-radius:4px";
@@ -897,32 +928,41 @@ function renderTextGroups(groups) {
       orLabel.style.marginBottom = "4px";
       div.appendChild(orLabel);
     }
-    const input = document.createElement("input");
-    input.type = "text";
-    input.style.width = "100%";
-    input.placeholder = "keywords (comma-separated)";
-    input.value = g.keywords || g.both || "";
-    const removeBtn = document.createElement("button");
-    removeBtn.className = "link small";
-    removeBtn.textContent = "remove";
-    removeBtn.style.marginLeft = "8px";
-    removeBtn.addEventListener("click", () => { div.remove(); });
     const row = document.createElement("div");
     row.className = "row";
-    row.appendChild(input);
+    for (const [field, label] of TEXT_GROUP_FIELDS) {
+      const wrap = document.createElement("label");
+      const span = document.createElement("span");
+      span.textContent = label;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = "comma-separated";
+      input.dataset.field = field;
+      input.value = g[field];
+      wrap.append(span, input);
+      row.appendChild(wrap);
+    }
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "link small shrink";
+    removeBtn.textContent = "remove";
+    removeBtn.addEventListener("click", () => { div.remove(); });
     row.appendChild(removeBtn);
     div.appendChild(row);
     container.appendChild(div);
   }
 }
 
-function collectTextGroups() {
+function collectTextGroups(keepEmpty = false) {
   const groups = [];
   for (const div of $("filter-text-groups").querySelectorAll(".text-group")) {
-    const val = div.querySelector("input").value.trim();
-    if (val) groups.push({ keywords: val });
+    const g = {};
+    for (const [field] of TEXT_GROUP_FIELDS) {
+      const input = div.querySelector(`input[data-field="${field}"]`);
+      g[field] = input ? input.value.trim() : "";
+    }
+    if (keepEmpty || g.title || g.abstract || g.both) groups.push(g);
   }
-  return groups.length ? groups : [{ keywords: "" }];
+  return groups;
 }
 
 function buildFilterDict() {
@@ -930,14 +970,14 @@ function buildFilterDict() {
   const f = {
     text_groups: collectTextGroups(),
     authors:     $("filter-authors").value.split(",").map(s => s.trim()).filter(Boolean),
-    institution: $("filter-institution").value.split(",").map(s => s.trim()).filter(Boolean),
+    institution: $("filter-institution").value.trim(),   // a string: filtering.py calls .strip()
     source_selection: getSourceSelection($("filter-sources-picker")),
   };
   const cat = $("filter-category").value;
   if (cat && cat !== "(any)") f.category = cat;
   if (useRange) {
-    f.date_from = $("filter-start-date").value;
-    f.date_to   = $("filter-end-date").value;
+    f.start_date = $("filter-start-date").value;
+    f.end_date   = $("filter-end-date").value;
   } else {
     f.days_back = Number($("filter-days").value) || 7;
   }
@@ -964,7 +1004,7 @@ async function newFilter() {
   $("filter-date-range-wrap").classList.add("hidden");
   $("filter-authors").value = "";
   $("filter-institution").value = "";
-  renderTextGroups([{ keywords: "" }]);
+  renderTextGroups([{}]);
   renderSourcePicker($("filter-sources-picker"), state.sources, defaultSourceIds());
   $("filter-name").focus();
 }
@@ -1109,7 +1149,7 @@ async function discoverTerms() {
 async function pollDiscover() {
   if (!state.discoverJobId) return;
   let job;
-  try { job = await api("GET", `/api/searches/${state.discoverJobId}`); }
+  try { job = await api("GET", `/api/discover-terms/${state.discoverJobId}`); }
   catch (e) {
     clearInterval(state.discoverPolling);
     $("discover-terms-chips").textContent = e.message;
@@ -1120,10 +1160,17 @@ async function pollDiscover() {
     clearInterval(state.discoverPolling);
     state.discoverPolling = null;
     $("btn-discover").disabled = false;
-    if (job.status === "done" && job.result && job.result.terms) {
-      renderDiscoverChips(job.result.terms);
+    const failed = (job.sources_failed || []).length
+      ? ` Could not reach: ${job.sources_failed.join(", ")}.` : "";
+    if (job.status === "done" && job.result && job.result.papers_found === 0) {
+      $("discover-terms-chips").textContent =
+        `No papers found for "${job.result.keywords}" in the date range, ` +
+        `so there was nothing to suggest terms from.${failed}`;
+    } else if (job.status === "done" && job.result) {
+      renderDiscoverChips(job.result.terms || []);
+      if (failed) notice(`Discover Terms: results may be incomplete.${failed}`, "warn");
     } else {
-      $("discover-terms-chips").textContent = job.error || "No terms found.";
+      $("discover-terms-chips").textContent = (job.error || `Discover ${job.status}.`) + failed;
     }
   } else {
     $("discover-terms-chips").textContent = job.phase || "Working…";
@@ -1146,7 +1193,7 @@ function renderDiscoverChips(terms) {
 }
 
 function insertDiscoverTerm(term) {
-  const groups = $("filter-text-groups").querySelectorAll(".text-group input");
+  const groups = $("filter-text-groups").querySelectorAll('.text-group input[data-field="both"]');
   if (groups.length) {
     const last = groups[groups.length - 1];
     last.value = last.value ? last.value + ", " + term : term;
@@ -1278,13 +1325,18 @@ async function deleteRefList() {
 async function removeRefSelected() {
   if (!state.activeListId) return;
   const checked = Array.from($("ref-papers-body").querySelectorAll("input:checked"));
+  const failures = [];
   for (const cb of checked) {
     try {
       await api("DELETE", `/api/references/${state.activeListId}/items/${cb.dataset.itemId}`);
-    } catch (e) { /* skip */ }
+    } catch (e) { failures.push(e.message); }
   }
   await selectRefList(state.activeListId);
   await loadRefTab();
+  if (failures.length) {
+    notice(`Removed ${checked.length - failures.length} of ${checked.length}; ` +
+           `${failures.length} failed: ${[...new Set(failures)].join("; ")}`);
+  }
 }
 
 async function downloadRefPdfs(selectedOnly) {
@@ -1297,9 +1349,11 @@ async function downloadRefPdfs(selectedOnly) {
   $("ref-dl-status").textContent = `Downloading ${itemIds.length} PDF(s)…`;
   $("ref-dl-status").classList.remove("hidden");
   let done = 0;
+  const failures = [];
   for (const itemId of itemIds) {
     const item = state.refItems.find(i => String(i.item_id) === String(itemId));
-    if (!item) continue;
+    if (!item) { failures.push(`item ${itemId}: no longer in the list`); continue; }
+    const title = ((item.paper || item).title || `paper ${itemId}`).slice(0, 60);
     const paperId = (item.paper || item).paper_id;
     try {
       const resp = await api("GET", `/api/references/${state.activeListId}/pdf/${paperId}`, undefined, { raw: true });
@@ -1310,13 +1364,20 @@ async function downloadRefPdfs(selectedOnly) {
         a.href = url;
         a.download = `paper-${paperId}.pdf`;
         a.click();
-        URL.revokeObjectURL(url);
+        // Revoking in the same tick can cancel the download in some browsers.
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
         done++;
+      } else {
+        let detail = `${resp.status}`;
+        try { detail = (await resp.json()).detail || detail; } catch (e) {}
+        failures.push(`${title}: ${detail}`);
       }
-    } catch (e) { /* skip */ }
+    } catch (e) { failures.push(`${title}: ${e.message}`); }
     $("ref-dl-status").textContent = `Downloaded ${done} / ${itemIds.length}`;
   }
-  $("ref-dl-status").textContent = `Done — ${done} PDF(s) downloaded.`;
+  $("ref-dl-status").textContent =
+    `Done — ${done} of ${itemIds.length} PDF(s) downloaded.` +
+    (failures.length ? ` Not downloaded: ${failures.join(" · ")}` : "");
 }
 
 async function exportRefCsv() {
@@ -1329,7 +1390,7 @@ async function exportRefCsv() {
   a.href = url;
   a.download = "references.csv";
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 /* ── Wiring ──────────────────────────────────────────────────────────────── */
@@ -1388,8 +1449,8 @@ function wire() {
     $("filter-date-range-wrap").classList.toggle("hidden", !on);
   });
   $("btn-add-group").addEventListener("click", () => {
-    const groups = collectTextGroups();
-    groups.push({ keywords: "" });
+    const groups = collectTextGroups(true);
+    groups.push({});
     renderTextGroups(groups);
   });
   $("btn-discover").addEventListener("click", discoverTerms);

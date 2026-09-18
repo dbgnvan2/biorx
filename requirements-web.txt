@@ -10,6 +10,12 @@ requests==2.31.0
 pdfplumber==0.10.3
 PyYAML==6.0.2
 
+# Imported directly by src/safe_fetch.py (the PDF proxy pins its connection
+# with urllib3 and verifies TLS against certifi). Both also arrive with
+# requests; pinned so a blank machine gets the versions verified here.
+urllib3==2.2.2
+certifi==2024.6.2
+
 # Web
 fastapi==0.141.1
 uvicorn[standard]==0.32.1

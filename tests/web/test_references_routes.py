@@ -10,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import pytest
 
+from src import user_store
+
 PAPER = {
     "title": "Neural networks in biology",
     "authors": "Smith J, Jones A",
@@ -61,50 +63,96 @@ def test_other_user_cannot_see_or_delete_list(app, signed_in, other_client):
     assert other_client.delete(f"/api/references/{list_id}").status_code == 404
 
 
+def _add(signed_in, ctx, list_id, paper):
+    """Put a paper in a list the way save-as-list does: store it, then link it.
+    (There is no route for adding a client-supplied paper — see REF-3.)"""
+    pid = ctx.db.insert_paper(paper) or ctx.db.find_paper(paper)["id"]
+    item_id = user_store.add_reference_item(ctx.db, list_id, pid)
+    return pid, item_id
+
+
 # ── Items ─────────────────────────────────────────────────────────────────────
 
-def test_add_and_list_item(signed_in):
+def test_add_and_list_item(signed_in, ctx):
     list_id = signed_in.post("/api/references", json={"name": "Papers"}).json()["id"]
-    r = signed_in.post(f"/api/references/{list_id}/items", json={"paper": PAPER})
-    assert r.status_code == 201
-
+    _add(signed_in, ctx, list_id, PAPER)
     items = signed_in.get(f"/api/references/{list_id}/items").json()["items"]
     assert len(items) == 1
     assert items[0]["paper"]["title"] == PAPER["title"]
 
 
-def test_add_duplicate_paper_is_idempotent(signed_in):
+def test_add_duplicate_paper_is_idempotent(signed_in, ctx):
     list_id = signed_in.post("/api/references", json={"name": "Dedup"}).json()["id"]
-    signed_in.post(f"/api/references/{list_id}/items", json={"paper": PAPER})
-    signed_in.post(f"/api/references/{list_id}/items", json={"paper": PAPER})
+    _add(signed_in, ctx, list_id, PAPER)
+    _add(signed_in, ctx, list_id, PAPER)
     items = signed_in.get(f"/api/references/{list_id}/items").json()["items"]
     assert len(items) == 1
 
 
-def test_remove_item(signed_in):
+def test_remove_item(signed_in, ctx):
     list_id = signed_in.post("/api/references", json={"name": "RemoveTest"}).json()["id"]
-    item = signed_in.post(f"/api/references/{list_id}/items", json={"paper": PAPER}).json()
-    item_id = item["item_id"]
+    _, item_id = _add(signed_in, ctx, list_id, PAPER)
     r = signed_in.delete(f"/api/references/{list_id}/items/{item_id}")
     assert r.status_code == 200
     assert signed_in.get(f"/api/references/{list_id}/items").json()["items"] == []
 
 
-def test_cascade_delete_removes_items(signed_in):
-    """Deleting a list removes its items via ON DELETE CASCADE."""
+def test_ref1_delete_list_removes_its_item_rows(signed_in, ctx):
+    """REF-1: the item rows are gone, not just unreachable. The schema's ON
+    DELETE CASCADE never fires (foreign keys are off in SQLite by default), so
+    the previous test — which only checked the list 404s — could not fail."""
     list_id = signed_in.post("/api/references", json={"name": "Cascade"}).json()["id"]
-    signed_in.post(f"/api/references/{list_id}/items", json={"paper": PAPER})
+    _add(signed_in, ctx, list_id, PAPER)
     signed_in.delete(f"/api/references/{list_id}")
-    # Confirm items are gone (direct DB check via ctx is not available here;
-    # the route is 404 on the list itself, which implies CASCADE worked)
-    assert signed_in.get(f"/api/references/{list_id}/items").status_code == 404
+    count = ctx.db.conn.execute(
+        "SELECT COUNT(*) FROM user_reference_list_items WHERE list_id = ?", (list_id,)
+    ).fetchone()[0]
+    assert count == 0
+
+
+def test_ref1_delete_does_not_touch_another_users_items(signed_in, other_client, ctx):
+    from tests.web.conftest import ACCESS_CODE
+    list_id = signed_in.post("/api/references", json={"name": "Mine"}).json()["id"]
+    _add(signed_in, ctx, list_id, PAPER)
+    other_client.post("/api/session", json={"access_code": ACCESS_CODE, "display_name": "B"})
+    assert other_client.delete(f"/api/references/{list_id}").status_code == 404
+    assert len(signed_in.get(f"/api/references/{list_id}/items").json()["items"]) == 1
+
+
+def test_ref2_duplicate_list_name_is_409(signed_in):
+    assert signed_in.post("/api/references", json={"name": "Reading"}).status_code == 201
+    r = signed_in.post("/api/references", json={"name": "Reading"})
+    assert r.status_code == 409
+    assert "Reading" in r.json()["detail"]
+
+
+def test_ref2_failed_create_with_papers_leaves_nothing(signed_in, ctx):
+    """A duplicate name aborts the whole transaction: no orphan items."""
+    user_id = signed_in.get("/api/me").json()["user_id"]
+    pid = ctx.db.insert_paper(PAPER)
+    user_store.create_reference_list(ctx.db, user_id, "Taken")
+    before = ctx.db.conn.execute("SELECT COUNT(*) FROM user_reference_list_items").fetchone()[0]
+    with pytest.raises(user_store.DuplicateListName):
+        user_store.create_reference_list_with_papers(ctx.db, user_id, "Taken", [pid])
+    after = ctx.db.conn.execute("SELECT COUNT(*) FROM user_reference_list_items").fetchone()[0]
+    assert after == before
+
+
+def test_ref3_no_route_adds_a_client_supplied_paper(signed_in, app):
+    """REF-3: a client-supplied paper dict would put any URL behind the PDF proxy."""
+    list_id = signed_in.post("/api/references", json={"name": "NoAdd"}).json()["id"]
+    r = signed_in.post(f"/api/references/{list_id}/items",
+                       json={"paper": {**PAPER, "best_oa_url": "https://evil.example/x"}})
+    assert r.status_code == 405
+    paths = {(getattr(rt, "path", ""), m) for rt in app.routes for m in getattr(rt, "methods", [])}
+    assert ("/api/references/{list_id}/items", "POST") not in paths
 
 
 # ── CSV export ────────────────────────────────────────────────────────────────
 
-def test_csv_export_has_correct_headers(signed_in):
+def test_csv_export_has_correct_headers(signed_in, ctx):
     list_id = signed_in.post("/api/references", json={"name": "Export"}).json()["id"]
-    signed_in.post(f"/api/references/{list_id}/items", json={"paper": PAPER})
+    _add(signed_in, ctx, list_id, PAPER)
     r = signed_in.get(f"/api/references/{list_id}/export.csv")
     assert r.status_code == 200
     assert "text/csv" in r.headers["content-type"]
@@ -112,34 +160,69 @@ def test_csv_export_has_correct_headers(signed_in):
     assert lines[0] == '"Title","Authors","Date","DOI","Source","PDF URL"'
 
 
-def test_csv_formula_injection_is_escaped(signed_in):
+def test_csv_formula_injection_is_escaped(signed_in, ctx):
     """A title starting with = must be prefixed with ' to block spreadsheet formulas."""
-    evil_paper = {**PAPER, "title": "=SUM(A1:Z99)", "doi": "10.1234/evil"}
+    evil_paper = {**PAPER, "title": "=SUM(A1:Z99)", "doi": "10.1234/evil",
+                  "canonical_id": "doi:10.1234/evil"}
     list_id = signed_in.post("/api/references", json={"name": "Evil"}).json()["id"]
-    signed_in.post(f"/api/references/{list_id}/items", json={"paper": evil_paper})
+    _add(signed_in, ctx, list_id, evil_paper)
     r = signed_in.get(f"/api/references/{list_id}/export.csv")
-    # The raw formula =SUM... must not appear as the first character of a field.
-    # csv.QUOTE_ALL wraps the prefixed value as "'=SUM(...)" — the ' comes first.
+    assert "'=SUM" in r.text
     assert "\"=SUM" not in r.text          # no bare =SUM as start-of-field
+
+
+def test_ref4_csv_uses_the_papers_biorxiv_version(signed_in, ctx):
+    """REF-4: the export's SELECT omitted `version`, so every bioRxiv paper
+    exported a v1 URL."""
+    v3 = {**PAPER, "doi": "10.1101/2026.01.01.123456", "canonical_id": "doi:10.1101/2026.01.01.123456",
+          "server": "biorxiv", "source": "biorxiv_medrxiv", "version": 3}
+    list_id = signed_in.post("/api/references", json={"name": "Versions"}).json()["id"]
+    _add(signed_in, ctx, list_id, v3)
+    text = signed_in.get(f"/api/references/{list_id}/export.csv").text
+    assert "v3.full.pdf" in text
+    assert "v1.full.pdf" not in text
 
 
 # ── PDF proxy ─────────────────────────────────────────────────────────────────
 
-def test_pdf_proxy_refuses_http_url(signed_in, monkeypatch, ctx):
-    """http:// URLs are rejected — https only."""
-    import web.routes_references as rr
-    list_id = signed_in.post("/api/references", json={"name": "PDFTest"}).json()["id"]
-    # Add paper with an http URL
-    http_paper = {**PAPER, "doi": "10.1234/http", "canonical_id": "doi:10.1234/http",
-                  "url": "http://example.com/paper.pdf"}
-    signed_in.post(f"/api/references/{list_id}/items", json={"paper": http_paper})
-    items = signed_in.get(f"/api/references/{list_id}/items").json()["items"]
-    paper_id = items[0]["paper"]["paper_id"]
+def _pdf_route(signed_in, ctx, name):
+    list_id = signed_in.post("/api/references", json={"name": name}).json()["id"]
+    pid, _ = _add(signed_in, ctx, list_id, PAPER)
+    return f"/api/references/{list_id}/pdf/{pid}"
 
-    # Patch pdf_url to return an http URL
+
+def test_pdf_proxy_refuses_http_url(signed_in, monkeypatch, ctx):
+    """http:// URLs are rejected — https only. Goes through the real fetcher,
+    which refuses before any network call."""
+    import web.routes_references as rr
+    route = _pdf_route(signed_in, ctx, "PDFTest")
     monkeypatch.setattr(rr, "_pdf_url_from_paper", lambda p: "http://evil.example.com/x.pdf")
-    r = signed_in.get(f"/api/references/{list_id}/pdf/{paper_id}")
-    assert r.status_code == 403
+    assert signed_in.get(route).status_code == 403
+
+
+@pytest.mark.parametrize("exc,code", [
+    ("FetchRefused", 403), ("NotAPdf", 422), ("TooLarge", 413), ("FetchFailed", 502)])
+def test_ref5_pdf_proxy_maps_fetch_outcomes(signed_in, monkeypatch, ctx, exc, code):
+    import web.routes_references as rr
+    from src import safe_fetch
+    route = _pdf_route(signed_in, ctx, f"Map{exc}")
+    monkeypatch.setattr(rr, "_pdf_url_from_paper", lambda p: "https://pub.example/x.pdf")
+
+    def boom(*a, **k):
+        raise getattr(safe_fetch, exc)("detail")
+    monkeypatch.setattr(rr.safe_fetch, "fetch_pdf", boom)
+    assert signed_in.get(route).status_code == code
+
+
+def test_ref5_pdf_proxy_returns_the_pdf(signed_in, monkeypatch, ctx):
+    import web.routes_references as rr
+    route = _pdf_route(signed_in, ctx, "PDFOk")
+    monkeypatch.setattr(rr, "_pdf_url_from_paper", lambda p: "https://pub.example/x.pdf")
+    monkeypatch.setattr(rr.safe_fetch, "fetch_pdf", lambda *a, **k: b"%PDF-1.7 ok")
+    r = signed_in.get(route)
+    assert r.status_code == 200
+    assert r.content == b"%PDF-1.7 ok"
+    assert r.headers["content-type"] == "application/pdf"
 
 
 def test_pdf_proxy_refuses_paper_not_in_list(signed_in):

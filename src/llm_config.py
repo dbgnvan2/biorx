@@ -32,6 +32,7 @@ _FALLBACK: Dict[str, Any] = {
     "max_text_chars": 12000,
     "summary_daily_cap_per_user": 25,
     "not_summarizable_title_prefixes": [],
+    "discover": {"days_back": 90, "max_papers": 30, "stop_words": []},
 }
 
 

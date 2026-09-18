@@ -141,3 +141,26 @@ def test_the_profile_never_carries_the_stored_ciphertext(ctx, signed_in, enc_sec
         serialized = response.text
         assert "gAAAAA" not in serialized, "a Fernet token reached the response"
         assert ciphertext.decode("utf-8", "ignore")[:24] not in serialized
+
+
+# ── ME1: the profile reports the model that will actually run ─────────────────
+
+def test_me1_preferred_model_without_own_key_reports_the_default(signed_in, monkeypatch, ctx):
+    """resolve_client ignores the preferred model on the owner key, so /api/me
+    must not claim it will be used."""
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-owner")
+    from src.llm_config import load_llm_config
+    ctx.llm_config = load_llm_config()
+    body = signed_in.put("/api/me/llm-model", json={"model": "claude-haiku-4-5"}).json()
+    assert body["key_source"] == "owner"
+    assert body["preferred_model"] == "claude-haiku-4-5"
+    assert body["model"] == body["default_model"] != "claude-haiku-4-5"
+
+
+def test_me1_preferred_model_with_own_key_is_reported(signed_in, enc_secret):
+    signed_in.put("/api/me/llm-key", json={"provider": "anthropic", "api_key": KEY,
+                                          "model": "claude-haiku-4-5"})
+    body = signed_in.get("/api/me").json()
+    assert body["key_source"] == "user"
+    assert body["model"] == "claude-haiku-4-5"

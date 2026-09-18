@@ -143,6 +143,7 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/references/{param}/export.csv",
         "/api/references/{param}/pdf/{param}",
         "/api/discover-terms",
+        "/api/discover-terms/{param}",
     }
 
 
@@ -409,3 +410,93 @@ def test_ps10_select_filter_reads_through_filter_fields():
     assert body, "selectFilter is no longer defined"
     assert "filterFields(f)" in body.group(0)
     assert "f.filter" not in body.group(0)
+
+
+# ── FE: the filter editor writes what the server reads (2026-09-17 /csdp) ─────
+
+def _node_eval(snippets, expression):
+    import json
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    script = "\n".join(snippets) + f"\nconsole.log(JSON.stringify({expression}));"
+    result = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip())
+
+
+def _js_block(pattern):
+    match = re.search(pattern, APP_JS.read_text(), re.DOTALL)
+    assert match, f"not found in app.js: {pattern}"
+    return match.group(0)
+
+
+def test_fe1_text_group_fields_are_the_ones_filtering_reads():
+    """FE1: the editor saved groups as {keywords}, a key src/filtering.py and
+    the query builder never read, so a saved filter matched everything."""
+    import inspect
+    from src import filtering
+    from src.sources import query_builder
+    fields = _node_eval([_js_block(r"const TEXT_GROUP_FIELDS = \[.*?\];")],
+                        "TEXT_GROUP_FIELDS.map(f => f[0])")
+    assert set(fields) == {"title", "abstract", "both"}
+    for module in (filtering, query_builder):
+        src = inspect.getsource(module)
+        for field in fields:
+            assert f'group.get("{field}"' in src, f"{module.__name__} does not read {field}"
+
+
+def test_fe1_saved_group_filters_papers_adversarial():
+    """A group built by the client's normaliser, run through the server's real
+    filter: a zebrafish filter must reject a cortisol paper. A legacy
+    {keywords} group is migrated into `both` and still filters."""
+    from src.filtering import filter_papers
+    groups = _node_eval(
+        [_js_block(r"function normaliseTextGroup\(g\) \{.*?\n\}")],
+        '[normaliseTextGroup({title: "zebrafish"}), normaliseTextGroup({keywords: "zebrafish"})]')
+    paper = {"title": "Cortisol and maternal stress", "abstract": "Human cohort."}
+    for g in groups:
+        assert filter_papers([paper], {"text_groups": [g]}) == [], g
+        assert filter_papers([{**paper, "title": "Zebrafish larvae"}], {"text_groups": [g]}), g
+
+
+def test_fe2_filter_dict_uses_server_key_names():
+    """FE2: institution is a string (filtering.py calls .strip() on it) and dates
+    are start_date/end_date (what the query builder reads)."""
+    code = _js_without_comments()
+    build = re.search(r"function buildFilterDict\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    manual = re.search(r"function manualFilter\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert 'institution: $("filter-institution").value.trim()' in build
+    for body in (build, manual):
+        assert "f.start_date" in body and "f.end_date" in body
+        assert "f.date_from" not in body and "f.date_to" not in body
+
+
+def test_fe2_server_accepts_the_client_filter_shape():
+    """The shape buildFilterDict produces runs through the real server code."""
+    from src.filtering import filter_papers
+    from src.sources.query_builder import build_europepmc_query
+    f = {"text_groups": [{"title": "", "abstract": "", "both": "stress"}],
+         "authors": [], "institution": "", "start_date": "2020-01-01",
+         "end_date": "2020-12-31", "source_selection": {"all": True, "selected": []}}
+    assert filter_papers([{"title": "stress", "abstract": ""}], f)
+    q = build_europepmc_query(f)
+    assert "2020-01-01" in q and "2020-12-31" in q
+
+
+def test_fe3_bulk_actions_do_not_swallow_failures():
+    """FE3: bulk PDF download and bulk remove report what failed."""
+    code = _js_without_comments()
+    for name in ("downloadRefPdfs", "removeRefSelected"):
+        body = re.search(rf"async function {name}\(.*?\n\}}", code, re.DOTALL).group(0)
+        assert "/* skip */" not in body and "{ }" not in body.replace("catch (e) {}", "")
+        assert "failures.push" in body, f"{name} does not collect failures"
+
+
+def test_dt2_client_polls_the_discover_endpoint():
+    code = _js_without_comments()
+    body = re.search(r"async function pollDiscover\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "/api/discover-terms/" in body
+    assert "/api/searches/" not in body

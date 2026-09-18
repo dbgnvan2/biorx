@@ -7,18 +7,14 @@ Tests:   tests/web/test_references_routes.py
 from __future__ import annotations
 
 import csv
-import ipaddress
 import io
 import logging
-import socket
-import urllib.parse
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
-import requests as _requests
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
-from src import user_store
+from src import safe_fetch, user_store
 from src.paper_meta import pdf_url as _pdf_url_from_paper
 
 from .auth import current_user, get_context
@@ -28,50 +24,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 PDF_MAX_BYTES = 100 * 1024 * 1024   # 100 MB hard ceiling
-
-# ── RFC-1918 / loopback blocks the proxy must never fetch ────────────────────
-_PRIVATE_NETWORKS = [
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),
-]
-
-
-def _is_private_ip(host: str) -> bool:
-    try:
-        addr = ipaddress.ip_address(socket.gethostbyname(host))
-        return any(addr in net for net in _PRIVATE_NETWORKS)
-    except (socket.gaierror, ValueError):
-        return False  # can't resolve → let requests fail naturally
-
-
-def _safe_pdf_url(url: str) -> str:
-    """Return url if it is safe to proxy, raise 403 otherwise."""
-    if not url.startswith("https://"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="PDF URL must use https.",
-        )
-    parsed = urllib.parse.urlparse(url)
-    if _is_private_ip(parsed.hostname or ""):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="PDF URL resolves to a private address.",
-        )
-    return url
+PDF_TIMEOUT_SECONDS = 30
 
 
 # ── Pydantic models ──────────────────────────────────────────────────────────
 
 class CreateListBody(BaseModel):
     name: str = Field(min_length=1, max_length=200)
-
-
-class AddItemBody(BaseModel):
-    paper: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ── List helpers ─────────────────────────────────────────────────────────────
@@ -104,7 +63,11 @@ def list_references(ctx: AppContext = Depends(get_context),
 def create_reference_list(body: CreateListBody,
                           ctx: AppContext = Depends(get_context),
                           user_id: str = Depends(current_user)):
-    list_id = user_store.create_reference_list(ctx.db, user_id, body.name)
+    try:
+        list_id = user_store.create_reference_list(ctx.db, user_id, body.name)
+    except user_store.DuplicateListName:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"You already have a list called {body.name!r}.")
     return user_store.get_reference_list(ctx.db, user_id, list_id)
 
 
@@ -125,23 +88,9 @@ def list_reference_items(list_id: int,
     return {"items": user_store.list_reference_items(ctx.db, list_id)}
 
 
-@router.post("/api/references/{list_id}/items", status_code=status.HTTP_201_CREATED)
-def add_reference_item(list_id: int, body: AddItemBody,
-                       ctx: AppContext = Depends(get_context),
-                       user_id: str = Depends(current_user)):
-    _get_list_or_404(ctx, user_id, list_id)
-    if not body.paper:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="No paper supplied.")
-    paper_id = ctx.db.insert_paper(body.paper)
-    if not paper_id:
-        existing = ctx.db.find_paper(body.paper)
-        paper_id = existing["id"] if existing else None
-    if not paper_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="Could not store paper.")
-    item_id = user_store.add_reference_item(ctx.db, list_id, paper_id)
-    return user_store.get_reference_list_item(ctx.db, list_id, item_id)
+# There is deliberately no route that adds a client-supplied paper to a list.
+# Papers reach a list only through save-as-list, from a search the server ran;
+# a client-supplied paper dict would let a user put any URL behind the proxy.
 
 
 @router.delete("/api/references/{list_id}/items/{item_id}")
@@ -198,8 +147,9 @@ def proxy_pdf(list_id: int, paper_id: int,
               user_id: str = Depends(current_user)):
     """Proxy a PDF from its source URL.
 
-    Validates: user owns the list, paper_id is in the list, URL is https and
-    not private, upstream Content-Length is within PDF_MAX_BYTES.
+    Validates: user owns the list and paper_id is in the list. The fetch rules
+    (https, public addresses on every redirect hop, size cap, PDF magic bytes)
+    live in src/safe_fetch.py.
     """
     _get_list_or_404(ctx, user_id, list_id)
 
@@ -209,7 +159,9 @@ def proxy_pdf(list_id: int, paper_id: int,
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="Paper not in this list.")
 
-    # Fetch the URL from the database — never from the client
+    # The URL comes from the papers row. That row is not proof the URL is safe:
+    # POST /api/summaries also stores the paper dict a client sends. The fetch
+    # rules in safe_fetch are what keep this off internal addresses.
     paper = ctx.db.get_paper_by_id(paper_id)
     if not paper:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
@@ -219,29 +171,24 @@ def proxy_pdf(list_id: int, paper_id: int,
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No PDF URL for this paper.")
 
-    _safe_pdf_url(url)   # raises 403 if unsafe
-
     try:
-        resp = _requests.get(url, stream=True, timeout=30,
-                             headers={"User-Agent": "BioRx/1.0"})
-        resp.raise_for_status()
-    except _requests.RequestException as exc:
+        data = safe_fetch.fetch_pdf(url, PDF_MAX_BYTES, timeout=PDF_TIMEOUT_SECONDS)
+    except safe_fetch.FetchRefused as exc:
+        logger.warning("PDF proxy refused %s: %s", url, exc)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except safe_fetch.NotAPdf as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No PDF available: the link leads to a web page, not a PDF.",
+        ) from exc
+    except safe_fetch.TooLarge as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"PDF exceeds {PDF_MAX_BYTES // (1024*1024)} MB limit.",
+        ) from exc
+    except safe_fetch.FetchFailed as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail=f"Could not fetch PDF: {exc}") from exc
-
-    content_length = resp.headers.get("Content-Length")
-    if content_length and int(content_length) > PDF_MAX_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"PDF exceeds {PDF_MAX_BYTES // (1024*1024)} MB limit.",
-        )
-
-    data = resp.content
-    if len(data) > PDF_MAX_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"PDF exceeds {PDF_MAX_BYTES // (1024*1024)} MB limit.",
-        )
+                            detail=str(exc)) from exc
 
     return Response(
         content=data,

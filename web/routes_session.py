@@ -60,7 +60,12 @@ def _me(ctx: AppContext, user_id: str) -> dict:
         key_source = "missing"
 
     preferred_model = user.get("preferred_model") or ""
-    effective_model = preferred_model or (pconf.model if pconf else "")
+    default_model = pconf.model if pconf else ""
+    # resolve_client honours the preferred model only on the user's own stored
+    # key; on the owner key or local Ollama the config model runs. Report the
+    # one that will actually run. (A key kept only in the browser is not known
+    # here; the client shows its model itself.)
+    effective_model = (preferred_model or default_model) if key_source == "user" else default_model
 
     used = user_store.owner_usage_today(ctx.db, user_id)
     cap = summary_daily_cap(ctx.llm_config)
@@ -69,7 +74,7 @@ def _me(ctx: AppContext, user_id: str) -> dict:
         "display_name": user.get("display_name", ""),
         "provider": effective,
         "model": effective_model,
-        "default_model": pconf.model if pconf else "",
+        "default_model": default_model,
         "preferred_model": preferred_model,
         "key_source": key_source,
         "key_last4": user.get("llm_key_last4") or "",

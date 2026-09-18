@@ -1230,29 +1230,10 @@ class DiscoverTermsWorker(QObject):
 
     @staticmethod
     def _query_to_keywords(query: str) -> str:
-        """
-        Convert a natural-language description to comma-separated keywords for
-        the filter dict.
-
-        The raw description passed as a single "both" term gets Lucene-quoted
-        into one exact phrase, which matches nothing. Splitting it into
-        individual meaningful words (stop-words removed) produces an OR-joined
-        clause that returns relevant papers from Lucene sources.
-        """
-        _STOP = {
-            "a", "an", "the", "and", "or", "of", "for", "in", "to", "by", "on",
-            "at", "is", "are", "was", "were", "be", "been", "being", "that", "this",
-            "with", "from", "how", "what", "where", "which", "about", "as",
-        }
-        words = [w.strip(".,;:!?") for w in query.split()]
-        seen: set = set()
-        keywords = []
-        for w in words:
-            low = w.lower()
-            if low not in _STOP and len(w) > 2 and low not in seen:
-                seen.add(low)
-                keywords.append(w)
-        return ", ".join(keywords) if keywords else query
+        """Shared with the web app (src/discover.py); stop words from llm_config.yaml."""
+        from src.discover import discover_settings, query_to_keywords
+        from src.llm_config import load_llm_config
+        return query_to_keywords(query, discover_settings(load_llm_config()).stop_words)
 
     def run(self):
         self.status.emit("Searching for relevant papers…")

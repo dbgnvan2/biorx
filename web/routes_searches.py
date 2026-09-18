@@ -50,6 +50,9 @@ def source_from_failure_status(message: str) -> str:
     return ""
 
 
+# Job kinds whose result is a list of papers (a search, or a filter's test run).
+SEARCH_JOB_KINDS = ("search", "filter_test")
+
 MAX_RESULTS_CEILING = 2000
 DEFAULT_MAX_RESULTS = 200
 DEFAULT_PAGE_SIZE = 50
@@ -146,7 +149,9 @@ def _job_or_404(ctx: AppContext, job_id: str, user_id: str) -> Job:
             status_code=status.HTTP_410_GONE,
             detail="That search has expired — run it again.",
         )
-    if job is None:
+    # Only search-shaped jobs: a discover or summary job has a different
+    # result shape, and slicing it here would be a 500.
+    if job is None or job.kind not in SEARCH_JOB_KINDS:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No such job.")
     return job
@@ -163,7 +168,8 @@ def search_status(job_id: str,
 def search_results(job_id: str, offset: int = 0, limit: int = DEFAULT_PAGE_SIZE,
                    ctx: AppContext = Depends(get_context),
                    user_id: str = Depends(current_user)):
-    """A page of matched papers. Available while the job is still running."""
+    """A page of matched papers. Empty until the job is done: the result is set
+    when the job finishes."""
     job = _job_or_404(ctx, job_id, user_id)
     limit = max(1, min(limit, MAX_PAGE_SIZE))
     offset = max(0, offset)
@@ -201,11 +207,15 @@ def save_search_as_list(job_id: str, body: SaveAsListBody,
 
     paper_ids, when provided, is a list of canonical_id strings from the
     search results — the caller sends only the papers the user checked.
+    Returns the list plus how many papers were saved and which were skipped,
+    so a paper that could not be stored is never dropped silently (P2).
     """
     job = _job_or_404(ctx, job_id, user_id)
-    if job.status not in ("done", "running"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="Job has no results yet.")
+    if job.status != "done":
+        # job.result is only set when the job finishes; saving earlier would
+        # create an empty list and take the name.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="The search has not finished yet.")
 
     results: List[Dict[str, Any]] = job.result or []
     if body.paper_ids is not None:
@@ -213,8 +223,8 @@ def save_search_as_list(job_id: str, body: SaveAsListBody,
         results = [p for p in results
                    if p.get("canonical_id") in selected_ids or p.get("doi") in selected_ids]
 
-    # Upsert each paper and collect integer ids
     db_ids: List[int] = []
+    skipped: List[str] = []
     for paper in results:
         pid = ctx.db.insert_paper(paper)
         if not pid:
@@ -222,6 +232,18 @@ def save_search_as_list(job_id: str, body: SaveAsListBody,
             pid = existing["id"] if existing else None
         if pid:
             db_ids.append(pid)
+        else:
+            skipped.append(paper.get("title") or paper.get("canonical_id") or "(untitled)")
+    if skipped:
+        logger.warning("save-as-list: %d of %d papers could not be stored",
+                       len(skipped), len(results))
 
-    list_id = user_store.create_reference_list_with_papers(ctx.db, user_id, body.name, db_ids)
-    return user_store.get_reference_list(ctx.db, user_id, list_id)
+    try:
+        list_id = user_store.create_reference_list_with_papers(
+            ctx.db, user_id, body.name, db_ids)
+    except user_store.DuplicateListName:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"You already have a list called {body.name!r}.")
+    payload = user_store.get_reference_list(ctx.db, user_id, list_id)
+    payload.update({"saved": len(set(db_ids)), "requested": len(results), "skipped": skipped})
+    return payload
