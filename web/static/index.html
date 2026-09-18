@@ -311,7 +311,28 @@
         </div>
       </div>
       <div class="card">
-        <h2>LLM settings</h2>
+        <div class="row" style="align-items:center">
+          <h2 style="margin:0;flex:1">LLM settings</h2>
+          <button id="help-deepseek-toggle" class="shrink small">How do I get a DeepSeek key?</button>
+        </div>
+        <div id="help-deepseek" class="banner small hidden" style="margin-top:8px">
+          <strong>Getting a DeepSeek API key</strong>
+          <ol style="margin:6px 0 6px 18px;padding:0">
+            <li>Go to <a href="https://platform.deepseek.com" target="_blank" rel="noopener noreferrer">platform.deepseek.com</a>
+              and sign up or sign in.</li>
+            <li>Add money to your balance (the Top up page). Usage is taken from your balance;
+              any free credit DeepSeek has granted your account is used first.</li>
+            <li>Open <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">API keys</a>,
+              click <em>Create new API key</em>, and copy it — DeepSeek shows it only once.</li>
+            <li>Here: set <em>Provider</em> to <strong>deepseek</strong>, paste the key into
+              <em>Your API key</em>, leave <em>Model</em> blank (the default is
+              <code>deepseek-flash</code>), and click <strong>Save</strong>.</li>
+          </ol>
+          <p style="margin:4px 0">Cost: a summary on deepseek-flash is roughly $0.002 (about 500
+            summaries per dollar). With your own key there is no daily limit; you pay DeepSeek directly.</p>
+          <p class="muted" style="margin:4px 0">Your key is kept in this browser, and stored encrypted on the
+            server only if the server has encryption set up. Remove it any time with <em>Remove key</em>.</p>
+        </div>
         <p id="key-state" class="muted small"></p>
         <div id="byo-disabled" class="banner warn hidden small"></div>
         <div id="byo" class="row">

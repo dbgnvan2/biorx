@@ -182,10 +182,11 @@ def _sleep_backoff(attempt: int) -> None:
 class DeepSeekClient:
     """OpenAI-compatible chat client. Dialect: Bearer auth, /chat/completions."""
 
-    def __init__(self, api_key: str, model: str = "deepseek-chat",
+    def __init__(self, api_key: str, model: str = "deepseek-flash",
                  base_url: str = "https://api.deepseek.com", timeout: int = 120,
-                 max_chars: int = 12000):
+                 max_chars: int = 12000, thinking: str = ""):
         self.api_key = api_key
+        self.thinking = thinking
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
@@ -208,6 +209,10 @@ class DeepSeekClient:
         payload: Dict[str, Any] = {"model": self.model, "messages": messages}
         if json_schema is not None:
             payload["response_format"] = {"type": "json_object"}
+        if self.thinking:
+            # DeepSeek thinking mode (api-docs.deepseek.com/guides/thinking_mode):
+            # {"thinking": {"type": "disabled"}} turns it off.
+            payload["thinking"] = {"type": self.thinking}
 
         last_error = None
         for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -368,7 +373,7 @@ def build_client(pconf: ProviderConfig, api_key: str, max_chars: int,
     if pconf.dialect == "openai":
         return DeepSeekClient(api_key=api_key, model=model,
                               base_url=pconf.base_url, timeout=pconf.timeout,
-                              max_chars=max_chars)
+                              max_chars=max_chars, thinking=pconf.thinking)
     if pconf.dialect == "ollama":
         from .llm import OllamaClient
         return OllamaClient(base_url=pconf.base_url, model=model)

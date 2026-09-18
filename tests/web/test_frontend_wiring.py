@@ -72,8 +72,14 @@ def test_the_page_references_only_local_assets(client):
     dependency on every page load.
     """
     html = INDEX.read_text()
-    external = re.findall(r'(?:src|href)="(https?://[^"]+)"', html)
+    # Scripts and stylesheets only: an ordinary <a href> to another site (the
+    # DeepSeek key help) is a link the user clicks, not an asset the page loads.
+    external = (re.findall(r'<script[^>]*\ssrc="(https?://[^"]+)"', html)
+                + re.findall(r'<link[^>]*\shref="(https?://[^"]+)"', html)
+                + re.findall(r'<img[^>]*\ssrc="(https?://[^"]+)"', html))
     assert external == [], f"page loads external assets: {external}"
+    # Guard-the-guard: the patterns do match an external asset.
+    assert re.findall(r'<script[^>]*\ssrc="(https?://[^"]+)"', '<script src="https://cdn.x/a.js">')
     assert "cdn" not in html.lower()
 
 
@@ -828,3 +834,17 @@ def test_ac8_recovery_code_is_shown_after_create_recover_and_claim():
         assert "showRecoveryCode(" in body, fn
     close = re.search(r'\$\("recovery-done"\)\.addEventListener.*?\}\);', code, re.DOTALL).group(0)
     assert 'textContent = ""' in close          # the code is cleared from the page
+
+
+
+def test_deepseek_help_button_toggles_the_guide():
+    html = INDEX.read_text()
+    assert 'id="help-deepseek-toggle"' in html and 'id="help-deepseek"' in html
+    guide = html[html.index('id="help-deepseek"'):html.index('</div>', html.index('id="help-deepseek"'))]
+    assert "https://platform.deepseek.com/api_keys" in guide
+    assert "deepseek-flash" in guide
+    # Every link in the guide opens safely in a new tab.
+    assert guide.count('target="_blank"') == guide.count('rel="noopener noreferrer"') == 2
+    code = _js_without_comments()
+    assert '$("help-deepseek-toggle").addEventListener' in code
+    assert '$("help-deepseek").classList.toggle("hidden")' in code

@@ -46,6 +46,10 @@ class ProviderConfig:
     base_url: str = ""
     api_key_env: str = ""
     api_key: str = ""      # key stored directly in the config file (desktop use)
+    # Provider-side reasoning ("thinking") setting sent with each request, e.g.
+    # "disabled" for DeepSeek, whose deepseek-flash thinks by default at high
+    # effort (billed as extra output). Empty means send nothing.
+    thinking: str = ""
 
     @property
     def needs_key(self) -> bool:
@@ -155,6 +159,7 @@ def provider_config(config: Dict[str, Any], name: str) -> Optional[ProviderConfi
         base_url=raw.get("base_url", ""),
         api_key_env=raw.get("api_key_env", ""),
         api_key=raw.get("api_key", ""),
+        thinking=str(raw.get("thinking", "") or "").strip(),
     )
 
 

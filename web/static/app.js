@@ -1679,6 +1679,8 @@ function wire() {
     $("recovery-code-text").textContent = "";
   });
   $("claim-account").addEventListener("click", claimAccount);
+  $("help-deepseek-toggle").addEventListener("click", () =>
+    $("help-deepseek").classList.toggle("hidden"));
   $("sign-out").addEventListener("click", signOut);
 
   // LLM settings panel

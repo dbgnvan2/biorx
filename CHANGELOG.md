@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-18 (night) — DeepSeek Flash, thinking off, key help
+
+### Changed
+- DeepSeek default model is `deepseek-flash` (`deepseek-chat` is no longer in
+  DeepSeek's model list; checked against api-docs.deepseek.com 2026-09-18).
+- DeepSeek requests send `thinking: {"type": "disabled"}` (config:
+  `providers.deepseek.thinking` in `llm_config.yaml`). deepseek-flash thinks by
+  default at high effort, which adds output and time to every summary.
+
+### Added
+- Settings → LLM settings: "How do I get a DeepSeek key?" opens a short guide
+  (sign up, top up, create a key, paste it here) with the cost per summary.
+
+
 ## 2026-09-18 (evening) — web accounts: name + PIN
 
 ### Added

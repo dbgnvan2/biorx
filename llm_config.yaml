@@ -29,9 +29,15 @@ providers:
   deepseek:
     dialect: openai
     base_url: https://api.deepseek.com
-    model: deepseek-chat
+    # Checked against api-docs.deepseek.com 2026-09-18: deepseek-flash
+    # (DeepSeek-V4.1-Flash); deepseek-chat is no longer listed.
+    model: deepseek-flash
     model_env: DEEPSEEK_MODEL
     api_key_env: DEEPSEEK_API_KEY
+    # deepseek-flash thinks by default at high effort, which adds billed output
+    # and time to every summary. Off for summaries (spec O4); set to "enabled"
+    # or remove this line if a quality check shows it is needed.
+    thinking: disabled
     timeout: 120
 
   anthropic:

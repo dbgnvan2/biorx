@@ -65,7 +65,8 @@ def test_deepseek_uses_openai_dialect_and_bearer_auth():
     assert url == "https://api.deepseek.com/chat/completions"
     assert headers["Authorization"] == "Bearer sk-ds-test"
     assert "x-api-key" not in headers          # that is the Anthropic dialect
-    assert body["model"] == "deepseek-chat"
+    assert body["model"] == "deepseek-flash"
+    assert "thinking" not in body              # nothing sent unless configured
     assert body["messages"][-1]["role"] == "user"
 
 
@@ -303,3 +304,25 @@ def test_key_never_appears_in_logs(caplog, monkeypatch):
     assert "SUPERSECRETVALUE" not in logged
     assert "ALSOSECRET" not in logged
     assert resolved.key_source == "owner"
+
+
+
+# ── DeepSeek thinking is off for summaries by config (2026-09-18) ────────────
+
+def test_deepseek_thinking_setting_is_sent_when_configured():
+    client = DeepSeekClient(api_key="k", thinking="disabled")
+    with patch("src.llm_providers.requests.post",
+               return_value=_ds_response(json.dumps(SUMMARY_JSON))) as post:
+        client.summarize_paper("abstract", "text")
+    assert post.call_args.kwargs["json"]["thinking"] == {"type": "disabled"}
+
+
+def test_repo_config_uses_deepseek_flash_with_thinking_off():
+    from src.llm_config import load_llm_config, provider_config
+    from src.llm_providers import build_client
+    raw = load_llm_config()["providers"]["deepseek"]
+    assert raw["model"] == "deepseek-flash"           # the file, before any env override
+    pconf = provider_config(load_llm_config(), "deepseek")
+    assert pconf.thinking == "disabled"
+    client = build_client(pconf, "k", 1000)
+    assert client.thinking == "disabled"
