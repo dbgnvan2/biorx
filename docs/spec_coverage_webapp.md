@@ -75,3 +75,20 @@ not exist; that check is why they were caught rather than claimed.
 Browser check (2026-09-17, local server, temp DB): Settings tab layout; saving defaults
 updates the Search picker and survives reload; a new filter starts from the defaults;
 an existing filter opens with its own sources, keywords and days.
+
+## Review fixes before first push (2026-09-17, commit ef8220f)
+
+| Fix | Proof | Status |
+|---|---|---|
+| PDF proxy SSRF (every hop, all non-public ranges, fail closed, pinned IP, size cap, PDF magic) | `tests/web/test_safe_fetch.py` (28 tests) | done |
+| Proxy maps outcomes 403/422/413/502 | `tests/web/test_references_routes.py::test_ref5_pdf_proxy_maps_fetch_outcomes` | done |
+| Client-supplied add-item route removed | `test_references_routes.py::test_ref3_no_route_adds_a_client_supplied_paper` | done |
+| List delete removes item rows | `test_references_routes.py::test_ref1_delete_list_removes_its_item_rows` | done |
+| Duplicate list name → 409, no orphans | `test_ref2_duplicate_list_name_is_409`, `test_ref2_failed_create_with_papers_leaves_nothing`, `test_filter_test_route.py::test_sal3_duplicate_name_is_409` | done |
+| CSV bioRxiv version | `test_references_routes.py::test_ref4_csv_uses_the_papers_biorxiv_version` | done |
+| Save-as-list: finished only, skips reported | `test_filter_test_route.py::test_sal1_running_search_cannot_be_saved`, `test_sal2_unstorable_papers_are_reported` | done |
+| Discover DT1–DT5 | `tests/web/test_discover_routes.py` (21 tests) | done |
+| Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
+| `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
+| Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |
+| PDF download for Europe PMC papers | Proxy works (arXiv PDF fetched live); PMC links are web pages → 422. See TODO | partial |

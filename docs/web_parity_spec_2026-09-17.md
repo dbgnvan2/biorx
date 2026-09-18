@@ -77,23 +77,23 @@ or via environment variables.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/references` | List user's reference lists (id, name, item_count, created_at). |
-| POST   | `/api/references` | Create list `{name: str, max_length=200}`. Returns created list row. 201. |
-| DELETE | `/api/references/{id}` | Delete list (cascades items). 404 if not owned by user. |
+| POST   | `/api/references` | Create list `{name: str, max_length=200}`. Returns created list row. 201; 409 if the user already has that name. |
+| DELETE | `/api/references/{id}` | Delete list and its items (deleted explicitly — SQLite foreign keys are off, so CASCADE does not fire). 404 if not owned by user. |
 | GET    | `/api/references/{id}/items` | Papers in list (full paper dict). |
-| POST   | `/api/references/{id}/items` | Add one paper `{paper}`. Upserts paper first. 201. |
+| ~~POST~~ | ~~`/api/references/{id}/items`~~ | **Removed 2026-09-17** (security review): it stored a client-supplied paper and URL for the proxy to fetch. Papers enter lists via save-as-list only. |
 | DELETE | `/api/references/{id}/items/{item_id}` | Remove one item. |
 | GET    | `/api/references/{id}/export.csv` | CSV download: title, authors, date, doi, source, pdf_url. |
 | GET    | `/api/references/{id}/pdf/{paper_id}` | Proxy: fetch PDF URL for that paper, stream bytes back as `application/pdf`. |
 
 **Authorization:** every route checks `user_id` ownership of the list before acting.
 
-**PDF proxy note:** uses `requests.get(url, stream=True, timeout=30)` with a 30-second hard limit; failure returns 502 with detail. Not cached server-side — browser cache handles repeat fetches.
-
-**PDF proxy security (SSRF + size):**
-- Before fetching, assert `url.startswith("https://")` — reject `http://`, `file://`, `ftp://`, etc.
-- Reject RFC-1918 / loopback addresses (127.x, 10.x, 172.16–31.x, 192.168.x) by resolving the hostname and checking the IP before connecting.
-- Check upstream `Content-Length`; if absent or > 100 MB, return 413. This is a config constant `PDF_MAX_BYTES`.
+**PDF proxy security (SSRF + size)** — as built in `src/safe_fetch.py` after the 2026-09-17 security review (the first version checked only the first URL and followed redirects):
+- https only, on every redirect hop; redirects followed by hand, at most 5.
+- The host must resolve (fail closed) and every address must be globally routable — excludes loopback, RFC 1918, link-local/cloud metadata, CGNAT, 0/8, IPv6 ULA/link-local, IPv4-mapped forms.
+- The connection is pinned to a checked address, TLS verified against the hostname, so DNS rebinding has no second lookup to use.
+- Body streamed and abandoned past `PDF_MAX_BYTES` (100 MB); must start with `%PDF-` (a landing page is 422, not served as a PDF).
 - Verify `paper_id` is an item in `list_id` before fetching — ownership of the list is not sufficient.
+- Outcomes: 403 refused, 422 not a PDF, 413 too large, 502 upstream failure.
 
 ---
 
@@ -103,13 +103,14 @@ or via environment variables.
 |--------|------|-------------|
 | POST   | `/api/filters/{id}/test` | Run filter as a search job; returns job_id. Uses existing job machinery. |
 | GET    | `/api/searches/{job_id}/results` | Already exists — reused for filter test results. |
-| POST   | `/api/discover-terms` | Body: `{description, sources?, category?}`. Runs a broad search, feeds titles+abstracts to LLM, returns `{terms: [...]}`. |
+| POST   | `/api/discover-terms` | Body: `{description, sources?, category?}`. Runs a broad search, feeds titles+abstracts to LLM. 202 + job. |
+| GET    | `/api/discover-terms/{job_id}` | Poll; includes `result` once done. (The search poll payload never carries results.) |
 
 **Filter test:** `POST /api/filters/{id}/test` deserializes the stored `filter` JSON, builds an `OrchestratorSearchParams` from it, submits a search job (same path as `/api/searches`), and returns `{"job_id": "..."}`. The frontend polls via the existing `/api/searches/{job_id}` + `/api/searches/{job_id}/results` endpoints.
 
-**Discover terms:** caps input at 30 paper titles+abstracts; LLM prompt asks for 5–10 keyword phrases. Submitted as a **background job** (same pattern as `/api/summaries` — returns 202 + job_id; frontend polls `/api/searches/{job_id}` until done, then reads result from `job.result.terms`). Respects the user's inline key / stored key / owner key with the same `_resolve_for` logic from routes_summaries.
+**Discover terms:** caps input at 30 paper titles+abstracts; LLM prompt asks for 5–10 keyword phrases. Submitted as a **background job** (returns 202 + job_id; frontend polls `GET /api/discover-terms/{job_id}` until done and reads `result.terms`). The description is split into keywords (stop words removed, `src/discover.py`) and searched as a `both` text group; `days_back`, `max_papers` and the stop words are in `llm_config.yaml` under `discover:`. An owner-key slot is released if the model is never called. An unparsable reply is a job error, not an empty list. Respects the user's inline key / stored key / owner key with the same `_resolve_for` logic from routes_summaries.
 
-**Discover-terms job result shape:** `{"terms": ["keyword1", "keyword2", ...]}`
+**Discover-terms job result shape:** `{"terms": [...], "papers_found": N, "keywords": "..."}`; `sources_failed` on the job.
 
 ---
 
@@ -285,7 +286,7 @@ Per-user settings only (PS5):
 | FP4-B | Selected papers can be saved as a named reference list |
 | FP4-C | Clicking a paper title opens a detail modal with abstract and summary (if available) |
 | SEC-1 | Superseded: settings API removed; `/api/settings/*` → 404 (PS1) |
-| SEC-2 | PDF proxy only fetches URLs from the database, never from client-supplied URLs |
+| SEC-2 | PDF proxy fetches only the paper row's URL, and only under the `src/safe_fetch.py` rules (the row alone is not proof: `/api/summaries` stores client paper dicts) |
 | TEST-1 | All new API routes covered by test file; frontend wiring test updated |
 
 ---

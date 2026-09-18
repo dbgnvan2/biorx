@@ -3,6 +3,33 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the web-parity /csdp review (2026-09-17) — adjacent issues found, not fixed
+
+- **PDF download delivers few PDFs for Europe PMC papers.** `pdf_url()` returns
+  `best_oa_url`, which for PMC records is the article web page; the proxy now
+  says "No PDF available (web page)" (422) where it used to return the HTML as a
+  PDF. Europe PMC's own `?pdf=render` returns 403 to automated clients. Needs a
+  real PDF URL source (PMC OA service / Unpaywall `url_for_pdf`) before the
+  References tab's "Download PDFs" is useful for these papers. Same root as the
+  N2 note below.
+- **`PDFHandler.download_pdf` (summaries) fetches client-supplied URLs unguarded.**
+  `POST /api/summaries` takes a paper dict from the client and `_extract_text`
+  downloads `pdf_url(paper)` with plain `requests` (redirects followed, no
+  address check). The text goes to the LLM, so an internal response can leak
+  into a summary. Route it through `src/safe_fetch.py` (P5 sibling of the proxy
+  fix). Not fixed here: pre-existing code outside the reviewed range.
+- **`/healthz` is unauthenticated** and returns `db_path` and `startup_warnings`.
+- **Static assets have no cache-busting**: after a deploy, browsers keep the old
+  `app.js`/`styles.css` until a hard reload (seen during the live check).
+- **`OllamaClient.generate` has a hardcoded 120 s timeout** (`src/llm.py`) and
+  ignores the provider's `timeout` in `llm_config.yaml`; a slow local model
+  (qwen3.5:4b on this Mac) times out on Discover Terms. Also P4.
+- **Discover shares the summary cap.** An owner-billed discover run takes a
+  "summary" slot (settled correctly now). If discover needs its own allowance,
+  add a kind and a cap.
+- **"Use date range" checkbox** in the Search tab has the stacked layout the
+  source pickers had.
+
 ## From batch-H gates (2026-09-16) — deferred, in-loop fix threshold not met
 
 - **paper_meta recovery paths emit no warning (P5/MEDIUM)** — `openalex_user_agent()`,

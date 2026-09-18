@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-09-17 — web app review fixes (before first push of the parity work)
+
+Found by learning-qa, /code-review and /security-review over the unpushed range.
+
+### Security
+- **PDF proxy SSRF closed** (`src/safe_fetch.py`). The proxy checked only the
+  first URL and then followed redirects, missed link-local (cloud metadata) and
+  CGNAT ranges, and treated an unresolvable name as safe. Now every hop must be
+  https and resolve only to public addresses, the connection is pinned to the
+  checked address with TLS verified against the hostname, the body is size-
+  capped while streaming, and it must actually be a PDF.
+- **Removed `POST /api/references/{id}/items`**, which stored a client-supplied
+  paper (and its URL) for the proxy to fetch. Papers enter lists through
+  save-as-list only.
+
+### Fixed
+- **Discover Terms** searched on single letters of the description, never showed
+  its results, kept a daily-cap slot when it failed, and reported unparsable
+  replies as "no terms". Settings and stop words are now in `llm_config.yaml`.
+- **Filters saved from the web** lost their keywords (so matched everything),
+  crashed every search (institution saved as a list), and ignored date ranges.
+- **Reference lists:** deleting a list now deletes its items; a duplicate name
+  is a 409, not a 500; save-as-list waits for the search to finish and reports
+  papers it could not store; CSV exports the right bioRxiv version.
+- Bulk PDF download and remove report what failed.
+- `/api/me` reports the model that will actually run.
+
 ## 2026-09-17 — web Settings tab is per user
 
 ### Changed
