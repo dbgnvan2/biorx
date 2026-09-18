@@ -12,6 +12,12 @@
   the old name sign-in, `POST /api/session/recover`, the recovery-code dialog,
   and `accounts.sign_in`/`create_account`/`recover` if nothing else uses them.
 - Per-user spend is not visible in the web app (usage plan, not yet approved).
+- **Lockout can be used to annoy:** anyone who knows a name (old way) or a
+  code can keep that account locked by sending 5 wrong PINs every 15 minutes.
+  The usual lockout trade-off; a per-IP limit (above) would narrow it.
+- Frontend wiring tests check the source text of app.js, so they cannot catch
+  behaviour bugs (reload loops, stuck busy state). A browser test (Playwright)
+  would.
 - `account:` in the codes file is read only on a code's first use; later edits
   to it are ignored. `list` could flag an entry whose binding differs.
 

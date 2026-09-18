@@ -49,10 +49,14 @@ def check_access_code(supplied: str, expected: str) -> bool:
 
 def issue_session(response: Response, ctx: AppContext, user_id: str,
                   secure: bool = True) -> None:
-    """Sign the user id, and the user's session epoch, into the cookie."""
-    row = ctx.db.conn.execute("SELECT session_epoch FROM users WHERE user_id = ?",
-                              (user_id,)).fetchone()
-    epoch = (row["session_epoch"] or 0) if row else 0
+    """Sign the user id, and the user's session epoch, into the cookie. A
+    SignedIn id carries the epoch read when its PIN was accepted; use it."""
+    epoch = getattr(user_id, "epoch", None)
+    if epoch is None:
+        row = ctx.db.conn.execute("SELECT session_epoch FROM users WHERE user_id = ?",
+                                  (user_id,)).fetchone()
+        epoch = (row["session_epoch"] or 0) if row else 0
+    user_id = str(user_id)
     token = _serializer(ctx.session_secret).dumps({"u": user_id, "e": epoch})
     response.set_cookie(
         SESSION_COOKIE, token,
@@ -115,17 +119,19 @@ async def current_user(
     user_id = None
     if got:
         cookie_user, epoch = got
-        row = ctx.db.conn.execute("SELECT session_epoch FROM users WHERE user_id = ?",
-                                  (cookie_user,)).fetchone()
-        if row is not None and (row["session_epoch"] or 0) != epoch:
-            # The PIN was reset or recovered after this cookie was issued.
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                                detail="Your PIN was changed. Sign in again.")
-        # A user merged into another (src/accounts.py) keeps working: the
-        # cookie resolves to the account the data now lives in. A broken merge
-        # chain (None) is refused, not treated as the merged-away account.
+        # A user merged into another (src/accounts.py) resolves to the account
+        # the data now lives in. A broken merge chain (None) is refused, not
+        # treated as the merged-away account.
         from src.accounts import resolve_user_id
-        user_id = resolve_user_id(ctx.db, cookie_user) if row is not None else cookie_user
+        user_id = resolve_user_id(ctx.db, cookie_user)
+        if user_id:
+            row = ctx.db.conn.execute("SELECT session_epoch FROM users WHERE user_id = ?",
+                                      (user_id,)).fetchone()
+            # Compared on the account the cookie resolves to, so a PIN reset,
+            # recovery or merge of that account ends merged-away cookies too.
+            if (row["session_epoch"] or 0) != epoch:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                    detail="Your PIN was changed. Sign in again.")
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -143,8 +149,9 @@ async def current_user(
         from src.access_codes import session_refusal
         reason = session_refusal(ctx.db, ctx.codes, user_id, bool(ctx.access_code))
         if reason:
-            from src.access_codes import UNAVAILABLE_MESSAGE
-            code = (status.HTTP_503_SERVICE_UNAVAILABLE if reason == UNAVAILABLE_MESSAGE
+            from src.access_codes import ENTRY_PROBLEM_MESSAGE, UNAVAILABLE_MESSAGE
+            code = (status.HTTP_503_SERVICE_UNAVAILABLE
+                    if reason in (UNAVAILABLE_MESSAGE, ENTRY_PROBLEM_MESSAGE)
                     else status.HTTP_401_UNAUTHORIZED)
             raise HTTPException(status_code=code, detail=reason)
     return user_id

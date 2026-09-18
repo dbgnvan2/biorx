@@ -38,6 +38,15 @@ last push. All findings fixed, each with a test:
   network errors instead of hanging on "Building…".
 - Search summaries list a paper once when two results are the same paper; PDF
   filenames with non-Latin titles no longer fail.
+- Second review round (of the fixes themselves): PIN resets, recoveries and
+  merges now end cookies of merged-away accounts too; a sign-in that races a
+  PIN reset is refused; one mistyped entry tells that person "your entry has a
+  mistake, tell the owner" (503) instead of "turned off"; a blank, broken or
+  vanished codes file refuses old-style accounts as well (it could let a
+  disabled one in); recovery refused for a server problem is a 503 and does not
+  cost a lockout attempt; the search PDF counts a paper once; a lock is logged
+  once; a network blip while a summary runs keeps its button busy; sign-out
+  errors are shown.
 
 
 ## 2026-09-18 (late) — personal access codes

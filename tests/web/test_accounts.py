@@ -238,7 +238,7 @@ def test_ac9_thresholds_come_from_env_and_are_documented(monkeypatch):
 # ── csdp security review 2026-09-18 ───────────────────────────────────────────
 
 @pytest.mark.parametrize("path", ["name", "code"])
-def test_ac4_parallel_wrong_pins_are_all_counted(ctx, monkeypatch, path):
+def test_ac4_parallel_wrong_pins_are_all_counted(ctx, monkeypatch, caplog, path):
     """200 wrong PINs sent at once were all checked (187 before the first lock)
     because each read the count before any wrote it. At most
     LOGIN_MAX_FAILURES may be checked per lock window."""
@@ -266,6 +266,8 @@ def test_ac4_parallel_wrong_pins_are_all_counted(ctx, monkeypatch, path):
         t.join()
     assert outcomes.count("in") == 0
     assert outcomes.count("checked") <= 5, outcomes.count("checked")
+    locked_logs = [r for r in caplog.records if "Account locked" in r.getMessage()]
+    assert len(locked_logs) == 1, len(locked_logs)          # logged once, not per request
     with pytest.raises(accounts.AccountLocked):
         accounts.sign_in(ctx.db, "Target", "right-pin-1")
 

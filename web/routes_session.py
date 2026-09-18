@@ -115,11 +115,16 @@ def _gate(ctx: AppContext, access_code: str) -> None:
                             detail="That access code is not right.")
 
 
+# Refusals caused by the server's codes file, not by the person: 503 everywhere.
+_SERVER_PROBLEMS = (access_codes.UNAVAILABLE_MESSAGE, access_codes.ENTRY_PROBLEM_MESSAGE)
+
+
 def _account_error(e: accounts.AccountError) -> HTTPException:
     if isinstance(e, accounts.AccountLocked):
         code = status.HTTP_429_TOO_MANY_REQUESTS
     elif isinstance(e, accounts.AccountCutOff):
-        code = status.HTTP_403_FORBIDDEN
+        code = (status.HTTP_503_SERVICE_UNAVAILABLE
+                if str(e) in _SERVER_PROBLEMS else status.HTTP_403_FORBIDDEN)
     elif isinstance(e, accounts.BadCredentials):
         code = status.HTTP_401_UNAUTHORIZED
     elif isinstance(e, accounts.NameTaken):
@@ -142,10 +147,14 @@ def _seed_filters(ctx: AppContext, user_id: str) -> None:
 
 def _entry_or_refuse(ctx: AppContext, code: str,
                      same_work: bool = True) -> access_codes.CodeEntry:
-    if ctx.codes is not None and ctx.codes.unavailable():
+    if ctx.codes is not None and ctx.codes.down(ctx.db):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail=access_codes.UNAVAILABLE_MESSAGE)
     entry = ctx.codes.get(code) if ctx.codes is not None else None
+    if entry is None and ctx.codes is not None and ctx.codes.entry_problem(
+            access_codes.code_key(code)):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail=access_codes.ENTRY_PROBLEM_MESSAGE)
     if entry is None:
         if same_work:
             # On sign-in, an unknown code costs what a wrong PIN costs. Not on
@@ -207,7 +216,7 @@ def _refuse_if_cut_off(ctx: AppContext, user_id: str) -> None:
     reason = access_codes.session_refusal(ctx.db, ctx.codes, user_id, bool(ctx.access_code))
     if reason:
         raise HTTPException(status_code=(status.HTTP_503_SERVICE_UNAVAILABLE
-                                         if reason == access_codes.UNAVAILABLE_MESSAGE
+                                         if reason in _SERVER_PROBLEMS
                                          else status.HTTP_403_FORBIDDEN), detail=reason)
 
 

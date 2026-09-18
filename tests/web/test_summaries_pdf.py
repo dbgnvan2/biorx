@@ -246,3 +246,13 @@ def test_s3_non_latin_title_gives_a_safe_filename(signed_in, ctx):
     r = signed_in.post(f"/api/searches/{job_id}/summaries.pdf", json={"title": "中文 review"})
     assert r.status_code == 200
     assert 'filename="__ review - summaries.pdf"' in r.headers["content-disposition"]
+
+
+def test_s3_pdf_counts_a_paper_once_when_two_results_are_it(signed_in, ctx):
+    same_paper = {**SUMMARIZED, "canonical_id": "pmid:999", "source": "pubmed"}
+    job_id = _finished_search(signed_in, ctx, [SUMMARIZED, same_paper])
+    _summarize_stored(ctx, SUMMARIZED, "the finding", "2026-09-18 10:00:00")
+    r = signed_in.post(f"/api/searches/{job_id}/summaries.pdf", json={"title": "Dupes"})
+    text = _text(r.content)
+    assert "1 of 1 papers summarized" in text
+    assert text.count("the finding") == 1

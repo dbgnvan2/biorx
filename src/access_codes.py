@@ -53,6 +53,10 @@ BAD_CODE_OR_PIN = "That code or PIN is not right."
 UNAVAILABLE_MESSAGE = ("Sign-in is unavailable: the server's access-code file has a "
                        "problem. Please tell the owner.")
 _FILE_PROBLEM = "access codes file"
+# One person's entry has a mistake the owner must fix (not a decision to cut
+# them off). Also refuses, with the real reason.
+ENTRY_PROBLEM_MESSAGE = ("Your access code's entry on the server has a mistake. "
+                         "Please tell the owner.")
 
 _HEADER = """\
 # Personal access codes — one per person.
@@ -139,23 +143,31 @@ def _as_date(value) -> Optional[date]:
 def parse_codes(text: str, days: Optional[int] = None) -> Tuple[Dict[str, CodeEntry], List[str]]:
     """(entries by key, warnings). A bad entry is skipped and named in a
     warning; the good ones still load (PC2)."""
+    entries, warnings, _ = parse_codes_with_skips(text, days)
+    return entries, warnings
+
+
+def parse_codes_with_skips(text: str, days: Optional[int] = None):
+    """parse_codes plus the keys of entries skipped for a mistake, so the
+    person gets "your entry has a mistake" rather than "turned off"."""
     days = days if days is not None else code_days()
+    skipped: set = set()
     warnings: List[str] = []
     try:
         data = yaml.safe_load(text)
     except (yaml.YAMLError, ValueError) as e:
         # ValueError: an impossible date such as 2026-02-30, which YAML's own
         # date reader rejects. Either way, report it; never crash the server.
-        return {}, [f"access codes file cannot be read, so no codes work: {e}"]
+        return {}, [f"access codes file cannot be read, so no codes work: {e}"], skipped
     if data is None:
-        return {}, []
+        return {}, [], skipped
     if not isinstance(data, dict) or "codes" not in data:
-        return {}, ["access codes file has no 'codes:' list, so no codes work"]
+        return {}, ["access codes file has no 'codes:' list, so no codes work"], skipped
     raw = data["codes"]
     if raw is None:                       # `codes:` with nothing under it
-        return {}, []
+        return {}, [], skipped
     if not isinstance(raw, list):
-        return {}, ["access codes file: 'codes:' must be a list of entries"]
+        return {}, ["access codes file: 'codes:' must be a list of entries"], skipped
 
     entries: Dict[str, CodeEntry] = {}
     for n, item in enumerate(raw, start=1):
@@ -171,18 +183,23 @@ def parse_codes(text: str, days: Optional[int] = None) -> Tuple[Dict[str, CodeEn
         if len(key) < CODE_MIN_CHARS:
             warnings.append(f"{where}: code must have at least {CODE_MIN_CHARS} letters "
                             "or digits — skipped")
+            if key:
+                skipped.add(key)
             continue
         if not for_name:
             warnings.append(f"{where}: needs 'for:' (who the code is for) — skipped")
+            skipped.add(key)
             continue
         try:
             created = _as_date(item.get("created"))
             expires = _as_date(item.get("expires"))
         except ValueError:
             warnings.append(f"{where}: a date is not YYYY-MM-DD — skipped")
+            skipped.add(key)
             continue
         if expires is None and created is None:
             warnings.append(f"{where}: needs 'created:' or 'expires:' (YYYY-MM-DD) — skipped")
+            skipped.add(key)
             continue
         if expires is None:
             expires = created + timedelta(days=days)
@@ -208,7 +225,7 @@ def parse_codes(text: str, days: Optional[int] = None) -> Tuple[Dict[str, CodeEn
             account=" ".join(str(item.get("account") or "").split()),
             disabled=disabled,
         )
-    return entries, warnings
+    return entries, warnings, skipped
 
 
 class CodeStore:
@@ -223,14 +240,25 @@ class CodeStore:
         self.warnings: List[str] = []
         self.missing = False
         self.broken = False        # the whole file failed to load
-        self._seen = False         # the file has existed while this server ran
+        self.empty = False         # the file exists but has no entries
+        self.skipped_keys: set = set()
 
-    def unavailable(self) -> bool:
-        """True when no code can be trusted because the file is gone or broken."""
+    def down(self, db) -> bool:
+        """True when no code can be trusted: the file is broken, or it is
+        missing or empty although codes are in use (some are bound to
+        accounts). A file never created, with no codes bound, is just
+        "no codes yet". Restart-safe: the bindings are in the database."""
         self._refresh()
-        # A file that was never created is just "no codes yet"; one that
-        # existed and went away is a problem to report.
-        return (self.missing and self._seen) or self.broken
+        if self.broken:
+            return True
+        if self.missing or self.empty:
+            return db.conn.execute(
+                "SELECT 1 FROM access_code_bindings LIMIT 1").fetchone() is not None
+        return False
+
+    def entry_problem(self, key: str) -> bool:
+        self._refresh()
+        return key in self.skipped_keys and key not in self._entries
 
     def _refresh(self) -> None:
         try:
@@ -248,12 +276,13 @@ class CodeStore:
                 elif not self._loaded:
                     logger.warning("No access codes file at %s", self.path)
                 self._entries, self.warnings, self.missing, self.broken = {}, [], True, False
+                self.empty, self.skipped_keys = False, set()
             else:
-                self.missing, self._seen = False, True
+                self.missing = False
                 try:
                     text = self.path.read_text(encoding="utf-8")
                 except UnicodeDecodeError as e:
-                    self._entries, self.broken = {}, True
+                    self._entries, self.broken, self.skipped_keys = {}, True, set()
                     self.warnings = [f"access codes file is not UTF-8 text, so no codes work: {e}"]
                     logger.warning("%s", self.warnings[0])
                     self._stamp, self._loaded = stamp, True
@@ -264,9 +293,13 @@ class CodeStore:
                     logger.warning("Could not read %s: %s — keeping the last copy",
                                    self.path, e)
                     return
-                self._entries, self.warnings = parse_codes(text)
+                self._entries, self.warnings, self.skipped_keys = parse_codes_with_skips(text)
                 self.broken = (not self._entries and
                                any(w.startswith(_FILE_PROBLEM) for w in self.warnings))
+                # Blank (or comments only), as when an editor truncates the file
+                # before writing it. An emptied `codes:` list is the owner's
+                # choice and is not "empty" here.
+                self.empty = not self.broken and not re.search(r"(?m)^codes\s*:", text)
                 for w in self.warnings:
                     logger.warning("%s", w)
                 logger.info("Loaded %d access code(s) from %s", len(self._entries), self.path)
@@ -338,6 +371,10 @@ def session_refusal(db, store: CodeStore, user_id: str, shared_code_set: bool,
     while the shared ACCESS_CODE is still set.
     """
     today = today or date.today()
+    if store.down(db):
+        # Fail closed for everyone, including accounts from before codes: with
+        # the file unreadable we cannot tell whose entry says `disabled`.
+        return UNAVAILABLE_MESSAGE
     # Bindings made under an account later merged into this one count too.
     keys = [r["code_key"] for r in db.conn.execute(
         "SELECT code_key FROM access_code_bindings WHERE user_id = ? OR user_id IN "
@@ -349,16 +386,14 @@ def session_refusal(db, store: CodeStore, user_id: str, shared_code_set: bool,
     if login_name:
         mine += [e for e in store.entries() if e.account.lower() == login_name]
     if not keys and not any(mine):
-        if store.unavailable() and not shared_code_set:
-            return UNAVAILABLE_MESSAGE
         return None if shared_code_set else "Sign in with your personal access code."
-    if keys and store.unavailable():
-        return UNAVAILABLE_MESSAGE
     live = [e for e in mine if e is not None]
     if any(e.refusal(today) is None for e in live):
         return None
     if any(e.status(today) == "expired" for e in live):
         return EXPIRED_MESSAGE
+    if any(store.entry_problem(k) for k in keys):
+        return ENTRY_PROBLEM_MESSAGE
     return DISABLED_MESSAGE
 
 
@@ -517,9 +552,10 @@ def reset_pin(db, store: CodeStore, for_name: str) -> str:
         raise LookupError(f"{for_name!r} has codes for more than one account; edit by hand.")
     user_id = users.pop()
     # Also end open sessions: a reset usually means someone else may know the PIN.
-    db.conn.execute("UPDATE users SET pin_hash = NULL, failed_logins = 0, locked_until = NULL, "
-                    "session_epoch = COALESCE(session_epoch, 0) + 1 WHERE user_id = ?",
-                    (user_id,))
+    from .accounts import bump_session_epoch
+    db.conn.execute("UPDATE users SET pin_hash = NULL, failed_logins = 0, locked_until = NULL "
+                    "WHERE user_id = ?", (user_id,))
+    bump_session_epoch(db, user_id)
     db.conn.commit()
     return user_id
 

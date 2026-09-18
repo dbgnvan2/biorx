@@ -274,7 +274,8 @@ function showRecoveryCode(code) {
 }
 
 async function signOut() {
-  await api("DELETE", "/api/session");
+  try { await api("DELETE", "/api/session"); }
+  catch (e) { notice(`Could not sign out: ${e.message}`); return; }
   await showGate("");
 }
 
@@ -977,7 +978,12 @@ async function startSummary(paper, button) {
   const timer = setInterval(async () => {
     let s;
     try { s = await api("GET", `/api/summaries/${job.job_id}`); }
-    catch (e) { clearInterval(timer); notice(e.message); done(); return; }
+    catch (e) {
+      // A network blip: the job is still running on the server, so keep the
+      // button busy and try again next tick (a second click would bill twice).
+      if (e.status === 0) return;
+      clearInterval(timer); notice(e.message); done(); return;
+    }
 
     if (modalShows(paper)) {
       $("modal-summary-meta").textContent = `${job.provider} · ${job.model} — ${s.phase || s.status}`;
@@ -1909,15 +1915,17 @@ function wire() {
 
 async function boot() {
   wire();
+  // A reason carried across the sign-out reload is used once, then dropped,
+  // so it cannot reappear at a later sign-in page in this tab.
+  let carried = "";
+  try {
+    carried = sessionStorage.getItem(SS_GATE_MESSAGE) || "";
+    sessionStorage.removeItem(SS_GATE_MESSAGE);
+  } catch (err) { /* ignore */ }
   try {
     state.me = await api("GET", "/api/me");
     showApp();
   } catch (e) {
-    let carried = "";
-    try {
-      carried = sessionStorage.getItem(SS_GATE_MESSAGE) || "";
-      sessionStorage.removeItem(SS_GATE_MESSAGE);
-    } catch (err) { /* ignore */ }
     await showGate(carried || (e.status === 401 ? e.message : ""));
   }
 }

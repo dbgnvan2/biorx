@@ -590,3 +590,107 @@ def test_pc11_renew_keeps_the_next_entrys_comment_with_it(tmp_path):
     lines = f.read_text().splitlines()
     assert lines[lines.index("  # Bob, from the lab") + 1] == "  - code: BBBB-BBBB-BBBB"
     assert lines[lines.index("  # Bob, from the lab") - 1].strip().startswith("expires:")
+
+
+# ── csdp fix re-review 2026-09-18 ─────────────────────────────────────────────
+
+def test_pc6_resets_and_merges_end_merged_away_sessions(ctx, app):
+    """The epoch was compared on the cookie's own row, so a merged-away
+    account's cookie survived a PIN reset of the account it points to."""
+    bob, _ = accounts.create_account(ctx.db, "bob", "bob-pin-111", user_store.new_user_id)
+    add_code("Bob", account="bob")
+    code_m = add_code("Em")
+    c_m, r = _sign_in(app, code_m, pin="em-pin-111")
+    em = r.json()["user_id"]
+    accounts.merge_users(ctx.db, em, bob)
+    assert c_m.get("/api/me").status_code == 401            # the merge ends old cookies
+    c2, r = _sign_in(app, code_m, pin="bob-pin-111")        # Em's code now reaches Bob
+    assert r.status_code == 200 and r.json()["user_id"] == bob
+    assert c2.get("/api/me").status_code == 200
+    access_codes.reset_pin(ctx.db, ctx.codes, "Bob")
+    assert c2.get("/api/me").status_code == 401             # and a reset of Bob ends it
+
+
+def test_pc6_recovering_a_merged_away_name_ends_the_thiefs_session(ctx, app):
+    alice, code = accounts.create_account(ctx.db, "alice", "alice-pin-1", user_store.new_user_id)
+    bob, _ = accounts.create_account(ctx.db, "bob2", "bob-pin-111", user_store.new_user_id)
+    accounts.merge_users(ctx.db, alice, bob)
+    thief = TestClient(app)
+    assert thief.post("/api/session", json={"access_code": ACCESS_CODE, "name": "alice",
+                                            "pin": "alice-pin-1"}).status_code == 200
+    assert thief.get("/api/me").json()["user_id"] == bob
+    r = TestClient(app).post("/api/session/recover", json={
+        "access_code": ACCESS_CODE, "name": "alice", "recovery_code": code, "new_pin": "new-pin-99"})
+    assert r.status_code == 200
+    assert thief.get("/api/me").status_code == 401
+
+
+def test_pc5_a_down_file_refuses_old_accounts_too(ctx, app):
+    """With the file unreadable we cannot tell whose entry says disabled, so the
+    old name sign-in is refused as well (it let a disabled account in)."""
+    accounts.create_account(ctx.db, "Legacy", "leg-pin-111", user_store.new_user_id)
+    add_code("Legacy", account="Legacy")
+    other = add_code("Someone")
+    _sign_in(app, other)                                    # a code in use: bindings exist
+    _write(_codes_file().read_text().replace("    for: Legacy\n",
+                                             "    for: Legacy\n    disabled: true\n"))
+    old = {"access_code": ACCESS_CODE, "name": "Legacy", "pin": "leg-pin-111"}
+    assert TestClient(app).post("/api/session", json=old).status_code == 403
+    for broken in ("codes:\n  - code: [unclosed\n", ""):
+        _write(broken)
+        r = TestClient(app).post("/api/session", json=old)
+        assert r.status_code == 503 and r.json()["detail"] == access_codes.UNAVAILABLE_MESSAGE
+    _codes_file().unlink()
+    assert TestClient(app).post("/api/session", json=old).status_code == 503
+
+
+def test_pc5_a_blank_file_is_down_but_an_emptied_list_is_not(ctx, app):
+    code = add_code("Blank")
+    c, _ = _sign_in(app, code)
+    _write("")
+    assert c.get("/api/me").status_code == 503
+    _write("codes:\n")
+    r = c.get("/api/me")
+    assert r.status_code == 401 and r.json()["detail"] == access_codes.DISABLED_MESSAGE
+
+
+def test_pc2_one_bad_entry_says_so_to_its_person(ctx, app):
+    """A typo in one person's entry told them their code was turned off."""
+    code = add_code("Typo")
+    c, _ = _sign_in(app, code)
+    text = _codes_file().read_text()
+    expires_line = next(l for l in text.splitlines() if "expires:" in l)
+    _write(text.replace(expires_line, "    expires: 20270101"))
+    r = c.get("/api/me")
+    assert r.status_code == 503 and r.json()["detail"] == access_codes.ENTRY_PROBLEM_MESSAGE
+    _, r = _sign_in(app, code)
+    assert r.status_code == 503 and r.json()["detail"] == access_codes.ENTRY_PROBLEM_MESSAGE
+
+
+def test_pc8_recover_with_a_broken_file_is_503_and_costs_no_attempt(ctx, app):
+    _, recovery = accounts.create_account(ctx.db, "Rec", "rec-pin-111", user_store.new_user_id)
+    add_code("Rec", account="Rec")
+    _sign_in(app, add_code("Other"))
+    _write("codes:\n  - code: [unclosed\n")
+    r = TestClient(app).post("/api/session/recover", json={
+        "access_code": ACCESS_CODE, "name": "Rec", "recovery_code": recovery,
+        "new_pin": "new-pin-999"})
+    assert r.status_code == 503
+    row = ctx.db.conn.execute("SELECT failed_logins FROM users WHERE login_name = 'Rec'").fetchone()
+    assert row["failed_logins"] == 0
+
+
+def test_pc4_a_reset_during_the_pin_check_does_not_leave_a_session(ctx, monkeypatch):
+    add_code("Racy")
+    entry = ctx.codes.entries()[0]
+    uid = accounts.create_code_account(ctx.db, "Racy", "racy-pin-11", entry.key,
+                                       user_store.new_user_id)
+    real = accounts.verify_secret
+
+    def reset_meanwhile(secret, stored):
+        ok = real(secret, stored)
+        access_codes.reset_pin(ctx.db, ctx.codes, "Racy")   # owner resets mid-check
+        return ok
+    monkeypatch.setattr(accounts, "verify_secret", reset_meanwhile)
+    with pytest.raises(accounts.BadCredentials, match="just changed"):
+        accounts.sign_in_user(ctx.db, uid, "racy-pin-11")

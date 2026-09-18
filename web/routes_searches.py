@@ -293,9 +293,14 @@ def _job_summaries(ctx: AppContext, job: Job, only_ids: Optional[List[str]] = No
                    if p.get("canonical_id") in wanted or p.get("doi") in wanted]
     items: List[Dict[str, Any]] = []
     summaries: Dict[int, Dict[str, Any]] = {}
+    seen = set()
     for paper in results:
         row = ctx.db.find_paper(paper)
         pid = row["id"] if row else None
+        if pid is not None:
+            if pid in seen:
+                continue      # two results for the same paper: list it once
+            seen.add(pid)
         items.append({"paper": {**paper, "paper_id": pid}})
         if pid is not None and pid not in summaries:
             s = ctx.db.get_summary(pid)
@@ -319,13 +324,12 @@ def search_summaries(job_id: str,
     """Stored summaries for this search's results, newest first (S1, S2)."""
     job = _finished_search(ctx, job_id, user_id)
     items, summaries = _job_summaries(ctx, job)
-    out, seen = [], set()
-    for item in items:
+    out = []
+    for item in items:        # one item per paper (_job_summaries dedupes)
         p = item["paper"]
         s = summaries.get(p["paper_id"]) if p["paper_id"] is not None else None
-        if not s or p["paper_id"] in seen:
-            continue          # two results can resolve to the same paper row
-        seen.add(p["paper_id"])
+        if not s:
+            continue
         out.append({
             "canonical_id": p.get("canonical_id") or "",
             "doi": p.get("doi") or "",

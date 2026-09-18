@@ -911,3 +911,18 @@ def test_downloads_handle_sign_out_and_network_errors():
     for fn in ("saveSummariesPdf", "exportRefSummariesPdf", "exportRefCsv"):
         body = re.search(rf"async function {fn}\(\) \{{.*?\n\}}", code, re.DOTALL).group(0)
         assert "catch (e)" in body and "resp.status === 401" in body, fn
+
+
+
+def test_a_network_blip_while_polling_keeps_the_summary_busy():
+    code = _js_without_comments()
+    start = re.search(r"async function startSummary\(paper, button\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "if (e.status === 0) return;" in start
+
+
+def test_sign_out_errors_are_shown_and_the_gate_message_is_used_once():
+    code = _js_without_comments()
+    out = re.search(r"async function signOut\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "catch (e)" in out and "Could not sign out" in out
+    boot = re.search(r"async function boot\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert boot.index("sessionStorage.removeItem(SS_GATE_MESSAGE)") < boot.index('api("GET", "/api/me")')
