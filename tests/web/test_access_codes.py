@@ -385,6 +385,32 @@ def test_pc11_cli(tmp_path):
     assert run("reset-pin", "--for", "Ivy O'Neil").returncode == 1   # not used yet
 
 
+def test_pc7_a_code_can_be_tied_to_an_account_with_no_name(tmp_path):
+    """Dave's real account was reached only by cookie: no sign-in name, no PIN.
+    `add --user-id` ties a code to it; the first sign-in chooses the PIN."""
+    from src.db import Database
+    dbp = tmp_path / "cli.db"
+    db = Database(str(dbp))
+    uid = user_store.create_user(db, "dave")
+    user_store.create_reference_list(db, uid, "Dave's refs")
+    f = tmp_path / "codes.yaml"
+    env = dict(os.environ, ACCESS_CODES_FILE=str(f), BIORX_DB_PATH=str(dbp))
+    run = lambda *a: subprocess.run([sys.executable, "-m", "src.access_codes", *a], cwd=ROOT,
+                                    env=env, capture_output=True, text=True, timeout=60)
+    bad = run("add", "--for", "Dave", "--user-id", "no-such-id")
+    assert bad.returncode == 1 and not f.exists()
+    out = run("add", "--for", "Dave", "--user-id", uid)
+    assert out.returncode == 0, out.stderr
+    code = out.stdout.strip().splitlines()[-1].split(": ")[1].split()[0]
+    assert access_codes.bound_user_by_key(db, access_codes.code_key(code)) == uid
+    assert not accounts.has_pin(db, uid)
+    assert accounts.sign_in_user(db, uid, "dave-new-pin") == uid     # first sign-in sets it
+    assert accounts.has_pin(db, uid)
+    with pytest.raises(accounts.BadCredentials):
+        accounts.sign_in_user(db, uid, "someone-else")
+    db.close()
+
+
 def test_pc11_renew_adds_a_missing_expiry_line(tmp_path):
     f = tmp_path / "c.yaml"
     f.write_text("codes:\n  - code: ABCD-EFGH-JKLM\n    for: Jo\n    created: 2020-01-01\n\n"

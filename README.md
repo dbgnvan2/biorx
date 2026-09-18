@@ -137,7 +137,9 @@ forgets theirs, look it up and tell them. The file is git-ignored; see
 **Accounts made before personal codes** (name + PIN + the shared
 `ACCESS_CODE`): give each one a code tied to it with
 `python -m src.access_codes add --for "Dave" --account dave` — it keeps its PIN
-and data. While `ACCESS_CODE` is set, those accounts can still sign in the old
+and data. An account that never had a name (reached only by its browser
+cookie) is tied by id instead: find it with `python -m src.accounts list --db
+PATH`, then `add --for "Dave" --user-id ID`; they choose a PIN on first sign-in. While `ACCESS_CODE` is set, those accounts can still sign in the old
 way ("Sign in with name (old way)"), but it no longer creates accounts. Remove
 `ACCESS_CODE` from `.env` once everyone has a code.
 

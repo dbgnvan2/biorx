@@ -13,7 +13,7 @@ the owner tells them again from the file. The PIN is the secret.
 Commands (run with the same environment as the server, e.g.
 `set -a && source .env && set +a` first, so DATA_DIR points at the same place):
 
-    python -m src.access_codes add --for "Alice" [--account dave]
+    python -m src.access_codes add --for "Alice" [--account dave | --user-id ID]
     python -m src.access_codes renew --for "Alice"
     python -m src.access_codes reset-pin --for "Alice"
     python -m src.access_codes list
@@ -518,6 +518,8 @@ def _main(argv=None) -> int:
     a = sub.add_parser("add", help="make a code for someone")
     a.add_argument("--for", dest="for_name", required=True)
     a.add_argument("--account", default="", help="existing account sign-in name to tie it to")
+    a.add_argument("--user-id", default="", help="existing account id to tie it to (for "
+                   "accounts with no sign-in name; see python -m src.accounts list)")
     sub.add_parser("renew", help="push a code's expiry out; same code").add_argument(
         "--for", dest="for_name", required=True)
     sub.add_parser("reset-pin", help="let someone choose a new PIN").add_argument(
@@ -528,7 +530,20 @@ def _main(argv=None) -> int:
     print(f"Codes file: {path}")
 
     if args.cmd == "add":
+        if args.user_id:
+            from .db import Database
+            db = Database(args.db) if args.db else Database()
+            if db.conn.execute("SELECT 1 FROM users WHERE user_id = ?",
+                               (args.user_id,)).fetchone() is None:
+                print(f"No account with id {args.user_id} in {db.db_path}. Nothing added.")
+                return 1
         code = add_entry(path, args.for_name, account=args.account)
+        if args.user_id:
+            if not bind(db, code_key(code), args.user_id):
+                print("Could not tie the code to that account.")
+                return 1
+            print(f"Tied to account {args.user_id}; they choose a PIN on first sign-in "
+                  "if it has none.")
         print(f"Code for {args.for_name}: {code}  (expires in {code_days()} days)")
         return 0
     if args.cmd == "renew":
