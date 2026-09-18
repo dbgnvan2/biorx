@@ -595,20 +595,21 @@ def test_pc11_renew_keeps_the_next_entrys_comment_with_it(tmp_path):
 # ── csdp fix re-review 2026-09-18 ─────────────────────────────────────────────
 
 def test_pc6_resets_and_merges_end_merged_away_sessions(ctx, app):
-    """The epoch was compared on the cookie's own row, so a merged-away
-    account's cookie survived a PIN reset of the account it points to."""
+    """The check was on the cookie's own row, so a merged-away account's
+    cookie survived a PIN reset of the account it points to."""
     bob, _ = accounts.create_account(ctx.db, "bob", "bob-pin-111", user_store.new_user_id)
     add_code("Bob", account="bob")
     code_m = add_code("Em")
     c_m, r = _sign_in(app, code_m, pin="em-pin-111")
     em = r.json()["user_id"]
     accounts.merge_users(ctx.db, em, bob)
-    assert c_m.get("/api/me").status_code == 401            # the merge ends old cookies
+    assert c_m.get("/api/me").json()["user_id"] == bob      # AC7: the cookie follows
     c2, r = _sign_in(app, code_m, pin="bob-pin-111")        # Em's code now reaches Bob
     assert r.status_code == 200 and r.json()["user_id"] == bob
     assert c2.get("/api/me").status_code == 200
     access_codes.reset_pin(ctx.db, ctx.codes, "Bob")
-    assert c2.get("/api/me").status_code == 401             # and a reset of Bob ends it
+    assert c2.get("/api/me").status_code == 401             # a reset of Bob ends both
+    assert c_m.get("/api/me").status_code == 401
 
 
 def test_pc6_recovering_a_merged_away_name_ends_the_thiefs_session(ctx, app):
@@ -694,3 +695,79 @@ def test_pc4_a_reset_during_the_pin_check_does_not_leave_a_session(ctx, monkeypa
     monkeypatch.setattr(accounts, "verify_secret", reset_meanwhile)
     with pytest.raises(accounts.BadCredentials, match="just changed"):
         accounts.sign_in_user(ctx.db, uid, "racy-pin-11")
+
+
+# ── csdp fix re-review, round 3 (2026-09-18) ──────────────────────────────────
+
+def test_pc6_a_cookie_ended_by_a_reset_never_comes_back(ctx, app):
+    """Per-account counters could meet after a merge (A reset twice = 2; B at 0
+    then bumped...), reviving a dead cookie. Random nonces cannot."""
+    a_id, _ = accounts.create_account(ctx.db, "reva", "reva-pin-11", user_store.new_user_id)
+    b_id, _ = accounts.create_account(ctx.db, "revb", "revb-pin-11", user_store.new_user_id)
+    add_code("RevA", account="reva")
+    add_code("RevB", account="revb")
+    old = {"access_code": ACCESS_CODE, "name": "reva", "pin": "reva-pin-11"}
+    c = TestClient(app)
+    accounts.end_sessions(ctx.db, a_id)                     # first reset
+    assert c.post("/api/session", json=old).status_code == 200
+    accounts.end_sessions(ctx.db, a_id)                     # second: this cookie dies
+    assert c.get("/api/me").status_code == 401
+    accounts.merge_users(ctx.db, a_id, b_id)
+    assert c.get("/api/me").status_code == 401
+    for _ in range(3):
+        accounts.end_sessions(ctx.db, b_id)
+        assert c.get("/api/me").status_code == 401
+
+
+def test_pc6_reset_pin_also_clears_merged_away_pins(ctx, app):
+    old_id, _ = accounts.create_account(ctx.db, "oldname", "old-pin-111", user_store.new_user_id)
+    code = add_code("Newname")
+    _, r = _sign_in(app, code, pin="new-pin-222")
+    accounts.merge_users(ctx.db, old_id, r.json()["user_id"])
+    access_codes.reset_pin(ctx.db, ctx.codes, "Newname")
+    old = {"access_code": ACCESS_CODE, "name": "oldname", "pin": "old-pin-111"}
+    assert TestClient(app).post("/api/session", json=old).status_code == 401
+
+
+@pytest.mark.parametrize("text", [
+    "{codes: [{code: CCCC-CCCC-CCCC, for: Carol, created: 2026-09-18}]}\n",
+    "﻿codes:\n  - code: CCCC-CCCC-CCCC\n    for: Carol\n    created: 2026-09-18\n",
+    '"codes":\n  - code: CCCC-CCCC-CCCC\n    for: Carol\n    created: 2026-09-18\n',
+])
+def test_pc2_valid_layouts_are_not_mistaken_for_a_blank_file(ctx, app, text):
+    _sign_in(app, add_code("Someone"))                       # codes in use
+    _codes_file().write_text(text, encoding="utf-8")
+    os.utime(_codes_file(), ns=(1, 10**18))
+    assert [e.for_name for e in ctx.codes.entries()] == ["Carol"]
+    assert not ctx.codes.down(ctx.db)
+
+
+def test_pc2_healthz_names_a_blank_file_while_codes_are_in_use(ctx, client, app):
+    _sign_in(app, add_code("Someone"))
+    _write("")
+    warnings = client.get("/healthz").json()["startup_warnings"]
+    assert any("missing, blank or unreadable" in w for w in warnings)
+
+
+def test_pc2_an_unreadable_file_at_start_fails_closed(ctx, tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root can read a mode-000 file")
+    f = tmp_path / "locked.yaml"
+    f.write_text("codes:\n  - code: CCCC-CCCC-CCCC\n    for: Carol\n    created: 2026-09-18\n")
+    f.chmod(0)
+    try:
+        store = access_codes.CodeStore(str(f))
+        assert store.down(ctx.db)
+        assert any("cannot be opened" in w for w in store.current_warnings())
+    finally:
+        f.chmod(0o600)
+    assert not store.down(ctx.db)                            # retried, now readable
+
+
+def test_pc8_a_mistyped_disabled_entry_does_not_let_the_old_way_in(ctx, app):
+    accounts.create_account(ctx.db, "Legacy2", "leg-pin-111", user_store.new_user_id)
+    _write("codes:\n  - code: LLLL-LLLL-LLLL\n    for: Legacy2\n    account: Legacy2\n"
+           "    created: 18/09/2026\n    disabled: true\n")
+    r = TestClient(app).post("/api/session", json={"access_code": ACCESS_CODE,
+                                                   "name": "Legacy2", "pin": "leg-pin-111"})
+    assert r.status_code == 503 and r.json()["detail"] == access_codes.ENTRY_PROBLEM_MESSAGE

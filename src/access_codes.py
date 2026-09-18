@@ -147,11 +147,28 @@ def parse_codes(text: str, days: Optional[int] = None) -> Tuple[Dict[str, CodeEn
     return entries, warnings
 
 
+class Skips:
+    """What a parse left out: the codes and `account:` names of entries skipped
+    for a mistake (so that person hears "your entry has a mistake", not
+    "turned off", and a mistyped `disabled` entry cannot let them in), and
+    whether the file was blank (YAML loaded as nothing)."""
+
+    def __init__(self):
+        self.keys: set = set()
+        self.accounts: set = set()
+        self.blank = False
+
+    def add(self, key: str, account: str) -> None:
+        if key:
+            self.keys.add(key)
+        if account:
+            self.accounts.add(account.lower())
+
+
 def parse_codes_with_skips(text: str, days: Optional[int] = None):
-    """parse_codes plus the keys of entries skipped for a mistake, so the
-    person gets "your entry has a mistake" rather than "turned off"."""
+    """parse_codes plus a Skips record."""
     days = days if days is not None else code_days()
-    skipped: set = set()
+    skipped = Skips()
     warnings: List[str] = []
     try:
         data = yaml.safe_load(text)
@@ -160,6 +177,7 @@ def parse_codes_with_skips(text: str, days: Optional[int] = None):
         # date reader rejects. Either way, report it; never crash the server.
         return {}, [f"access codes file cannot be read, so no codes work: {e}"], skipped
     if data is None:
+        skipped.blank = True                # blank, or comments only
         return {}, [], skipped
     if not isinstance(data, dict) or "codes" not in data:
         return {}, ["access codes file has no 'codes:' list, so no codes work"], skipped
@@ -177,29 +195,29 @@ def parse_codes_with_skips(text: str, days: Optional[int] = None):
             continue
         code = str(item.get("code") or "").strip()
         for_name = " ".join(str(item.get("for") or "").split())
+        acct = " ".join(str(item.get("account") or "").split())
         # Never the code itself: warnings reach the log and a count reaches /healthz.
         where = f"{where} ({for_name or 'no name'})"
         key = code_key(code)
         if len(key) < CODE_MIN_CHARS:
             warnings.append(f"{where}: code must have at least {CODE_MIN_CHARS} letters "
                             "or digits — skipped")
-            if key:
-                skipped.add(key)
+            skipped.add(key, acct)
             continue
         if not for_name:
             warnings.append(f"{where}: needs 'for:' (who the code is for) — skipped")
-            skipped.add(key)
+            skipped.add(key, acct)
             continue
         try:
             created = _as_date(item.get("created"))
             expires = _as_date(item.get("expires"))
         except ValueError:
             warnings.append(f"{where}: a date is not YYYY-MM-DD — skipped")
-            skipped.add(key)
+            skipped.add(key, acct)
             continue
         if expires is None and created is None:
             warnings.append(f"{where}: needs 'created:' or 'expires:' (YYYY-MM-DD) — skipped")
-            skipped.add(key)
+            skipped.add(key, acct)
             continue
         if expires is None:
             expires = created + timedelta(days=days)
@@ -242,6 +260,7 @@ class CodeStore:
         self.broken = False        # the whole file failed to load
         self.empty = False         # the file exists but has no entries
         self.skipped_keys: set = set()
+        self.skipped_accounts: set = set()
 
     def down(self, db) -> bool:
         """True when no code can be trusted: the file is broken, or it is
@@ -260,6 +279,10 @@ class CodeStore:
         self._refresh()
         return key in self.skipped_keys and key not in self._entries
 
+    def account_entry_problem(self, login_name: str) -> bool:
+        self._refresh()
+        return bool(login_name) and login_name.lower() in self.skipped_accounts
+
     def _refresh(self) -> None:
         try:
             st = self.path.stat()
@@ -276,30 +299,43 @@ class CodeStore:
                 elif not self._loaded:
                     logger.warning("No access codes file at %s", self.path)
                 self._entries, self.warnings, self.missing, self.broken = {}, [], True, False
-                self.empty, self.skipped_keys = False, set()
+                self.empty, self.skipped_keys, self.skipped_accounts = False, set(), set()
             else:
                 self.missing = False
                 try:
                     text = self.path.read_text(encoding="utf-8")
                 except UnicodeDecodeError as e:
-                    self._entries, self.broken, self.skipped_keys = {}, True, set()
+                    self._entries, self.broken = {}, True
+                    self.skipped_keys, self.skipped_accounts = set(), set()
                     self.warnings = [f"access codes file is not UTF-8 text, so no codes work: {e}"]
                     logger.warning("%s", self.warnings[0])
                     self._stamp, self._loaded = stamp, True
                     return
                 except OSError as e:
-                    # Keep the last good copy rather than locking everyone out
-                    # because of a read that raced an editor's save.
-                    logger.warning("Could not read %s: %s — keeping the last copy",
-                                   self.path, e)
+                    if self._loaded and not self.broken:
+                        # Keep the last good copy rather than locking everyone
+                        # out because of a read that raced an editor's save.
+                        logger.warning("Could not read %s: %s — keeping the last copy",
+                                       self.path, e)
+                        return
+                    # No good copy to fall back on (first read after a start):
+                    # fail closed and say why. Not stamped, so it retries.
+                    self._entries, self.broken = {}, True
+                    self.warnings = [f"access codes file cannot be opened, so no codes work: {e}"]
+                    logger.warning("%s", self.warnings[0])
                     return
-                self._entries, self.warnings, self.skipped_keys = parse_codes_with_skips(text)
+                self._entries, self.warnings, skips = parse_codes_with_skips(text)
+                self.skipped_keys, self.skipped_accounts = skips.keys, skips.accounts
                 self.broken = (not self._entries and
                                any(w.startswith(_FILE_PROBLEM) for w in self.warnings))
                 # Blank (or comments only), as when an editor truncates the file
-                # before writing it. An emptied `codes:` list is the owner's
-                # choice and is not "empty" here.
-                self.empty = not self.broken and not re.search(r"(?m)^codes\s*:", text)
+                # before writing it. Decided from the parse, not the text, so a
+                # flow-style or BOM-prefixed file is not "blank". An emptied
+                # `codes:` list is the owner's choice and is not blank either.
+                self.empty = skips.blank
+                if self.empty:
+                    logger.warning("Access codes file %s is blank — if codes are in use, "
+                                   "nobody can sign in with one", self.path)
                 for w in self.warnings:
                     logger.warning("%s", w)
                 logger.info("Loaded %d access code(s) from %s", len(self._entries), self.path)
@@ -385,6 +421,11 @@ def session_refusal(db, store: CodeStore, user_id: str, shared_code_set: bool,
     mine = [store.get_by_key(k) for k in keys]
     if login_name:
         mine += [e for e in store.entries() if e.account.lower() == login_name]
+    if store.account_entry_problem(login_name):
+        # An entry naming this account was skipped for a mistake: it may say
+        # `disabled`, so do not let them in on the old path (fail closed).
+        if not any(e is not None and e.refusal(today) is None for e in mine):
+            return ENTRY_PROBLEM_MESSAGE
     if not keys and not any(mine):
         return None if shared_code_set else "Sign in with your personal access code."
     live = [e for e in mine if e is not None]
@@ -552,10 +593,12 @@ def reset_pin(db, store: CodeStore, for_name: str) -> str:
         raise LookupError(f"{for_name!r} has codes for more than one account; edit by hand.")
     user_id = users.pop()
     # Also end open sessions: a reset usually means someone else may know the PIN.
-    from .accounts import bump_session_epoch
+    from .accounts import end_sessions
+    # Also clear the PINs of accounts merged into this one: their old name +
+    # PIN would otherwise still reach it (csdp review round 3).
     db.conn.execute("UPDATE users SET pin_hash = NULL, failed_logins = 0, locked_until = NULL "
-                    "WHERE user_id = ?", (user_id,))
-    bump_session_epoch(db, user_id)
+                    "WHERE user_id = ? OR merged_into = ?", (user_id, user_id))
+    end_sessions(db, user_id)
     db.conn.commit()
     return user_id
 

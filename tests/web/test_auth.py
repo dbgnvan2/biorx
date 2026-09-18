@@ -299,7 +299,7 @@ def test_a_broken_merge_chain_is_refused_not_treated_as_the_old_account(ctx, cli
     assert client.get("/api/me").status_code == 401
 
 
-def test_a_cookie_from_before_session_epochs_still_works(ctx, client):
+def test_a_cookie_from_before_session_nonces_still_works(ctx, client):
     from itsdangerous import URLSafeTimedSerializer
     from src import user_store
     uid = user_store.create_user(ctx.db, "old cookie")

@@ -975,15 +975,27 @@ async function startSummary(paper, button) {
   }
   if (modalShows(paper)) $("modal-summary-meta").textContent = `${job.provider} · ${job.model}`;
 
+  let inFlight = false;
+  let netFailures = 0;
   const timer = setInterval(async () => {
+    if (inFlight) return;             // do not pile up requests on a slow link
     let s;
+    inFlight = true;
     try { s = await api("GET", `/api/summaries/${job.job_id}`); }
     catch (e) {
       // A network blip: the job is still running on the server, so keep the
       // button busy and try again next tick (a second click would bill twice).
-      if (e.status === 0) return;
+      if (e.status === 0) {
+        netFailures += 1;
+        if (netFailures === 3) {
+          notice("Can't reach the server — still waiting for the summary.", "warn");
+        }
+        return;
+      }
       clearInterval(timer); notice(e.message); done(); return;
-    }
+    } finally { inFlight = false; }
+    if (netFailures >= 3) notice("");
+    netFailures = 0;
 
     if (modalShows(paper)) {
       $("modal-summary-meta").textContent = `${job.provider} · ${job.model} — ${s.phase || s.status}`;

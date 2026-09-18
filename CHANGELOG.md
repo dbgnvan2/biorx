@@ -47,6 +47,14 @@ last push. All findings fixed, each with a test:
   cost a lockout attempt; the search PDF counts a paper once; a lock is logged
   once; a network blip while a summary runs keeps its button busy; sign-out
   errors are shown.
+- Third round: session cookies carry a random per-account value instead of a
+  counter (counters of two accounts could meet after a merge and revive a
+  cookie a reset had ended); `reset-pin` also clears PINs of accounts merged
+  into that one; a flow-style, BOM-prefixed or quoted-key codes file is no
+  longer mistaken for a blank one; `/healthz` names a blank or unreadable file
+  while codes are in use; a file that cannot be opened at start fails closed;
+  a mistyped entry that names an old-style account refuses that account; the
+  summary poll warns after repeated network failures and never overlaps.
 
 
 ## 2026-09-18 (late) — personal access codes

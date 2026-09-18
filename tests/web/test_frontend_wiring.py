@@ -917,7 +917,8 @@ def test_downloads_handle_sign_out_and_network_errors():
 def test_a_network_blip_while_polling_keeps_the_summary_busy():
     code = _js_without_comments()
     start = re.search(r"async function startSummary\(paper, button\) \{.*?\n\}", code, re.DOTALL).group(0)
-    assert "if (e.status === 0) return;" in start
+    assert "if (e.status === 0) {" in start and "netFailures" in start
+    assert "if (inFlight) return;" in start               # no pile-up on a slow link
 
 
 def test_sign_out_errors_are_shown_and_the_gate_message_is_used_once():

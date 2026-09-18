@@ -94,7 +94,10 @@ def create_app(ctx: AppContext = None) -> FastAPI:
         n = len(c.codes.current_warnings())
         out = ([f"The access codes file has {n} problem(s) — see the server log."]
                if n else [])
-        if c.codes.missing:
+        if c.codes.down(c.db):
+            out.append("The access codes file is missing, blank or unreadable while codes "
+                       "are in use, so nobody can sign in — see the server log.")
+        elif c.codes.missing:
             out.append("There is no access codes file, so nobody can sign in with a "
                        "personal code — see the server log.")
         return out

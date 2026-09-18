@@ -418,9 +418,10 @@ class Database:
                                 ("recovery_hash", "TEXT"),
                                 ("failed_logins", "INTEGER DEFAULT 0"),
                                 ("locked_until", "TEXT"), ("merged_into", "TEXT"),
-                                # Bumped when a PIN is reset or recovered, so
-                                # cookies issued before it stop working.
-                                ("session_epoch", "INTEGER DEFAULT 0")):
+                                # A random value in every session cookie; a new
+                                # one on PIN reset, recovery or merge ends all
+                                # cookies issued before it. NULL = never changed.
+                                ("session_nonce", "TEXT")):
             self._add_column_if_missing(cursor, "users", col, definition)
         cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login_name "

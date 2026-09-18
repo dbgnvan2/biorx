@@ -199,39 +199,39 @@ def _failed(db, user_id: str, attempt: int, now: datetime) -> None:
 
 class SignedIn(str):
     """A user id (compares equal to the plain string) that also carries the
-    session epoch read in the same statement that accepted the PIN. The cookie
-    is issued with that epoch, so a PIN reset that lands while the PIN is being
-    checked cannot leave the old PIN's session alive (csdp review)."""
+    account's session nonce, read in the same statement that accepted the PIN.
+    The cookie is issued with it, so a PIN reset that lands while the PIN is
+    being checked cannot leave the old PIN's session alive (csdp review)."""
 
-    epoch: int = 0
+    nonce: str = ""
 
-    def __new__(cls, user_id: str, epoch: int):
+    def __new__(cls, user_id: str, nonce: Optional[str]):
         obj = super().__new__(cls, user_id)
-        obj.epoch = epoch
+        obj.nonce = nonce or ""
         return obj
 
 
 def _record_success(db, user_id: str, checked_hash: Optional[str]) -> int:
     """Clear the failure count, only if the PIN hash is still the one that was
-    checked. Returns the session epoch; raises if the PIN changed meanwhile."""
+    checked. Returns the session nonce; raises if the PIN changed meanwhile."""
     cur = db.conn.execute(
         "UPDATE users SET failed_logins = 0, locked_until = NULL "
-        "WHERE user_id = ? AND pin_hash IS ? RETURNING session_epoch", (user_id, checked_hash))
+        "WHERE user_id = ? AND pin_hash IS ? RETURNING session_nonce", (user_id, checked_hash))
     got = cur.fetchone()
     db.conn.commit()
     if got is None:
         raise BadCredentials("That PIN was just changed. Sign in again.")
-    return got[0] or 0
+    return got[0] or ""
 
 
-def _signed_in(db, row_user_id: str, epoch: int) -> "SignedIn":
+def _signed_in(db, row_user_id: str, nonce: str) -> "SignedIn":
     final = resolve_user_id(db, row_user_id) or row_user_id
     if final != row_user_id:
         # A merged account: the cookie is for the account the data moved to.
-        r = db.conn.execute("SELECT session_epoch FROM users WHERE user_id = ?",
+        r = db.conn.execute("SELECT session_nonce FROM users WHERE user_id = ?",
                             (final,)).fetchone()
-        epoch = (r["session_epoch"] or 0) if r else 0
-    return SignedIn(final, epoch)
+        nonce = (r["session_nonce"] or "") if r else ""
+    return SignedIn(final, nonce)
 
 
 # ── Operations ────────────────────────────────────────────────────────────────
@@ -264,8 +264,8 @@ def sign_in(db, name: str, pin: str, now: Optional[datetime] = None) -> str:
     if not verify_secret(pin, row["pin_hash"]):
         _failed(db, row["user_id"], attempt, now)
         raise BadCredentials("That name or PIN is not right.")
-    epoch = _record_success(db, row["user_id"], row["pin_hash"])
-    return _signed_in(db, row["user_id"], epoch)
+    nonce = _record_success(db, row["user_id"], row["pin_hash"])
+    return _signed_in(db, row["user_id"], nonce)
 
 
 def _by_id(db, user_id: str):
@@ -298,19 +298,19 @@ def sign_in_user(db, user_id: str, pin: str, now: Optional[datetime] = None) -> 
         # one code cannot overwrite each other.
         cur = db.conn.execute(
             "UPDATE users SET pin_hash = ?, failed_logins = 0, locked_until = NULL "
-            "WHERE user_id = ? AND pin_hash IS NULL RETURNING session_epoch",
+            "WHERE user_id = ? AND pin_hash IS NULL RETURNING session_nonce",
             (hash_secret(pin), user_id))
         got = cur.fetchone()
         db.conn.commit()
         if got is None:
             return sign_in_user(db, user_id, pin, now)
-        return _signed_in(db, user_id, got[0] or 0)
+        return _signed_in(db, user_id, got[0] or "")
     attempt = _claim_attempt(db, row, now)
     if not verify_secret(pin, row["pin_hash"]):
         _failed(db, user_id, attempt, now)
         raise BadCredentials("That code or PIN is not right.")
-    epoch = _record_success(db, user_id, row["pin_hash"])
-    return _signed_in(db, user_id, epoch)
+    nonce = _record_success(db, user_id, row["pin_hash"])
+    return _signed_in(db, user_id, nonce)
 
 
 def create_code_account(db, display_name: str, pin: str, code_key: str,
@@ -336,13 +336,19 @@ def create_code_account(db, display_name: str, pin: str, code_key: str,
     return user_id
 
 
-def bump_session_epoch(db, user_id: str, commit: bool = True) -> None:
-    """End every session issued so far for this account. web/auth.py compares
-    the cookie's epoch with the epoch of the account the cookie resolves to
-    (after merges), so bumping the final account covers merged-away cookies."""
+def end_sessions(db, user_id: str, commit: bool = True) -> None:
+    """End every session issued so far for this account.
+
+    web/auth.py compares the cookie's nonce with the nonce of the account the
+    cookie resolves to (after merges). A fresh random nonce cannot equal any
+    earlier one — a counter per account could, since two accounts' counters
+    can meet after a merge (csdp review round 3)."""
     final = resolve_user_id(db, user_id) or user_id
-    db.conn.execute("UPDATE users SET session_epoch = COALESCE(session_epoch, 0) + 1 "
-                    "WHERE user_id IN (?, ?)", (user_id, final))
+    db.conn.execute("UPDATE users SET session_nonce = ? WHERE user_id = ?",
+                    (secrets.token_urlsafe(16), final))
+    if final != user_id:
+        db.conn.execute("UPDATE users SET session_nonce = ? WHERE user_id = ?",
+                        (secrets.token_urlsafe(16), user_id))
     if commit:
         db.conn.commit()
 
@@ -379,7 +385,7 @@ def recover(db, name: str, code: str, new_pin: str,
         "WHERE user_id = ?",
         (hash_secret(new_pin), hash_secret(_normalise_code(fresh)), row["user_id"]),
     )
-    bump_session_epoch(db, row["user_id"], commit=False)
+    end_sessions(db, row["user_id"], commit=False)
     db.conn.commit()
     return row["user_id"], fresh
 
@@ -440,10 +446,10 @@ def merge_users(db, source_id: str, target_id: str) -> dict:
         conn.execute("UPDATE access_code_bindings SET user_id = ? WHERE user_id = ?",
                      (target_id, source_id))
         conn.execute("UPDATE users SET merged_into = ? WHERE user_id = ?", (target_id, source_id))
-        # Cookies issued before the merge (for either account) end: they carry
-        # an epoch the merged account no longer has.
-        conn.execute("UPDATE users SET session_epoch = COALESCE(session_epoch, 0) + 1 "
-                     "WHERE user_id IN (?, ?)", (source_id, target_id))
+        # Session nonces are left alone: a live cookie of either account keeps
+        # working (AC7: nobody is signed out mid-merge) only while its nonce
+        # matches the merged account's. A cookie a reset already ended holds a
+        # random nonce no account will ever have again, so it cannot revive.
         conn.commit()
     except BaseException:
         conn.rollback()
