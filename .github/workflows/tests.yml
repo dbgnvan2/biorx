@@ -12,6 +12,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: tests/web/test_no_retrieval_drift.py diffs against a
+          # baseline commit, which a shallow (depth 1) clone does not contain.
+          fetch-depth: 0
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
