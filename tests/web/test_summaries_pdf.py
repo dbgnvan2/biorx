@@ -134,3 +134,97 @@ def test_sp5_docker_image_installs_a_unicode_font():
     from src.summary_pdf import FONT_CANDIDATES
     assert "fonts-dejavu-core" in (REPO / "Dockerfile").read_text()
     assert FONT_CANDIDATES[0] == "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
+
+# ── S1–S3: summaries for a search's results (2026-09-18 second plan) ─────────
+
+def _finished_search(signed_in, ctx, papers):
+    import time
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock, patch
+    orch = MagicMock()
+
+    def search(on_batch, **_):
+        on_batch([SimpleNamespace(to_dict=lambda p=p: dict(p)) for p in papers])
+    orch.search = search
+    with patch.object(ctx, "get_orchestrator", return_value=orch):
+        job_id = signed_in.post("/api/searches", json={
+            "filter": {"text_groups": []},
+            "source_selection": {"all": True, "selected": []}}).json()["job_id"]
+    for _ in range(100):
+        if signed_in.get(f"/api/searches/{job_id}").json()["status"] == "done":
+            return job_id
+        time.sleep(0.02)
+    raise AssertionError("search never finished")
+
+
+def _summarize_stored(ctx, paper, finding, when):
+    pid = ctx.db.insert_paper(paper) or ctx.db.find_paper(paper)["id"]
+    ctx.db.insert_summary(pid, summary_text="", key_findings=[finding],
+                          methodology="m", conclusions="c", model_version="claude-sonnet-5")
+    ctx.db.conn.execute("UPDATE summaries SET created_at = ? WHERE paper_id = ?", (when, pid))
+    ctx.db.conn.commit()
+
+
+def test_s1_search_summaries_lists_only_stored_ones_newest_first(signed_in, ctx):
+    third = {**UNSUMMARIZED, "title": "Third", "doi": "10.1234/sum.3", "canonical_id": "doi:10.1234/sum.3"}
+    job_id = _finished_search(signed_in, ctx, [SUMMARIZED, UNSUMMARIZED, third])
+    _summarize_stored(ctx, SUMMARIZED, "older finding", "2026-09-17 10:00:00")
+    _summarize_stored(ctx, third, "newer finding", "2026-09-18 10:00:00")
+    body = signed_in.get(f"/api/searches/{job_id}/summaries").json()
+    assert body["total_results"] == 3
+    assert [s["title"] for s in body["summaries"]] == ["Third", SUMMARIZED["title"]]
+    assert body["summaries"][0]["key_findings"] == ["newer finding"]
+
+
+def test_s1_is_read_only_for_unstored_results(signed_in, ctx):
+    """A result never stored has no row; listing summaries must not insert one."""
+    job_id = _finished_search(signed_in, ctx, [UNSUMMARIZED])
+    before = ctx.db.conn.execute("SELECT COUNT(*) FROM papers").fetchone()[0]
+    assert signed_in.get(f"/api/searches/{job_id}/summaries").json()["summaries"] == []
+    assert ctx.db.conn.execute("SELECT COUNT(*) FROM papers").fetchone()[0] == before
+
+
+def test_s1_other_users_search_is_404(signed_in, other_client, ctx):
+    from tests.web.conftest import ACCESS_CODE
+    job_id = _finished_search(signed_in, ctx, [SUMMARIZED])
+    other_client.post("/api/session", json={"access_code": ACCESS_CODE, "display_name": "B"})
+    assert other_client.get(f"/api/searches/{job_id}/summaries").status_code == 404
+    assert other_client.post(f"/api/searches/{job_id}/summaries.pdf", json={}).status_code == 404
+
+
+def test_s3_search_pdf_all_results(signed_in, ctx):
+    job_id = _finished_search(signed_in, ctx, [SUMMARIZED, UNSUMMARIZED])
+    _summarize_stored(ctx, SUMMARIZED, "the finding", "2026-09-18 10:00:00")
+    r = signed_in.post(f"/api/searches/{job_id}/summaries.pdf", json={"title": "Inflammation – 2026-09-18"})
+    assert r.status_code == 200 and r.content.startswith(b"%PDF-")
+    text = _text(r.content)
+    assert "Inflammation – 2026-09-18" in text
+    assert "1 of 2 papers summarized" in text
+    assert "the finding" in text
+    assert "Not summarized (1)" in text
+
+
+def test_s3_search_pdf_only_ticked_papers(signed_in, ctx):
+    job_id = _finished_search(signed_in, ctx, [SUMMARIZED, UNSUMMARIZED])
+    _summarize_stored(ctx, SUMMARIZED, "the finding", "2026-09-18 10:00:00")
+    r = signed_in.post(f"/api/searches/{job_id}/summaries.pdf",
+                       json={"paper_ids": [UNSUMMARIZED["canonical_id"]]})
+    text = _text(r.content)
+    assert "0 of 1 papers summarized" in text
+    assert "the finding" not in text        # adversarial: unticked paper left out
+
+
+def test_s3_unfinished_search_is_409(signed_in, ctx):
+    import threading
+    from unittest.mock import MagicMock, patch
+    release = threading.Event()
+    orch = MagicMock()
+    orch.search = lambda **_: release.wait(5)
+    with patch.object(ctx, "get_orchestrator", return_value=orch):
+        job_id = signed_in.post("/api/searches", json={"filter": {"text_groups": []}}).json()["job_id"]
+    try:
+        assert signed_in.get(f"/api/searches/{job_id}/summaries").status_code == 409
+        assert signed_in.post(f"/api/searches/{job_id}/summaries.pdf", json={}).status_code == 409
+    finally:
+        release.set()

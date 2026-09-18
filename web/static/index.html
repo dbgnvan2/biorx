@@ -91,16 +91,21 @@
         </div>
       </div>
 
+      <!-- Summaries for the current results (S2): accumulate, newest first. -->
+      <div id="summaries-card" class="card hidden">
+        <div class="row" style="align-items:center;margin-bottom:8px">
+          <h2 id="summaries-heading" style="margin:0;flex:1">Summaries</h2>
+          <button id="btn-save-summaries-pdf" class="shrink">Save summaries (PDF)</button>
+        </div>
+        <ul id="summaries-list" class="summaries-list"></ul>
+      </div>
+
       <!-- Results -->
       <div id="results-card" class="card hidden">
         <div class="row" style="align-items:center;margin-bottom:8px">
           <h2 id="results-heading" style="margin:0;flex:1">Results</h2>
-          <label class="shrink small"><input id="select-all-results" type="checkbox"> All</label>
+          <label class="shrink small source-pick"><input id="select-all-results" type="checkbox"> All</label>
           <button id="btn-save-as-list" class="primary shrink" disabled>Save to Saved References</button>
-          <span id="save-list-name-wrap" class="shrink hidden">
-            <input id="save-list-name-input" type="text" placeholder="List name" style="width:160px">
-            <button id="btn-confirm-save-list" class="primary">Save</button>
-          </span>
         </div>
         <div id="sources-failed" class="banner warn hidden small"></div>
         <p id="empty-note" class="muted small hidden"></p>

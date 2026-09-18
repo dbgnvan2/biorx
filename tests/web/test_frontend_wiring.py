@@ -133,6 +133,8 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/searches/{param}",
         "/api/searches/{param}/results",
         "/api/searches/{param}/save-as-list",
+        "/api/searches/{param}/summaries",
+        "/api/searches/{param}/summaries.pdf",
         "/api/summaries",
         "/api/summaries/lookup",
         "/api/summaries/{param}",
@@ -333,7 +335,7 @@ def test_ps6_default_sources_logic(enabled, saved, expected):
         pytest.skip("node is not installed; applyDefaultSources not exercised here")
 
     source = APP_JS.read_text()
-    match = re.search(r"function applyDefaultSources\(enabledIds, savedRaw\) \{.*?\n\}",
+    match = re.search(r"function applyDefaultSources\(enabledIds, savedRaw, serverDefaultIds\) \{.*?\n\}",
                       source, re.DOTALL)
     assert match, "applyDefaultSources is no longer defined in app.js"
 
@@ -566,7 +568,7 @@ def test_cs2_filter_test_reports_unreachable_sources():
     code = _js_without_comments()
     body = re.search(r"async function pollFilterTest\(\) \{.*?\n\}", code, re.DOTALL).group(0)
     assert "sources_failed" in body
-    assert "Results are incomplete" in body
+    assert "failedSourcesText(job)" in body
 
 
 # ── 2026-09-18: UI fixes, desktop names (docs/implementation_plan_2026-09-18_…) ──
@@ -618,7 +620,7 @@ def test_ui4_save_button_label(checked, total, text, disabled):
 
 def test_ui4_nothing_ticked_saves_all():
     code = _js_without_comments()
-    body = re.search(r"async function confirmSaveList\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    body = re.search(r"async function saveResultsAs\(name\) \{.*?\n\}", code, re.DOTALL).group(0)
     assert "state.checkedPapers.size ? Array.from(state.checkedPapers) : null" in body
 
 
@@ -649,3 +651,155 @@ def test_pf1_default_list_name(label, expected):
 def test_sp6_references_tab_has_the_pdf_export():
     assert 'id="btn-ref-export-summaries"' in INDEX.read_text()
     assert "/api/references/{param}/summaries.pdf" in _api_paths_called_by_js()
+
+
+# ── 2026-09-18 second report (docs/implementation_plan_2026-09-18_cache_and_summaries.md) ──
+
+def test_c1_page_and_assets_are_not_served_stale(client):
+    for path in ("/", "/static/app.js", "/static/styles.css"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert r.headers.get("cache-control") == "no-cache", path
+
+
+def test_c2_asset_urls_carry_a_content_hash(client, tmp_path):
+    import hashlib
+    from web.app import versioned_index
+    html = client.get("/").text
+    for name in ("app.js", "styles.css"):
+        digest = hashlib.sha256((STATIC / name).read_bytes()).hexdigest()[:12]
+        assert f"/static/{name}?v={digest}" in html, name
+    # The hash follows the file: change it and the URL changes.
+    (tmp_path / "index.html").write_text('<script src="/static/app.js"></script>')
+    (tmp_path / "app.js").write_text("one")
+    first = versioned_index(tmp_path)
+    (tmp_path / "app.js").write_text("two")
+    assert versioned_index(tmp_path) != first
+
+
+def test_a1_select_all_resets_on_search():
+    code = _js_without_comments()
+    body = re.search(r"async function startSearch\(payload\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert '$("select-all-results").checked = false' in body
+    assert '$("select-all-results").indeterminate = false' in body
+
+
+def test_b1_save_opens_a_dialog_not_a_toggle():
+    html = INDEX.read_text()
+    assert 'id="save-list-name-wrap"' not in html
+    code = _js_without_comments()
+    body = re.search(r"async function saveResults\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "window.prompt(" in body
+    assert 'addEventListener("click", saveResults)' in code
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("Inflammation – 2026-09-18", "Inflammation – 2026-09-18 (2)"),
+    ("Inflammation – 2026-09-18 (2)", "Inflammation – 2026-09-18 (3)"),
+    ("List (9)", "List (10)"),
+])
+def test_b2_duplicate_name_suggests_next(name, expected):
+    got = _node_eval([_js_block(r"function nextListName\(name\) \{.*?\n\}")],
+                     f"nextListName({name!r})")
+    assert got == expected
+
+
+def test_b2_taken_name_reopens_the_dialog():
+    """Run saveResults in node: the first name is taken (409), the second is
+    accepted; the dialog must be shown twice, the second time with the reason
+    and the suggested name."""
+    import json
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    fns = [_js_block(rf"(async )?function {n}\(.*?\n\}}")
+           for n in ("nextListName", "defaultListName", "saveResults", "saveResultsAs")]
+    script = """
+const prompts = [];
+const window = { prompt: (msg, val) => { prompts.push([msg, val]); return val; } };
+const state = { jobId: "j1", searchLabel: "Inflammation", checkedPapers: new Set() };
+const notices = []; function notice(m, k = "error") { notices.push([k, m]); }
+let calls = 0;
+async function api(method, path, body) {
+  calls++;
+  if (calls === 1) { const e = new Error(`You already have a list called '${body.name}'.`); e.status = 409; throw e; }
+  return { saved: 3, requested: 3, skipped: [] };
+}
+""" + "\n".join(fns) + """
+saveResults().then(() => console.log(JSON.stringify({prompts, notices})));
+"""
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=20)
+    assert out.returncode == 0, out.stderr
+    result = json.loads(out.stdout.strip())
+    assert len(result["prompts"]) == 2
+    assert "already used" in result["prompts"][1][0]
+    assert result["prompts"][1][1].endswith(" (2)")
+    assert result["notices"][-1][0] == "ok"
+
+
+def test_k1_summary_error_is_shown_in_the_popup():
+    code = _js_without_comments()
+    body = re.search(r"async function startSummary\(paper, button\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "— failed: ${reason}" in body
+
+
+@pytest.mark.parametrize("saved,server,expected", [
+    (None, ["a", "b"], ["a", "b"]),          # nothing saved: the server's defaults
+    ("", ["b"], ["b"]),
+    (None, [], ["a", "b", "c"]),             # no server defaults either: all
+    ('["c"]', ["a"], ["c"]),                 # the user's own choice wins
+    ('["gone"]', ["b"], ["b"]),              # stale saved choice: server defaults
+])
+def test_d1_server_defaults_apply_when_nothing_is_saved(saved, server, expected):
+    import json
+    got = _node_eval([_js_block(r"function applyDefaultSources\(enabledIds, savedRaw, serverDefaultIds\) \{.*?\n\}")],
+                     f"applyDefaultSources(['a','b','c'], {json.dumps(saved)}, {json.dumps(server)})")
+    assert got == expected
+
+
+def test_d1_healthz_carries_default_selected(client):
+    sources = client.get("/healthz").json()["sources"]
+    assert sources and all("default_selected" in s for s in sources)
+
+
+def test_d2_failed_sources_text_names_source_and_reason():
+    got = _node_eval([_js_block(r"function failedSourcesText\(job\) \{.*?\n\}")],
+        'failedSourcesText({sources_failed: ["biorxiv_medrxiv"], '
+        'source_problems: {"bioRxiv/medRxiv": "did not respond properly"}})')
+    assert got == "bioRxiv/medRxiv did not respond properly. Results are incomplete."
+    # Older job payloads without reasons still say something true.
+    got = _node_eval([_js_block(r"function failedSourcesText\(job\) \{.*?\n\}")],
+                     'failedSourcesText({sources_failed: ["pubmed"]})')
+    assert got == "Could not reach: pubmed. Results are incomplete."
+
+
+def test_d2_every_poller_uses_the_shared_text():
+    code = _js_without_comments()
+    for fn in ("pollSearch", "pollFilterTest", "pollDiscover"):
+        body = re.search(rf"async function {fn}\(\) \{{.*?\n\}}", code, re.DOTALL).group(0)
+        assert "failedSourcesText(job)" in body, fn
+
+
+def test_s2_a_new_summary_never_removes_another():
+    got = _node_eval([_js_block(r"function summaryKey\(item\) \{.*?\n\}"),
+                      _js_block(r"function mergeSummaries\(existing, incoming\) \{.*?\n\}")],
+        'mergeSummaries(['
+        '{canonical_id:"a", title:"A", created_at:"2026-09-18T10:00"}], ['
+        '{canonical_id:"b", title:"B", created_at:"2026-09-18T11:00"}]).map(s => s.title)')
+    assert got == ["B", "A"]
+    # Same paper again: replaced, not duplicated.
+    got = _node_eval([_js_block(r"function summaryKey\(item\) \{.*?\n\}"),
+                      _js_block(r"function mergeSummaries\(existing, incoming\) \{.*?\n\}")],
+        'mergeSummaries([{canonical_id:"a", title:"old", created_at:"1"}],'
+        ' [{canonical_id:"a", title:"new", created_at:"2"}]).map(s => s.title)')
+    assert got == ["new"]
+
+
+def test_s2_panel_is_above_the_results_and_refreshed_after_a_summary():
+    html = INDEX.read_text()
+    assert html.index('id="summaries-card"') < html.index('id="results-card"')
+    code = _js_without_comments()
+    body = re.search(r"async function startSummary\(paper, button\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "mergeSummaries(" in body and "refreshSearchSummaries()" in body

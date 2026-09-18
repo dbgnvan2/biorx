@@ -86,6 +86,9 @@ class Job:
     # Sources that failed mid-run. The orchestrator swallows these per source;
     # surfacing them is what separates "no new papers" from "arXiv was down".
     sources_failed: List[str] = field(default_factory=list)
+    # Why each failed source failed, in plain language, keyed by display label
+    # (D2). "Could not reach X" alone read the same for an outage and a limit.
+    source_problems: Dict[str, str] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -114,6 +117,7 @@ class Job:
             "matched": self.matched,
             "error": self.error,
             "sources_failed": list(self.sources_failed),
+            "source_problems": dict(self.source_problems),
             "created_at": self.created_at,
             "finished_at": self.finished_at,
         }

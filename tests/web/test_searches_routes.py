@@ -260,3 +260,36 @@ def test_one_user_cannot_read_or_cancel_anothers_search(ctx, app):
         assert bob.get(f"/api/searches/{job_id}").status_code == 404
         assert bob.get(f"/api/searches/{job_id}/results").status_code == 404
         assert bob.delete(f"/api/searches/{job_id}").status_code == 404
+
+
+# ── D2: a failed source carries a plain-language reason (2026-09-18) ─────────
+
+@pytest.mark.parametrize("kind,expect", [
+    ("unavailable", "did not respond properly"),
+    ("rate-limited", "limiting how fast"),
+    ("error", "unexpected error"),
+    ("partial", "part-way"),
+    ("something-new", "could not be reached"),     # unknown kind: honest fallback
+])
+def test_d2_failure_reason_from_config(kind, expect):
+    from src.sources.config import load_sources_config
+    from src.sources.orchestrator import FAILURE_STATUS_MARKER, _SOURCE_LABELS
+    from web.routes_searches import failure_reason
+    msg = f"{_SOURCE_LABELS['biorxiv_medrxiv']} {FAILURE_STATUS_MARKER} ({kind})"
+    assert expect in failure_reason(msg, load_sources_config())
+
+
+def test_d2_job_records_label_and_reason_once():
+    from src.jobs import Job
+    from src.sources.config import load_sources_config
+    from src.sources.orchestrator import FAILURE_STATUS_MARKER, _SOURCE_LABELS
+    from web.routes_searches import record_failure
+    job = Job(id="j", kind="search", owner="u")
+    label = _SOURCE_LABELS["biorxiv_medrxiv"]
+    for _ in range(3):
+        record_failure(job, f"{label} {FAILURE_STATUS_MARKER} (unavailable)", load_sources_config())
+    record_failure(job, "Searching Europe PMC… page 2", load_sources_config())
+    assert job.sources_failed == ["biorxiv_medrxiv"]
+    assert list(job.source_problems) == [label]
+    assert "did not respond properly" in job.source_problems[label]
+    assert "source_problems" in job.to_dict()

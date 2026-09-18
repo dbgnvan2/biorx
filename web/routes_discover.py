@@ -20,7 +20,7 @@ from src.llm_providers import LLMError, NoLLMCredentialError, ProviderResponseEr
 
 from .auth import current_user, get_context
 from .deps import AppContext
-from .routes_searches import source_from_failure_status
+from .routes_searches import record_failure
 from .routes_summaries import _resolve_for
 
 logger = logging.getLogger(__name__)
@@ -72,9 +72,7 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
 
             def on_status(message: str):
                 job.phase = message
-                failed = source_from_failure_status(message)
-                if failed and failed not in job.sources_failed:
-                    job.sources_failed.append(failed)
+                record_failure(job, message, ctx.sources_config)
 
             ctx.get_orchestrator().search(
                 filter_dict=filter_dict,

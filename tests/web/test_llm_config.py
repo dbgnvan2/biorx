@@ -134,3 +134,43 @@ def test_config_path_is_overridable(monkeypatch, tmp_path):
     target = tmp_path / "elsewhere.yaml"
     monkeypatch.setenv("BIORX_LLM_CONFIG", str(target))
     assert lc.config_path() == target
+
+
+# ── K2: malformed owner keys are reported, never printed (2026-09-18) ────────
+
+def _cfg():
+    return {"providers": {"anthropic": {"dialect": "anthropic", "model": "m",
+                                        "api_key_env": "ANTHROPIC_API_KEY"},
+                          "ollama": {"dialect": "ollama", "model": "q"}}}
+
+
+def test_k2_doubled_key_is_reported_without_the_key(monkeypatch):
+    from src.llm_config import owner_key_problems
+    key = "sk-ant-api03-" + "A" * 40
+    monkeypatch.setenv("ANTHROPIC_API_KEY", key + key)
+    problems = owner_key_problems(_cfg())
+    assert len(problems) == 1 and "pasted twice" in problems[0]
+    assert key not in problems[0] and key[:10] not in problems[0]
+
+
+def test_k2_key_with_quotes_or_spaces_is_reported(monkeypatch):
+    from src.llm_config import owner_key_problems
+    monkeypatch.setenv("ANTHROPIC_API_KEY", '"sk-ant-api03-abcdefghijklmnop"')
+    assert "spaces or quotes" in owner_key_problems(_cfg())[0]
+
+
+def test_k2_good_key_and_keyless_providers_are_quiet(monkeypatch):
+    from src.llm_config import owner_key_problems
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-" + "Ab1" * 30)
+    assert owner_key_problems(_cfg()) == []
+
+
+def test_k2_problem_reaches_healthz(ctx, client, monkeypatch):
+    key = "sk-ant-api03-" + "B" * 40
+    monkeypatch.setenv("ANTHROPIC_API_KEY", key + key)
+    from src.llm_config import load_llm_config
+    ctx.llm_config = load_llm_config()
+    ctx.orchestrator = None
+    warnings = client.get("/healthz").json()["startup_warnings"]
+    assert any("pasted twice" in w for w in warnings)
+    assert not any(key[:12] in w for w in warnings)

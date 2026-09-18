@@ -58,7 +58,9 @@ class AppContext:
         if self.orchestrator is None:
             from src.sources.orchestrator import SourceOrchestrator
             self.orchestrator = SourceOrchestrator(self.sources_config)
-            self.startup_warnings = list(self.orchestrator.warnings)
+            from src.llm_config import owner_key_problems
+            self.startup_warnings = (list(self.orchestrator.warnings)
+                                     + owner_key_problems(self.llm_config))
             for w in self.startup_warnings:
                 logger.warning("Startup: %s", w)
         return self.orchestrator

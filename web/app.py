@@ -9,7 +9,9 @@ In a container: uvicorn web.app:app --host 0.0.0.0 --port $PORT
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 import os
 import sys
 from pathlib import Path
@@ -20,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (routes_discover, routes_filters, routes_references,
@@ -78,8 +80,13 @@ def create_app(ctx: AppContext = None) -> FastAPI:
         orch = c.get_orchestrator()
         enabled_sources = orch.get_enabled_sources() if orch else []
         from src.sources.orchestrator import _SOURCE_LABELS
+        from src.sources.config import get_default_selected_sources
+        server_defaults = set(get_default_selected_sources(c.sources_config or {}))
         sources_list = [
-            {"id": sid, "label": _SOURCE_LABELS.get(sid, sid), "enabled": True}
+            {"id": sid, "label": _SOURCE_LABELS.get(sid, sid), "enabled": True,
+             # D1: the server's suggestion for users who have not chosen
+             # their own defaults (sources_config.yaml default_selected).
+             "default_selected": sid in server_defaults}
             for sid in enabled_sources
         ]
         return {
@@ -98,11 +105,37 @@ def create_app(ctx: AppContext = None) -> FastAPI:
         application.mount("/static", StaticFiles(directory=str(STATIC_DIR)),
                           name="static")
 
+        @application.middleware("http")
+        async def _no_stale_page(request, call_next):
+            # C1: without this the browser reused its cached page and scripts
+            # after an update (seen 2026-09-18). no-cache still lets it reuse
+            # an unchanged file after a cheap 304 check.
+            response = await call_next(request)
+            if request.url.path == "/" or request.url.path.startswith("/static/"):
+                response.headers["Cache-Control"] = "no-cache"
+            return response
+
         @application.get("/")
         def index():
-            return FileResponse(str(STATIC_DIR / "index.html"))
+            return HTMLResponse(versioned_index(STATIC_DIR))
 
     return application
+
+
+def versioned_index(static_dir: Path) -> str:
+    """index.html with each local asset URL carrying a hash of the file (C2),
+    so a browser that ignores no-cache still fetches a changed script."""
+    html = (static_dir / "index.html").read_text()
+
+    def stamp(match):
+        name = match.group(2)
+        path = static_dir / name
+        if not path.is_file():
+            return match.group(0)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+        return f'{match.group(1)}/static/{name}?v={digest}"'
+
+    return re.sub(r'((?:src|href)=")/static/([\w.-]+)"', stamp, html)
 
 
 # `app` is built on first attribute access, not at import (PEP 562).

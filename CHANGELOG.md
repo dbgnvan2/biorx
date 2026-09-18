@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-09-18 (later) — no stale pages; summaries accumulate and save from Search
+
+### Added
+- **Summaries panel** on Search & Browse: every stored summary for the current
+  results, newest first. A new summary is added, never replacing another.
+  Result rows show "✓ Summary".
+- **Save summaries (PDF)** on Search & Browse: ticked papers, or all results.
+- Startup warning when an owner API key looks pasted twice or contains spaces or
+  quotes (the key itself is never shown).
+
+### Fixed
+- Browsers kept showing the old page after an update. The page and its files
+  are now served `Cache-Control: no-cache`, and the script/stylesheet links
+  carry a content hash.
+- The "All" checkbox is cleared when a new search starts.
+- "Save to Saved References" opens a name dialog (it used to toggle a small box
+  that a second click hid); a taken name offers "… (2)".
+- A failed summary shows its reason inside the popup.
+- Source pickers start from the server's defaults (bioRxiv and arXiv off)
+  until you choose your own; "could not reach" now says why.
+
+
 ## 2026-09-18 — web UI fixes, desktop naming, summaries PDF
 
 ### Added

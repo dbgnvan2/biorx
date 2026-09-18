@@ -295,6 +295,16 @@ function restoreActiveTab() {
   switchTab(saved);
 }
 
+/* "Could not reach" with each source's display name and why (D2). Pure. */
+function failedSourcesText(job) {
+  const problems = job.source_problems || {};
+  const names = Object.keys(problems);
+  if (!names.length) {
+    return `Could not reach: ${(job.sources_failed || []).join(", ")}. Results are incomplete.`;
+  }
+  return names.map(n => `${n} ${problems[n]}.`).join(" ") + " Results are incomplete.";
+}
+
 /* ── Sources ─────────────────────────────────────────────────────────────── */
 
 async function loadSources() {
@@ -313,19 +323,26 @@ async function loadSources() {
 /* The user's default sources: which are pre-ticked in the Search tab and in
    new filters. Per user, in this browser only; never sent to the server.
    Pure, so it can be exercised in node (tests/web/test_frontend_wiring.py). */
-function applyDefaultSources(enabledIds, savedRaw) {
+function applyDefaultSources(enabledIds, savedRaw, serverDefaultIds) {
+  // With nothing saved, start from the server's default_selected (D1), e.g.
+  // bioRxiv and arXiv unticked; with no server defaults either, tick all.
+  const fallback = () => {
+    const server = enabledIds.filter(id => (serverDefaultIds || []).includes(id));
+    return server.length ? server : enabledIds.slice();
+  };
   let saved;
-  try { saved = JSON.parse(savedRaw); } catch (e) { return enabledIds.slice(); }
-  if (!Array.isArray(saved)) return enabledIds.slice();
+  try { saved = JSON.parse(savedRaw); } catch (e) { return fallback(); }
+  if (!Array.isArray(saved)) return fallback();
   // A saved source the server no longer enables is dropped, not shown.
   const kept = enabledIds.filter(id => saved.includes(id));
-  return kept.length ? kept : enabledIds.slice();
+  return kept.length ? kept : fallback();
 }
 
 function defaultSourceIds() {
   let raw = null;
   try { raw = localStorage.getItem(LS_DEFAULT_SOURCES); } catch (e) {}
-  return applyDefaultSources(state.sources.map(s => s.id), raw);
+  return applyDefaultSources(state.sources.map(s => s.id), raw,
+                             state.sources.filter(s => s.default_selected).map(s => s.id));
 }
 
 function renderDefaultSourcesPicker() {
@@ -456,8 +473,11 @@ async function startSearch(payload) {
   state.results = [];
   state.fetched = 0;
   state.checkedPapers.clear();
-  $("save-list-name-input").value = "";
-  $("save-list-name-wrap").classList.add("hidden");
+  state.searchSummaries = [];
+  renderSummariesPanel();
+  // A1: a new search starts with nothing ticked, header box included.
+  $("select-all-results").checked = false;
+  $("select-all-results").indeterminate = false;
   $("results-card").classList.add("hidden");
   $("sources-failed").classList.add("hidden");
   $("progress-wrap").classList.remove("hidden");
@@ -495,8 +515,7 @@ async function pollSearch() {
     $("progress").value = job.fetched;
   }
   if (job.sources_failed && job.sources_failed.length) {
-    $("sources-failed").textContent =
-      `Could not reach: ${job.sources_failed.join(", ")}. Results are incomplete.`;
+    $("sources-failed").textContent = failedSourcesText(job);
     $("sources-failed").classList.remove("hidden");
   }
   if (["done", "error", "cancelled"].includes(job.status)) {
@@ -534,6 +553,7 @@ async function loadResults() {
   state.total = page.total;
   state.results = page.results;
   renderResults();
+  if (page.status === "done") refreshSearchSummaries();
 }
 
 function renderResults() {
@@ -595,6 +615,14 @@ function renderResults() {
     detailBtn.addEventListener("click", () => openModal(paper));
     title.appendChild(link);
     title.appendChild(detailBtn);
+    if (hasSummary(paper)) {
+      const badge = document.createElement("span");
+      badge.className = "tag small has-summary";
+      badge.textContent = "✓ Summary";
+      badge.style.marginLeft = "4px";
+      badge.addEventListener("click", () => openModal(paper));
+      title.appendChild(badge);
+    }
 
     const authors = document.createElement("td");
     authors.className = "small";
@@ -670,38 +698,48 @@ function toggleSelectAll(checked) {
   renderResults();
 }
 
-function showSaveListForm() {
-  const wrap = $("save-list-name-wrap");
-  wrap.classList.toggle("hidden");
-  const input = $("save-list-name-input");
-  if (!wrap.classList.contains("hidden")) {
-    if (!input.value.trim()) {
-      input.value = defaultListName(state.searchLabel, new Date().toISOString().slice(0, 10));
+/* "name" -> "name (2)" -> "name (3)": a free name to suggest when the one
+   asked for is taken (B2). Pure, for the node-run test. */
+function nextListName(name) {
+  const m = /^(.*) \((\d+)\)$/.exec(name);
+  return m ? `${m[1]} (${Number(m[2]) + 1})` : `${name} (2)`;
+}
+
+/* B1: a dialog, not a toggling inline box — a second click used to hide it.
+   A taken name re-opens the dialog with the reason and a free name. */
+async function saveResults() {
+  if (!state.jobId) { notice("No search to save."); return; }
+  let name = defaultListName(state.searchLabel, new Date().toISOString().slice(0, 10));
+  let message = "Save to Saved References as:";
+  for (;;) {
+    name = window.prompt(message, name);
+    if (name === null) return;              // Cancel
+    name = name.trim();
+    if (!name) { message = "Enter a name for the list:"; continue; }
+    try {
+      await saveResultsAs(name);
+      return;
+    } catch (e) {
+      if (e.status !== 409 || !/already have a list/i.test(e.message)) { notice(e.message); return; }
+      message = `"${name}" is already used. Choose another name:`;
+      name = nextListName(name);
     }
-    input.focus();
-    input.select();
   }
 }
 
-async function confirmSaveList() {
-  const name = $("save-list-name-input").value.trim();
-  if (!name) { notice("Enter a list name."); return; }
-  if (!state.jobId) { notice("No search to save."); return; }
-  try {
-    const saved = await api("POST", `/api/searches/${state.jobId}/save-as-list`, {
-      name,
-      // Nothing ticked means "save all results" (null), not "save nothing".
-      paper_ids: state.checkedPapers.size ? Array.from(state.checkedPapers) : null,
-    });
-    if (saved.skipped && saved.skipped.length) {
-      notice(`Saved "${name}": ${saved.saved} of ${saved.requested} papers. ` +
-             `Could not store: ${saved.skipped.join("; ")}`, "warn");
-    } else {
-      notice(`Saved "${name}" to Saved References (${saved.saved} papers).`, "ok");
-    }
-    $("save-list-name-wrap").classList.add("hidden");
-    $("save-list-name-input").value = "";
-  } catch (e) { notice(e.message); }
+async function saveResultsAs(name) {
+  const saved = await api("POST", `/api/searches/${state.jobId}/save-as-list`, {
+    name,
+    // Nothing ticked means "save all results" (null), not "save nothing".
+    paper_ids: state.checkedPapers.size ? Array.from(state.checkedPapers) : null,
+  });
+  if (saved.skipped && saved.skipped.length) {
+    notice(`Saved "${name}": ${saved.saved} of ${saved.requested} papers. ` +
+           `Could not store: ${saved.skipped.join("; ")}`, "warn");
+  } else {
+    notice(`Saved "${name}" to Saved References (${saved.saved} papers).`, "ok");
+  }
+  return saved;
 }
 
 /* ── Summaries ───────────────────────────────────────────────────────────── */
@@ -769,11 +807,23 @@ async function startSummary(paper, button) {
       clearInterval(timer);
       done();
       if (s.status === "done") {
+        state.searchSummaries = mergeSummaries(state.searchSummaries || [], [{
+          canonical_id: paper.canonical_id || "", doi: paper.doi || "", title: paper.title || "",
+          key_findings: s.result.key_findings || [], model_version: s.result.model || "",
+          created_at: new Date().toISOString(),
+        }]);
+        renderSummariesPanel();
+        renderResults();
+        refreshSearchSummaries();
         if (modalShows(paper)) renderSummary(job, s.result);
         else notice(`Summary ready for "${(paper.title || "").slice(0, 80)}" — click Summarize to view it.`, "ok");
       } else {
-        notice(s.error || "The summary failed.");
-        if (modalShows(paper)) $("modal-summary-meta").textContent = `${job.provider} · ${job.model} — failed`;
+        const reason = (s.error || "The summary failed.").replace(/^\w+Error: /, "");
+        notice(reason);
+        // K1: the reason belongs where the user is looking, not only in the bar.
+        if (modalShows(paper)) {
+          $("modal-summary-meta").textContent = `${job.provider} · ${job.model} — failed: ${reason}`;
+        }
       }
       refreshMe();
     }
@@ -823,6 +873,88 @@ function renderSummary(job, result) {
     p.textContent = value;
     body.append(strong, p);
   }
+}
+
+/* ── Summaries panel (S1–S3) ─────────────────────────────────────────────── */
+
+function summaryKey(item) {
+  return item.canonical_id || item.doi || item.title || "";
+}
+
+/* Merge incoming summaries into the list: same paper replaced, every other
+   kept, newest first. A new summary never removes another (S2). Pure. */
+function mergeSummaries(existing, incoming) {
+  const byKey = new Map();
+  for (const s of existing) byKey.set(summaryKey(s), s);
+  for (const s of incoming) byKey.set(summaryKey(s), s);
+  return Array.from(byKey.values())
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+}
+
+function hasSummary(paper) {
+  const key = summaryKey(paper);
+  return (state.searchSummaries || []).some(s => summaryKey(s) === key ||
+    (paper.doi && s.doi === paper.doi) || (paper.canonical_id && s.canonical_id === paper.canonical_id));
+}
+
+async function refreshSearchSummaries() {
+  if (!state.jobId) return;
+  const jobId = state.jobId;
+  let data;
+  try { data = await api("GET", `/api/searches/${jobId}/summaries`); }
+  catch (e) { return; }                    // not finished, or expired: keep what we have
+  if (state.jobId !== jobId) return;       // a newer search started meanwhile
+  state.searchSummaries = mergeSummaries(state.searchSummaries || [], data.summaries || []);
+  renderSummariesPanel();
+  renderResults();
+}
+
+function renderSummariesPanel() {
+  const list = $("summaries-list");
+  const items = state.searchSummaries || [];
+  list.textContent = "";
+  $("summaries-card").classList.toggle("hidden", items.length === 0);
+  $("summaries-heading").textContent = `Summaries (${items.length})`;
+  for (const s of items) {
+    const li = document.createElement("li");
+    const t = document.createElement("div");
+    t.className = "title";
+    t.textContent = s.title || "(untitled)";
+    const f = document.createElement("div");
+    f.className = "finding";
+    const first = (s.key_findings || [])[0];
+    f.textContent = (first ? first : "") + (s.model_version ? `  — ${s.model_version}` : "");
+    li.append(t, f);
+    const paper = (state.results || []).find(p => summaryKey(p) === summaryKey(s)) ||
+      { title: s.title, doi: s.doi, canonical_id: s.canonical_id };
+    li.addEventListener("click", () => openModal(paper));
+    list.appendChild(li);
+  }
+}
+
+async function saveSummariesPdf() {
+  if (!state.jobId) { notice("Run a search first."); return; }
+  const body = {
+    title: (state.searchLabel || "Search results").slice(0, 200),
+    paper_ids: state.checkedPapers.size ? Array.from(state.checkedPapers) : null,
+  };
+  const resp = await api("POST", `/api/searches/${state.jobId}/summaries.pdf`, body, { raw: true });
+  if (!resp.ok) {
+    let detail = `${resp.status}`;
+    try { detail = (await resp.json()).detail || detail; } catch (e) {}
+    notice(`Could not build the PDF: ${detail}`);
+    return;
+  }
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${body.title.replace(/[^\w\- ]+/g, "_")} - summaries.pdf`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  notice(state.checkedPapers.size
+    ? `Saved summaries for the ${state.checkedPapers.size} ticked papers.`
+    : "Saved summaries for all results.", "ok");
 }
 
 /* ── Paper detail modal ──────────────────────────────────────────────────── */
@@ -1142,8 +1274,7 @@ async function pollFilterTest() {
     state.filterTestPolling = null;
     // Same rule as the main search: an unreachable source makes "0 matched"
     // mean "incomplete", not "this filter finds nothing".
-    const failed = (job.sources_failed || []).length
-      ? ` Could not reach: ${job.sources_failed.join(", ")}. Results are incomplete.` : "";
+    const failed = (job.sources_failed || []).length ? " " + failedSourcesText(job) : "";
     if (job.status === "done") {
       let page;
       try {
@@ -1231,8 +1362,7 @@ async function pollDiscover() {
     clearInterval(state.discoverPolling);
     state.discoverPolling = null;
     $("btn-discover").disabled = false;
-    const failed = (job.sources_failed || []).length
-      ? ` Could not reach: ${job.sources_failed.join(", ")}.` : "";
+    const failed = (job.sources_failed || []).length ? " " + failedSourcesText(job) : "";
     if (job.status === "done" && job.result && job.result.papers_found === 0) {
       $("discover-terms-chips").textContent =
         `No papers found for "${job.result.keywords}" in the date range, ` +
@@ -1525,8 +1655,8 @@ function wire() {
     loadResults();
   });
   $("select-all-results").addEventListener("change", (e) => toggleSelectAll(e.target.checked));
-  $("btn-save-as-list").addEventListener("click", showSaveListForm);
-  $("btn-confirm-save-list").addEventListener("click", confirmSaveList);
+  $("btn-save-as-list").addEventListener("click", saveResults);
+  $("btn-save-summaries-pdf").addEventListener("click", saveSummariesPdf);
 
   // Modal
   $("btn-modal-close").addEventListener("click", closeModal);

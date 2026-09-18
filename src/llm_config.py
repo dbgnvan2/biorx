@@ -14,7 +14,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,32 @@ class ProviderConfig:
             if env_val:
                 return env_val
         return self.api_key.strip()
+
+
+def owner_key_problems(config: Dict[str, Any]) -> List[str]:
+    """Plain-language warnings about owner keys that look malformed (K2).
+
+    Checks shape only and never includes the key: a key pasted twice (two
+    identical halves) or carrying spaces or quotes is rejected by the provider
+    with a message that does not say why. Found 2026-09-18: a doubled Anthropic
+    key in .env overrode a good one from the shell.
+    """
+    problems = []
+    for name in sorted((config or {}).get("providers", {})):
+        pconf = provider_config(config, name)
+        if not pconf or not pconf.needs_key:
+            continue
+        key = pconf.owner_key()
+        if not key:
+            continue
+        label = pconf.api_key_env or f"{name} api_key"
+        half = len(key) // 2
+        if len(key) >= 20 and len(key) % 2 == 0 and key[:half] == key[half:]:
+            problems.append(f"{label} looks pasted twice (its two halves are identical) — "
+                            f"{name} will reject it.")
+        elif any(c.isspace() or c in "\"'" for c in key):
+            problems.append(f"{label} contains spaces or quotes — {name} will likely reject it.")
+    return problems
 
 
 def config_path() -> Path:

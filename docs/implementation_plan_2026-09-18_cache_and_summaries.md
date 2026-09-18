@@ -1,6 +1,6 @@
 # Plan — stale page in the browser; summaries that accumulate and can be saved
 **Date:** 2026-09-18
-**Status:** awaiting approval — no code written (updated with Dave's second report, same day)
+**Status:** approved and implemented 2026-09-18 (812 passed)
 
 ## What Dave saw (after restarting on commit 39a6b8c)
 
@@ -92,3 +92,23 @@ should then see "Saved Filters", a working "Save all N results…" button, and
 ## Adjacent issues found, not fixed
 - Max results overshoots (asked for 12, got 40) — pre-existing; separate change.
 - Pre-existing: any user can overwrite the shared summary for a DOI (TODO.md).
+
+## Status
+
+| ID | Status | Proof |
+|---|---|---|
+| C1 | done | `test_frontend_wiring.py::test_c1_page_and_assets_are_not_served_stale`; browser: `no-cache` on `/` and `app.js` |
+| C2 | done | `test_c2_asset_urls_carry_a_content_hash`; browser: `app.js?v=65fe2eda291d` |
+| L1 | done | unchanged ("Saved Filters") |
+| A1 | done | `test_a1_select_all_resets_on_search`; browser: unticked after a new search |
+| B1 | done | `test_b1_save_opens_a_dialog_not_a_toggle`; browser |
+| B2 | done | `test_b2_duplicate_name_suggests_next` (3), `test_b2_taken_name_reopens_the_dialog` (node-run); browser: second save became "… (2)" |
+| K1 | done | `test_k1_summary_error_is_shown_in_the_popup` |
+| K2 | done | `tests/web/test_llm_config.py::test_k2_*` (4) — key never in the message |
+| D1 | done | `test_d1_server_defaults_apply_when_nothing_is_saved` (5), `test_d1_healthz_carries_default_selected`; browser: bioRxiv and arXiv unticked |
+| D2 | done | `tests/web/test_searches_routes.py::test_d2_*` (6), `test_frontend_wiring.py::test_d2_*` (2). Not seen live: bioRxiv had recovered by the time of the browser check (72 KB response). |
+| S1 | done, **changed** | Instead of a client-posted batch, `GET /api/searches/{job_id}/summaries` — the server already holds the finished search's results. `tests/web/test_summaries_pdf.py::test_s1_*` (3). |
+| S2 | done | `test_s2_a_new_summary_never_removes_another`, `test_s2_panel_is_above_the_results_and_refreshed_after_a_summary`; browser: panel "Summaries (2)", newest first, 2 row badges |
+| S3 | done | `POST /api/searches/{job_id}/summaries.pdf`; `test_s3_*` (3); browser: 40 KB PDF |
+| S4 | done | `test_sp1_*`–`test_sp5_*` still pass |
+| Live summary via a real model | not verified | the running server's Anthropic key is still doubled in `.env`; checked with fixture summaries in a throwaway database |

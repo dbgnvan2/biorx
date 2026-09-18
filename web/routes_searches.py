@@ -35,6 +35,31 @@ router = APIRouter()
 # wording change there breaks this import and the round-trip test, not silently).
 
 
+_FALLBACK_EXPLANATION = "could not be reached"
+
+
+def failure_reason(message: str, sources_config: Dict[str, Any]) -> str:
+    """Plain-language reason for a failure status, from its "(kind)" suffix
+    and sources_config.yaml failure_explanations (D2)."""
+    kind = ""
+    if message.rstrip().endswith(")") and "(" in message:
+        kind = message.rstrip()[message.rfind("(") + 1:-1].strip()
+    table = (sources_config or {}).get("failure_explanations") or {}
+    return str(table.get(kind) or _FALLBACK_EXPLANATION)
+
+
+def record_failure(job: Job, message: str, sources_config: Dict[str, Any]) -> None:
+    """Record a failed source and why, once per source."""
+    failed = source_from_failure_status(message)
+    if not failed:
+        return
+    if failed not in job.sources_failed:
+        job.sources_failed.append(failed)
+    from src.sources.orchestrator import _SOURCE_LABELS
+    job.source_problems.setdefault(_SOURCE_LABELS.get(failed, failed),
+                                   failure_reason(message, sources_config))
+
+
 def source_from_failure_status(message: str) -> str:
     """Return the source name a failure status refers to, or "".
 
@@ -94,9 +119,7 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
 
         def on_status(message: str):
             job.phase = message
-            failed = source_from_failure_status(message)
-            if failed and failed not in job.sources_failed:
-                job.sources_failed.append(failed)
+            record_failure(job, message, ctx.sources_config)
 
         try:
             ctx.get_orchestrator().search(
@@ -252,3 +275,89 @@ def save_search_as_list(job_id: str, body: SaveAsListBody,
     payload = user_store.get_reference_list(ctx.db, user_id, list_id)
     payload.update({"saved": len(set(db_ids)), "requested": len(results), "skipped": skipped})
     return payload
+
+
+# ── Summaries for a search's results (S1–S3, docs/implementation_plan_2026-09-18_cache_and_summaries.md)
+
+def _job_summaries(ctx: AppContext, job: Job, only_ids: Optional[List[str]] = None):
+    """(items, summaries) for a finished search: every result as an item, and
+    the stored summary of each one that has one, keyed by paper row id.
+
+    Read-only: a result that was never stored has no row and so no summary;
+    nothing is inserted here.
+    """
+    results: List[Dict[str, Any]] = job.result or []
+    if only_ids is not None:
+        wanted = set(only_ids)
+        results = [p for p in results
+                   if p.get("canonical_id") in wanted or p.get("doi") in wanted]
+    items: List[Dict[str, Any]] = []
+    summaries: Dict[int, Dict[str, Any]] = {}
+    for paper in results:
+        row = ctx.db.find_paper(paper)
+        pid = row["id"] if row else None
+        items.append({"paper": {**paper, "paper_id": pid}})
+        if pid is not None and pid not in summaries:
+            s = ctx.db.get_summary(pid)
+            if s:
+                summaries[pid] = s
+    return items, summaries
+
+
+def _finished_search(ctx: AppContext, job_id: str, user_id: str) -> Job:
+    job = _job_or_404(ctx, job_id, user_id)
+    if job.status != "done":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="The search has not finished yet.")
+    return job
+
+
+@router.get("/api/searches/{job_id}/summaries")
+def search_summaries(job_id: str,
+                     ctx: AppContext = Depends(get_context),
+                     user_id: str = Depends(current_user)):
+    """Stored summaries for this search's results, newest first (S1, S2)."""
+    job = _finished_search(ctx, job_id, user_id)
+    items, summaries = _job_summaries(ctx, job)
+    out = []
+    for item in items:
+        p = item["paper"]
+        s = summaries.get(p["paper_id"]) if p["paper_id"] is not None else None
+        if not s:
+            continue
+        out.append({
+            "canonical_id": p.get("canonical_id") or "",
+            "doi": p.get("doi") or "",
+            "title": p.get("title") or "",
+            "paper_id": p["paper_id"],
+            "key_findings": s.get("key_findings") or [],
+            "methodology": s.get("methodology") or "",
+            "conclusions": s.get("conclusions") or "",
+            "model_version": s.get("model_version") or "",
+            "created_at": str(s.get("created_at") or ""),
+        })
+    out.sort(key=lambda r: r["created_at"], reverse=True)
+    return {"summaries": out, "total_results": len(items)}
+
+
+class SummariesPdfBody(BaseModel):
+    title: str = Field(default="", max_length=200)
+    paper_ids: Optional[List[str]] = None     # canonical_ids; None = all results
+
+
+@router.post("/api/searches/{job_id}/summaries.pdf")
+def search_summaries_pdf(job_id: str, body: SummariesPdfBody,
+                         ctx: AppContext = Depends(get_context),
+                         user_id: str = Depends(current_user)):
+    """The summaries for this search's results (ticked ones if given) as one
+    PDF, in the Saved References layout (S3)."""
+    from fastapi import Response
+    from src.summary_pdf import build_summaries_pdf
+
+    job = _finished_search(ctx, job_id, user_id)
+    items, summaries = _job_summaries(ctx, job, body.paper_ids)
+    title = body.title.strip() or "Search results"
+    data = build_summaries_pdf(title, items, summaries)
+    safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in title)
+    return Response(content=data, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{safe} - summaries.pdf"'})

@@ -44,3 +44,11 @@ publication_sources:
 # Europe PMC, PubMed, PsyArXiv, SocArXiv, bioRxiv/medRxiv, OpenAlex). It wins
 # over this field when both are set; all consumers also read this field directly.
 contact_email: ""
+
+# What the web app tells users when a source fails during a search, by the
+# failure kind the orchestrator reports. Wording only — edit freely.
+failure_explanations:
+  unavailable: "did not respond properly — the service may be down or blocking requests; try again later or untick it in Settings"
+  error: "failed with an unexpected error (details are in the server log)"
+  rate-limited: "is limiting how fast it can be searched; results from it are incomplete — try again in a few minutes"
+  partial: "stopped responding part-way; results from it are incomplete"
