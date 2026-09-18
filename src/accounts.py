@@ -396,7 +396,14 @@ def recover(db, name: str, code: str, new_pin: str,
     if not verify_secret(_normalise_code(code), row["recovery_hash"]):
         _failed(db, row["user_id"], attempt, now)
         raise BadCredentials("That name or recovery code is not right.")
-    reason = refusal(resolve_user_id(db, row["user_id"]) or row["user_id"]) if refusal else None
+    final = resolve_user_id(db, row["user_id"])
+    if final is None:
+        # A hand-made merged_into loop: refuse before changing anything, so the
+        # person keeps their old recovery code (csdp review round 6).
+        db.conn.execute("UPDATE users SET failed_logins = 0 WHERE user_id = ?", (row["user_id"],))
+        db.conn.commit()
+        raise BadCredentials("This account cannot be opened. Ask the owner.")
+    reason = refusal(final) if refusal else None
     if reason:
         # The code was right: give the attempt back, so refusals for a reason
         # outside the person's control do not lock them out.
@@ -413,9 +420,6 @@ def recover(db, name: str, code: str, new_pin: str,
     nonce = db.conn.execute("SELECT session_nonce FROM users WHERE user_id = ?",
                             (row["user_id"],)).fetchone()[0]
     db.conn.commit()
-    final = resolve_user_id(db, row["user_id"])
-    if final is None:
-        raise BadCredentials("This account cannot be opened. Ask the owner.")
     return SignedIn(final, nonce, cookie_user=row["user_id"]), fresh
 
 

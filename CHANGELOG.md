@@ -72,6 +72,8 @@ last push. All findings fixed, each with a test:
   that cannot be searched is handled like an unreadable file (grace, then
   closed) instead of raising on every request; a bad grace setting is warned
   once per incident.
+- Last: recovery on a broken (hand-edited) merge chain is refused before the
+  PIN or recovery code changes.
 
 
 ## 2026-09-18 (late) — personal access codes

@@ -167,3 +167,20 @@ constant (now from `/healthz`).
 Changes from the plan: `POST /api/me/account` (claim a name) removed — a code
 now makes the account, and the route could overwrite a code user's PIN. Codes
 file lives in `DATA_DIR`, not the project folder.
+
+## Pre-push review (csdp, 2026-09-18)
+
+The whole unpushed batch (ad63315..51be5d1) had three reviews: learning-qa,
+correctness, and security. Their findings, and then six rounds of reviews of
+the fix commits, are fixed with tests; see CHANGELOG "fixes from the pre-push
+review". Design changes that came out of it:
+- Session cookies carry a random per-account nonce, checked on the account the
+  cookie names; resets renew it across the merged family. Merges change no
+  nonce (AC7 still holds: nobody is signed out by a merge).
+- PIN attempts are counted atomically before the PIN is checked.
+- A broken, blank, vanished or unreadable codes file fails closed with
+  "Sign-in is unavailable ... tell the owner" (503); an unreadable file is
+  served from the last good copy for at most ACCESS_CODES_READ_GRACE_SECONDS.
+- One bad entry gives its person "your entry has a mistake" (503).
+- Merge chains of any depth.
+Final suite: 919 passed, 19 skipped.

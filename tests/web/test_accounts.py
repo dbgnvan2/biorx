@@ -293,3 +293,20 @@ def test_ac7_merge_refuses_a_target_that_is_already_merged(ctx):
     with pytest.raises(accounts.AccountError, match="already merged"):
         accounts.merge_users(ctx.db, b, a)            # b is already gone
     assert accounts.merge_users(ctx.db, a, c)["filters"] == 0
+
+
+def test_ac5_recovery_into_a_broken_merge_chain_changes_nothing(ctx):
+    """csdp review round 6: recover changed the PIN and recovery code, then
+    failed, so the new code was never shown and the old one was spent."""
+    a, code = accounts.create_account(ctx.db, "loopy", "loop-pin-11", user_store.new_user_id)
+    b = user_store.create_user(ctx.db, "b")
+    ctx.db.conn.execute("UPDATE users SET merged_into = ? WHERE user_id = ?", (b, a))
+    ctx.db.conn.execute("UPDATE users SET merged_into = ? WHERE user_id = ?", (a, b))
+    ctx.db.conn.commit()
+    before = ctx.db.conn.execute("SELECT pin_hash, recovery_hash FROM users WHERE user_id = ?",
+                                 (a,)).fetchone()
+    with pytest.raises(accounts.BadCredentials):
+        accounts.recover(ctx.db, "loopy", code, "new-pin-999")
+    after = ctx.db.conn.execute("SELECT pin_hash, recovery_hash FROM users WHERE user_id = ?",
+                                (a,)).fetchone()
+    assert tuple(before) == tuple(after)
