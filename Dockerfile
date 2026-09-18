@@ -5,9 +5,10 @@
 
 FROM python:3.12-slim
 
-# gosu drops privileges in the entrypoint; curl is for the healthcheck.
+# gosu drops privileges in the entrypoint; curl is for the healthcheck;
+# fonts-dejavu-core gives the summaries PDF a Unicode font (src/summary_pdf.py).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl gosu \
+    && apt-get install -y --no-install-recommends curl gosu fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

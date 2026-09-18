@@ -16,6 +16,9 @@ PyYAML==6.0.2
 urllib3==2.2.2
 certifi==2024.6.2
 
+# Summaries PDF export (src/summary_pdf.py). Pure Python.
+fpdf2==2.8.7
+
 # Web
 fastapi==0.141.1
 uvicorn[standard]==0.32.1

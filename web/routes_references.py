@@ -51,6 +51,11 @@ def _get_item_or_404(ctx: AppContext, list_id: int, item_id: int) -> Dict[str, A
     return row
 
 
+def _safe_filename(name: str) -> str:
+    """A list name reduced to characters safe in a Content-Disposition header."""
+    return "".join(c if c.isalnum() or c in "-_ " else "_" for c in (name or "references"))
+
+
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @router.get("/api/references")
@@ -132,12 +137,39 @@ def export_csv(list_id: int,
         writer.writerow([_safe_cell(title), _safe_cell(authors), _safe_cell(date),
                          _safe_cell(doi), _safe_cell(source), _safe_cell(url)])
 
-    list_name = ref_list.get("name", "references")
-    safe_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in list_name)
+    safe_name = _safe_filename(ref_list.get("name", "references"))
     return Response(
         content=buf.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}.csv"'},
+    )
+
+
+@router.get("/api/references/{list_id}/summaries.pdf")
+def export_summaries_pdf(list_id: int,
+                         ctx: AppContext = Depends(get_context),
+                         user_id: str = Depends(current_user)):
+    """One PDF of this list's papers and their stored summaries.
+
+    Spec: docs/implementation_plan_2026-09-18_ui_fixes_summary_pdf.md#SP1
+    Papers without a summary are listed as "Not summarized" (SP3).
+    """
+    from src.summary_pdf import build_summaries_pdf
+
+    ref_list = _get_list_or_404(ctx, user_id, list_id)
+    items = user_store.list_reference_items(ctx.db, list_id)
+    summaries: Dict[int, Dict[str, Any]] = {}
+    for item in items:
+        pid = item["paper"]["paper_id"]
+        row = ctx.db.get_summary(pid)
+        if row:
+            summaries[pid] = row
+    data = build_summaries_pdf(ref_list.get("name", ""), items, summaries)
+    safe_name = _safe_filename(ref_list.get("name", "references"))
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name} - summaries.pdf"'},
     )
 
 

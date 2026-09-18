@@ -411,7 +411,7 @@ async function loadSearchFilters() {
   if (!filters.length) {
     const li = document.createElement("li");
     li.className = "muted small";
-    li.textContent = "No saved searches yet.";
+    li.textContent = "No saved filters yet.";
     list.appendChild(li);
     return;
   }
@@ -423,7 +423,10 @@ async function loadSearchFilters() {
     const run = document.createElement("button");
     run.textContent = "Run";
     run.dataset.filterId = filter.id;
-    run.addEventListener("click", () => startSearch({ filter_id: filter.id }));
+    run.addEventListener("click", () => {
+      state.searchLabel = filter.name;
+      startSearch({ filter_id: filter.id });
+    });
     li.append(name, run);
     list.appendChild(li);
   }
@@ -453,6 +456,8 @@ async function startSearch(payload) {
   state.results = [];
   state.fetched = 0;
   state.checkedPapers.clear();
+  $("save-list-name-input").value = "";
+  $("save-list-name-wrap").classList.add("hidden");
   $("results-card").classList.add("hidden");
   $("sources-failed").classList.add("hidden");
   $("progress-wrap").classList.remove("hidden");
@@ -630,12 +635,29 @@ function renderResults() {
   const from = state.total ? state.offset + 1 : 0;
   const to = Math.min(state.offset + PAGE_SIZE, state.total);
   $("page-label").textContent = `${from}–${to} of ${state.total}`;
+  updateSaveAsListBtn();
   $("prev-page").disabled = state.offset === 0;
   $("next-page").disabled = state.offset + PAGE_SIZE >= state.total;
 }
 
+/* "Save selected (N)" when papers are ticked, else "Save all N results";
+   enabled whenever there are results (UI4). Pure, for the node-run test. */
+function saveButtonLabel(checked, total) {
+  if (!total) return { text: "Save to Saved References", disabled: true };
+  if (checked) return { text: `Save selected (${checked}) to Saved References`, disabled: false };
+  return { text: `Save all ${total} results to Saved References`, disabled: false };
+}
+
+/* Default name for a saved list: what drove the search, and when (PF1). */
+function defaultListName(label, isoDate) {
+  const base = (label || "").trim() || "Search";
+  return `${base.slice(0, 150)} – ${isoDate}`;
+}
+
 function updateSaveAsListBtn() {
-  $("btn-save-as-list").disabled = state.checkedPapers.size === 0;
+  const { text, disabled } = saveButtonLabel(state.checkedPapers.size, state.total || 0);
+  $("btn-save-as-list").textContent = text;
+  $("btn-save-as-list").disabled = disabled;
   $("select-all-results").indeterminate =
     state.checkedPapers.size > 0 && state.checkedPapers.size < state.results.length;
 }
@@ -649,7 +671,16 @@ function toggleSelectAll(checked) {
 }
 
 function showSaveListForm() {
-  $("save-list-name-wrap").classList.toggle("hidden");
+  const wrap = $("save-list-name-wrap");
+  wrap.classList.toggle("hidden");
+  const input = $("save-list-name-input");
+  if (!wrap.classList.contains("hidden")) {
+    if (!input.value.trim()) {
+      input.value = defaultListName(state.searchLabel, new Date().toISOString().slice(0, 10));
+    }
+    input.focus();
+    input.select();
+  }
 }
 
 async function confirmSaveList() {
@@ -659,13 +690,14 @@ async function confirmSaveList() {
   try {
     const saved = await api("POST", `/api/searches/${state.jobId}/save-as-list`, {
       name,
-      paper_ids: Array.from(state.checkedPapers),
+      // Nothing ticked means "save all results" (null), not "save nothing".
+      paper_ids: state.checkedPapers.size ? Array.from(state.checkedPapers) : null,
     });
     if (saved.skipped && saved.skipped.length) {
       notice(`Saved "${name}": ${saved.saved} of ${saved.requested} papers. ` +
              `Could not store: ${saved.skipped.join("; ")}`, "warn");
     } else {
-      notice(`Saved "${name}" to References (${saved.saved} papers).`, "ok");
+      notice(`Saved "${name}" to Saved References (${saved.saved} papers).`, "ok");
     }
     $("save-list-name-wrap").classList.add("hidden");
     $("save-list-name-input").value = "";
@@ -674,26 +706,35 @@ async function confirmSaveList() {
 
 /* ── Summaries ───────────────────────────────────────────────────────────── */
 
+/* The summary is shown in the paper detail popup, which is always in view
+   (UI2). A poll that finishes after the user opened another paper does not
+   write into that paper's popup. */
+function paperKey(paper) {
+  return paper.canonical_id || paper.doi || paper.title || "";
+}
+
+function modalShows(paper) {
+  return !$("paper-modal").classList.contains("hidden") && state.modalPaper === paperKey(paper);
+}
+
 async function startSummary(paper, button) {
   notice("");
   button.disabled = true;
   button.textContent = "Summarizing…";
-  $("summary-card").classList.remove("hidden");
-  $("summary-title").textContent = paper.title || "Summary";
-  $("summary-meta").textContent = "Starting…";
-  $("summary-body").textContent = "";
+  await openModal(paper, { lookup: false });
+  $("modal-summary-meta").textContent = "Starting…";
 
+  const done = () => { button.disabled = false; button.textContent = "Summarize"; };
   try {
     const stored = await api("POST", "/api/summaries/lookup", { paper });
-    renderStoredSummary(stored);
-    button.disabled = false;
-    button.textContent = "Summarize";
+    if (modalShows(paper)) renderStoredSummary(stored);
+    done();
     return;
   } catch (e) {
     if (e.status !== 404) {
+      if (modalShows(paper)) $("modal-summary-meta").textContent = e.message;
       notice(e.message);
-      button.disabled = false;
-      button.textContent = "Summarize";
+      done();
       return;
     }
   }
@@ -710,27 +751,29 @@ async function startSummary(paper, button) {
     job = await api("POST", "/api/summaries", summaryBody);
   } catch (e) {
     notice(e.message);
-    $("summary-meta").textContent = "";
-    button.disabled = false;
-    button.textContent = "Summarize";
+    if (modalShows(paper)) $("modal-summary-meta").textContent = e.message;
+    done();
     return;
   }
-  $("summary-meta").textContent = `${job.provider} · ${job.model}`;
+  if (modalShows(paper)) $("modal-summary-meta").textContent = `${job.provider} · ${job.model}`;
 
   const timer = setInterval(async () => {
     let s;
     try { s = await api("GET", `/api/summaries/${job.job_id}`); }
-    catch (e) { clearInterval(timer); notice(e.message); return; }
+    catch (e) { clearInterval(timer); notice(e.message); done(); return; }
 
-    $("summary-meta").textContent = `${job.provider} · ${job.model} — ${s.phase || s.status}`;
+    if (modalShows(paper)) {
+      $("modal-summary-meta").textContent = `${job.provider} · ${job.model} — ${s.phase || s.status}`;
+    }
     if (["done", "error", "cancelled"].includes(s.status)) {
       clearInterval(timer);
-      button.disabled = false;
-      button.textContent = "Summarize";
-      if (s.status === "done") renderSummary(job, s.result);
-      else {
+      done();
+      if (s.status === "done") {
+        if (modalShows(paper)) renderSummary(job, s.result);
+        else notice(`Summary ready for "${(paper.title || "").slice(0, 80)}" — click Summarize to view it.`, "ok");
+      } else {
         notice(s.error || "The summary failed.");
-        $("summary-meta").textContent = `${job.provider} · ${job.model} — failed`;
+        if (modalShows(paper)) $("modal-summary-meta").textContent = `${job.provider} · ${job.model} — failed`;
       }
       refreshMe();
     }
@@ -738,51 +781,58 @@ async function startSummary(paper, button) {
 }
 
 function renderStoredSummary(stored) {
-  let findings = [];
-  try { findings = JSON.parse(stored.key_findings || "[]"); } catch (e) { findings = []; }
+  let findings = stored.key_findings || [];
+  if (typeof findings === "string") {
+    try { findings = JSON.parse(findings || "[]"); } catch (e) { findings = []; }
+  }
   renderSummary(null, {
     provider: "stored", model: stored.model_version || "",
     key_source: "none", key_findings: findings,
     methodology: stored.methodology, conclusions: stored.conclusions,
   });
-  $("summary-meta").textContent =
-    `Already summarized with ${stored.model_version || "an earlier model"} — not re-run.`;
+  $("modal-summary-meta").textContent =
+    `Summary by ${stored.model_version || "an earlier model"} (already stored — not re-run).`;
 }
 
 function renderSummary(job, result) {
-  const body = $("summary-body");
+  const body = $("modal-summary");
   body.textContent = "";
   if (!result) return;
-  $("summary-meta").textContent = `${result.provider} · ${result.model} · ${result.key_source} key` +
+  $("modal-summary-meta").textContent = `${result.provider} · ${result.model} · ${result.key_source} key` +
     (result.full_text && result.full_text !== "used"
       ? ` · from the abstract only (full text ${result.full_text})` : "");
+  const heading = document.createElement("h4");
+  heading.textContent = "Summary";
+  body.appendChild(heading);
   if ((result.key_findings || []).length) {
-    const heading = document.createElement("strong");
-    heading.textContent = "Key findings";
+    const strong = document.createElement("strong");
+    strong.textContent = "Key findings";
     const list = document.createElement("ul");
     for (const finding of result.key_findings) {
       const li = document.createElement("li");
       li.textContent = finding;
       list.appendChild(li);
     }
-    body.append(heading, list);
+    body.append(strong, list);
   }
   for (const [label, value] of [["Methodology", result.methodology], ["Conclusions", result.conclusions]]) {
     if (!value) continue;
-    const heading = document.createElement("strong");
-    heading.textContent = label;
+    const strong = document.createElement("strong");
+    strong.textContent = label;
     const p = document.createElement("p");
     p.textContent = value;
-    body.append(heading, p);
+    body.append(strong, p);
   }
 }
 
 /* ── Paper detail modal ──────────────────────────────────────────────────── */
 
-async function openModal(paper) {
+async function openModal(paper, { lookup = true } = {}) {
+  state.modalPaper = paperKey(paper);
   $("modal-title").textContent = paper.title || "(untitled)";
   $("modal-abstract").textContent = paper.abstract || "(no abstract)";
   $("modal-summary").textContent = "";
+  $("modal-summary-meta").textContent = "";
   const pdfHref = safeUrl(paper.pdf_url || paper.best_oa_url);
   const pdfLink = $("modal-pdf-link");
   if (pdfHref) {
@@ -793,31 +843,23 @@ async function openModal(paper) {
     pdfLink.style.display = "none";
   }
   $("paper-modal").classList.remove("hidden");
-  // Try to load a stored summary
+  document.body.classList.add("modal-open");
+  if (!lookup) return;
   try {
     const stored = await api("POST", "/api/summaries/lookup", { paper });
-    const div = $("modal-summary");
-    div.textContent = "";
-    if (stored.key_findings) {
-      let findings = [];
-      try { findings = JSON.parse(stored.key_findings || "[]"); } catch (e) { findings = []; }
-      if (findings.length) {
-        const h = document.createElement("strong");
-        h.textContent = "Key findings";
-        const ul = document.createElement("ul");
-        for (const f of findings) {
-          const li = document.createElement("li");
-          li.textContent = f;
-          ul.appendChild(li);
-        }
-        div.append(h, ul);
-      }
+    if (modalShows(paper)) renderStoredSummary(stored);
+  } catch (e) {
+    if (modalShows(paper)) {
+      $("modal-summary-meta").textContent =
+        e.status === 404 ? "Not summarized yet — use Summarize in the results list." : e.message;
     }
-  } catch (e) { /* no summary — that's fine */ }
+  }
 }
 
 function closeModal() {
   $("paper-modal").classList.add("hidden");
+  document.body.classList.remove("modal-open");
+  state.modalPaper = null;
 }
 
 /* ── Filters tab ─────────────────────────────────────────────────────────── */
@@ -1409,6 +1451,29 @@ async function downloadRefPdfs(selectedOnly) {
     (failures.length ? ` Not downloaded: ${failures.join(" · ")}` : "");
 }
 
+async function exportRefSummariesPdf() {
+  if (!state.activeListId) { notice("Select a list first."); return; }
+  const lst = (state.refLists || []).find(x => x.id === state.activeListId) || {};
+  $("ref-dl-status").textContent = "Building the summaries PDF…";
+  $("ref-dl-status").classList.remove("hidden");
+  const resp = await api("GET", `/api/references/${state.activeListId}/summaries.pdf`,
+                         undefined, { raw: true });
+  if (!resp.ok) {
+    let detail = `${resp.status}`;
+    try { detail = (await resp.json()).detail || detail; } catch (e) {}
+    $("ref-dl-status").textContent = `Export failed: ${detail}`;
+    return;
+  }
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${(lst.name || "references").replace(/[^\w\- ]+/g, "_")} - summaries.pdf`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  $("ref-dl-status").textContent = "Summaries PDF downloaded.";
+}
+
 async function exportRefCsv() {
   if (!state.activeListId) return;
   const resp = await api("GET", `/api/references/${state.activeListId}/export.csv`, undefined, { raw: true });
@@ -1446,7 +1511,10 @@ function wire() {
     $("search-days-wrap").classList.toggle("hidden", on);
     $("search-date-range-wrap").classList.toggle("hidden", !on);
   });
-  $("run-search").addEventListener("click", () => startSearch({ filter: manualFilter() }));
+  $("run-search").addEventListener("click", () => {
+    state.searchLabel = $("q-both").value;
+    startSearch({ filter: manualFilter() });
+  });
   $("cancel-search").addEventListener("click", cancelSearch);
   $("prev-page").addEventListener("click", () => {
     state.offset = Math.max(0, state.offset - PAGE_SIZE);
@@ -1464,6 +1532,9 @@ function wire() {
   $("btn-modal-close").addEventListener("click", closeModal);
   $("paper-modal").addEventListener("click", (e) => {
     if (e.target === $("paper-modal")) closeModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("paper-modal").classList.contains("hidden")) closeModal();
   });
 
   // Filters tab
@@ -1491,6 +1562,7 @@ function wire() {
   $("btn-ref-dl-selected").addEventListener("click", () => downloadRefPdfs(true));
   $("btn-ref-dl-all").addEventListener("click", () => downloadRefPdfs(false));
   $("btn-ref-export-csv").addEventListener("click", exportRefCsv);
+  $("btn-ref-export-summaries").addEventListener("click", exportRefSummariesPdf);
 
   // Settings tab
   $("btn-save-default-sources").addEventListener("click", saveDefaultSources);

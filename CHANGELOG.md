@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-09-18 — web UI fixes, desktop naming, summaries PDF
+
+### Added
+- **Export summaries (PDF)** on the Saved References tab: one PDF per list — a
+  cover page ("N of M papers summarized"), one page per summarized paper (key
+  findings, methodology, conclusions, and the model that wrote it), then the
+  papers without a summary listed under "Not summarized". Only stored summaries
+  are printed. Needs a Unicode font: `BIORX_PDF_FONT`, else DejaVu (installed in
+  the Docker image) or Arial Unicode on macOS; without one, unshowable
+  characters are replaced and counted on the cover.
+
+### Fixed
+- The paper detail popup and summaries rendered ~2,900 px down the page and
+  looked like they did nothing. The popup is now an overlay (✕, Esc or click
+  outside to close), and Summarize shows its progress and result inside it.
+- The message bar stays visible while scrolling.
+- "Save to Saved References" is enabled whenever there are results: "Save all N
+  results", or "Save selected (N)" when papers are ticked. The list name is
+  pre-filled with the filter name (or search words) and the date.
+
+### Changed
+- Web labels match the desktop app: tabs "Search & Browse", "Filters", "Saved
+  References", "Settings"; the Search tab's list is "Saved Filters".
+
 ## 2026-09-17 — web app review fixes (before first push of the parity work)
 
 Found by learning-qa, /code-review and /security-review over the unpushed range.

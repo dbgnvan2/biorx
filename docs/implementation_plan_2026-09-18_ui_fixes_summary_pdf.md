@@ -1,6 +1,6 @@
 # Plan — web UI fixes, desktop naming, summaries-to-PDF export
 **Date:** 2026-09-18
-**Status:** approved in chat (2026-09-18): fixes + desktop names; PDF scope = one
+**Status:** implemented 2026-09-18 (777 passed). Approved in chat (2026-09-18): fixes + desktop names; PDF scope = one
 Saved References list; papers without a summary are listed as not summarized.
 
 ## Problem (from Dave's first real use of the web app)
@@ -34,3 +34,17 @@ Saved References list; papers without a summary are listed as not summarized.
 
 ## Deferred (offered, not asked for)
 - Recording which filter produced a Saved References list (needs a schema column).
+
+## Status
+
+| ID | Status | Proof |
+|---|---|---|
+| UI1 | done | `test_frontend_wiring.py::test_ui1_modal_is_a_fixed_overlay`; browser: popup box at top 38 px of the viewport, Esc closes |
+| UI2 | done | `test_ui2_summary_renders_in_the_modal`; browser: stored summary and a failed run both shown in the popup |
+| UI3 | done | `test_ui3_notice_is_sticky`; browser: notice at 8 px from the top while scrolled |
+| UI4 | done | `test_ui4_save_button_label` (3 cases), `test_ui4_nothing_ticked_saves_all`; browser: "Save all 40 results", saved 40 |
+| RN1 | done | `test_rn1_labels_match_the_desktop` (reads gui.py) |
+| PF1 | done | `test_pf1_default_list_name` (3 cases); browser: "cortisol, maternal – 2026-09-18" |
+| SP1–SP5 | done | `tests/web/test_summaries_pdf.py` (10 tests, text read back with pdfplumber) |
+| SP6 | done | `test_sp6_references_tab_has_the_pdf_export`; browser: 200, application/pdf |
+| Live summary via a real model | not verified | No model on the test server; the popup was checked with one fixture summary in a throwaway database and with a failed run |

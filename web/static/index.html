@@ -38,18 +38,21 @@
 
     <!-- Tab navigation -->
     <div class="tab-bar">
-      <button id="tab-search" class="tab active">Search</button>
+      <button id="tab-search" class="tab active">Search &amp; Browse</button>
       <button id="tab-filters" class="tab">Filters</button>
-      <button id="tab-references" class="tab">References</button>
+      <button id="tab-references" class="tab">Saved References</button>
       <button id="tab-settings" class="tab">Settings</button>
     </div>
 
     <!-- ═══ Search tab ═══════════════════════════════════════════════════════ -->
     <div id="panel-search">
 
-      <!-- Saved filter runner -->
+      <!-- Saved filter runner: a filter drives a search; its results can be
+           saved to Saved References. -->
       <div class="card">
-        <h2>Saved searches</h2>
+        <h2>Saved Filters</h2>
+        <p class="muted small">Run a filter to search. Save the results you want to keep
+          to Saved References.</p>
         <ul id="search-filter-list" class="filters"></ul>
       </div>
 
@@ -93,7 +96,7 @@
         <div class="row" style="align-items:center;margin-bottom:8px">
           <h2 id="results-heading" style="margin:0;flex:1">Results</h2>
           <label class="shrink small"><input id="select-all-results" type="checkbox"> All</label>
-          <button id="btn-save-as-list" class="primary shrink" disabled>Save as reference list</button>
+          <button id="btn-save-as-list" class="primary shrink" disabled>Save to Saved References</button>
           <span id="save-list-name-wrap" class="shrink hidden">
             <input id="save-list-name-input" type="text" placeholder="List name" style="width:160px">
             <button id="btn-confirm-save-list" class="primary">Save</button>
@@ -116,12 +119,6 @@
         </div>
       </div>
 
-      <!-- Summary output -->
-      <div id="summary-card" class="card hidden">
-        <h2 id="summary-title">Summary</h2>
-        <p id="summary-meta" class="muted small"></p>
-        <div id="summary-body" class="summary"></div>
-      </div>
     </div><!-- /panel-search -->
 
     <!-- ═══ Filters tab ══════════════════════════════════════════════════════ -->
@@ -261,6 +258,7 @@
             <button id="btn-ref-dl-selected" class="small">⬇ Download selected PDFs</button>
             <button id="btn-ref-dl-all" class="small">⬇ Download all PDFs</button>
             <button id="btn-ref-export-csv" class="small">Export CSV</button>
+            <button id="btn-ref-export-summaries" class="small">Export summaries (PDF)</button>
           </div>
           <div id="ref-dl-status" class="muted small hidden" style="margin-top:4px"></div>
         </div>
@@ -314,7 +312,8 @@
         <button id="btn-modal-close" class="link">✕</button>
       </div>
       <p id="modal-abstract" class="small" style="margin-top:8px"></p>
-      <div id="modal-summary" style="margin-top:8px"></div>
+      <p id="modal-summary-meta" class="muted small" style="margin-top:8px"></p>
+      <div id="modal-summary" class="summary"></div>
       <div style="margin-top:8px">
         <a id="modal-pdf-link" class="tag" target="_blank" rel="noopener noreferrer"></a>
       </div>

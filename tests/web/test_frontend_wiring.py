@@ -141,6 +141,7 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/references/{param}/items",
         "/api/references/{param}/items/{param}",
         "/api/references/{param}/export.csv",
+        "/api/references/{param}/summaries.pdf",
         "/api/references/{param}/pdf/{param}",
         "/api/discover-terms",
         "/api/discover-terms/{param}",
@@ -566,3 +567,85 @@ def test_cs2_filter_test_reports_unreachable_sources():
     body = re.search(r"async function pollFilterTest\(\) \{.*?\n\}", code, re.DOTALL).group(0)
     assert "sources_failed" in body
     assert "Results are incomplete" in body
+
+
+# ── 2026-09-18: UI fixes, desktop names (docs/implementation_plan_2026-09-18_…) ──
+
+def _css() -> str:
+    return CSS.read_text()
+
+
+def test_ui1_modal_is_a_fixed_overlay():
+    """Without this rule the popup rendered ~2,900 px down the page."""
+    rule = re.search(r"\.modal-overlay\s*\{([^}]*)\}", _css())
+    assert rule, "no .modal-overlay rule"
+    assert "position: fixed" in rule.group(1)
+    assert "inset: 0" in rule.group(1)
+    code = _js_without_comments()
+    assert 'e.key === "Escape"' in code and "closeModal()" in code
+
+
+def test_ui2_summary_renders_in_the_modal():
+    """The summary card below the results table is gone; the summary is drawn
+    inside the popup, which startSummary opens first."""
+    html = INDEX.read_text()
+    assert 'id="summary-card"' not in html
+    modal = html[html.index('id="paper-modal"'):]
+    for el in ("modal-summary-meta", "modal-summary"):
+        assert f'id="{el}"' in modal
+    code = _js_without_comments()
+    body = re.search(r"async function startSummary\(paper, button\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "await openModal(paper" in body
+    render = re.search(r"function renderSummary\(job, result\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert '$("modal-summary")' in render
+
+
+def test_ui3_notice_is_sticky():
+    rule = re.search(r"#notice\s*\{([^}]*)\}", _css())
+    assert rule and ("position: sticky" in rule.group(1) or "position: fixed" in rule.group(1))
+
+
+@pytest.mark.parametrize("checked,total,text,disabled", [
+    (0, 0, "Save to Saved References", True),
+    (0, 40, "Save all 40 results to Saved References", False),
+    (3, 40, "Save selected (3) to Saved References", False),
+])
+def test_ui4_save_button_label(checked, total, text, disabled):
+    got = _node_eval([_js_block(r"function saveButtonLabel\(checked, total\) \{.*?\n\}")],
+                     f"saveButtonLabel({checked}, {total})")
+    assert got == {"text": text, "disabled": disabled}
+
+
+def test_ui4_nothing_ticked_saves_all():
+    code = _js_without_comments()
+    body = re.search(r"async function confirmSaveList\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "state.checkedPapers.size ? Array.from(state.checkedPapers) : null" in body
+
+
+def test_rn1_labels_match_the_desktop():
+    """The web tabs use the desktop app's names, read from gui.py itself."""
+    gui = (Path(__file__).parent.parent.parent / "gui.py").read_text()
+    # The main window's tabs are added from self.<name>_tab attributes.
+    desktop_tabs = re.findall(r'tabs\.addTab\(self\.\w+_tab,\s*"([^"]+)"\)', gui)
+    assert desktop_tabs, "could not read the desktop tab names"
+    html = INDEX.read_text().replace("&amp;", "&")
+    web_tabs = re.findall(r'<button id="tab-\w+" class="tab[^"]*">([^<]+)</button>', html)
+    assert [t.strip() for t in web_tabs] == [t.strip() for t in desktop_tabs]
+    assert "<h2>Saved Filters</h2>" in html
+    assert "Saved searches" not in html
+
+
+@pytest.mark.parametrize("label,expected", [
+    ("Inflammation", "Inflammation – 2026-09-18"),
+    ("", "Search – 2026-09-18"),
+    ("  cortisol, maternal ", "cortisol, maternal – 2026-09-18"),
+])
+def test_pf1_default_list_name(label, expected):
+    got = _node_eval([_js_block(r"function defaultListName\(label, isoDate\) \{.*?\n\}")],
+                     f"defaultListName({label!r}, '2026-09-18')")
+    assert got == expected
+
+
+def test_sp6_references_tab_has_the_pdf_export():
+    assert 'id="btn-ref-export-summaries"' in INDEX.read_text()
+    assert "/api/references/{param}/summaries.pdf" in _api_paths_called_by_js()
