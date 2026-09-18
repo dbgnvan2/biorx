@@ -771,3 +771,84 @@ def test_pc8_a_mistyped_disabled_entry_does_not_let_the_old_way_in(ctx, app):
     r = TestClient(app).post("/api/session", json={"access_code": ACCESS_CODE,
                                                    "name": "Legacy2", "pin": "leg-pin-111"})
     assert r.status_code == 503 and r.json()["detail"] == access_codes.ENTRY_PROBLEM_MESSAGE
+
+
+# ── csdp fix re-review, round 4 (2026-09-18) ──────────────────────────────────
+
+def _legacy_cookie(app, name, pin):
+    c = TestClient(app)
+    assert c.post("/api/session", json={"access_code": ACCESS_CODE, "name": name,
+                                        "pin": pin}).status_code == 200
+    return c
+
+
+def test_pc6_an_ended_cookie_stays_ended_after_a_merge(ctx, app):
+    """Round 3 compared on the resolved account; an ended "" cookie matched a
+    never-reset target's "" after a merge and came back."""
+    pa, _ = accounts.create_account(ctx.db, "pa", "pa-pin-111", user_store.new_user_id)
+    pb, _ = accounts.create_account(ctx.db, "pb", "pb-pin-111", user_store.new_user_id)
+    thief = _legacy_cookie(app, "pa", "pa-pin-111")
+    accounts.end_sessions(ctx.db, pa)
+    assert thief.get("/api/me").status_code == 401
+    accounts.merge_users(ctx.db, pa, pb)
+    assert thief.get("/api/me").status_code == 401
+
+
+def test_ac7_a_merge_never_signs_anyone_out(ctx, app):
+    qa, _ = accounts.create_account(ctx.db, "qa", "qa-pin-111", user_store.new_user_id)
+    qb, _ = accounts.create_account(ctx.db, "qb", "qb-pin-111", user_store.new_user_id)
+    accounts.end_sessions(ctx.db, qb)                       # qb was reset once, long ago
+    c_a = _legacy_cookie(app, "qa", "qa-pin-111")
+    c_b = _legacy_cookie(app, "qb", "qb-pin-111")
+    accounts.merge_users(ctx.db, qa, qb)
+    assert c_a.get("/api/me").json()["user_id"] == qb
+    assert c_b.get("/api/me").json()["user_id"] == qb
+    accounts.end_sessions(ctx.db, qb)                       # a reset of qb ends both
+    assert c_a.get("/api/me").status_code == 401 and c_b.get("/api/me").status_code == 401
+
+
+def test_pc6_reset_pin_reaches_every_merge_level(ctx, app):
+    ca, _ = accounts.create_account(ctx.db, "ca", "ca-pin-111", user_store.new_user_id)
+    cb, _ = accounts.create_account(ctx.db, "cb", "cb-pin-111", user_store.new_user_id)
+    code = add_code("Cc")
+    _, r = _sign_in(app, code, pin="cc-pin-111")
+    cc = r.json()["user_id"]
+    old_a = _legacy_cookie(app, "ca", "ca-pin-111")
+    accounts.merge_users(ctx.db, ca, cb)
+    accounts.merge_users(ctx.db, cb, cc)
+    access_codes.reset_pin(ctx.db, ctx.codes, "Cc")
+    r = TestClient(app).post("/api/session", json={"access_code": ACCESS_CODE,
+                                                   "name": "ca", "pin": "ca-pin-111"})
+    assert r.status_code == 401
+    assert old_a.get("/api/me").status_code == 401
+
+
+def test_pc2_a_file_recreated_unreadable_after_going_missing_is_down(ctx, app, caplog):
+    accounts.create_account(ctx.db, "Leg3", "leg-pin-111", user_store.new_user_id)
+    _sign_in(app, add_code("Someone"))                       # codes in use
+    _codes_file().unlink()
+    assert ctx.codes.down(ctx.db)
+    _codes_file().mkdir()                                    # IsADirectoryError on read
+    try:
+        caplog.clear()
+        assert ctx.codes.down(ctx.db)
+        r = TestClient(app).post("/api/session", json={"access_code": ACCESS_CODE,
+                                                       "name": "Leg3", "pin": "leg-pin-111"})
+        assert r.status_code == 503
+        for _ in range(5):
+            ctx.codes.down(ctx.db)
+        opened = [x for x in caplog.records if "cannot be opened" in x.getMessage()]
+        assert len(opened) == 1                              # logged once, not per request
+    finally:
+        _codes_file().rmdir()
+
+
+def test_pc8_an_entry_for_a_merged_away_name_still_applies(ctx, app):
+    alice, _ = accounts.create_account(ctx.db, "alice3", "al-pin-111", user_store.new_user_id)
+    bob, _ = accounts.create_account(ctx.db, "bob3", "bo-pin-111", user_store.new_user_id)
+    accounts.merge_users(ctx.db, alice, bob)
+    _write("codes:\n  - code: AAAA-LLLL-CCCC\n    for: Alice\n    account: alice3\n"
+           "    created: 2026-09-18\n    disabled: true\n")
+    r = TestClient(app).post("/api/session", json={"access_code": ACCESS_CODE,
+                                                   "name": "alice3", "pin": "al-pin-111"})
+    assert r.status_code == 403

@@ -994,7 +994,8 @@ async function startSummary(paper, button) {
       }
       clearInterval(timer); notice(e.message); done(); return;
     } finally { inFlight = false; }
-    if (netFailures >= 3) notice("");
+    // Clear only our own warning, not an unrelated banner.
+    if (netFailures >= 3 && $("notice").textContent.startsWith("Can't reach the server")) notice("");
     netFailures = 0;
 
     if (modalShows(paper)) {

@@ -126,9 +126,12 @@ async def current_user(
         user_id = resolve_user_id(ctx.db, cookie_user)
         if user_id:
             row = ctx.db.conn.execute("SELECT session_nonce FROM users WHERE user_id = ?",
-                                      (user_id,)).fetchone()
-            # Compared on the account the cookie resolves to, so a PIN reset,
-            # recovery or merge of that account ends merged-away cookies too.
+                                      (cookie_user,)).fetchone()
+            # Compared on the account the cookie NAMES. A reset of the account
+            # it resolves to renews the nonce of every account merged into it
+            # (accounts.end_sessions), so merged-away cookies end too; a merge
+            # changes no nonce, so it neither signs anyone out nor revives an
+            # ended cookie.
             if not hmac.compare_digest((row["session_nonce"] or "").encode(), nonce.encode()):
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                                     detail="Your PIN was changed. Sign in again.")

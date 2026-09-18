@@ -55,6 +55,12 @@ last push. All findings fixed, each with a test:
   while codes are in use; a file that cannot be opened at start fails closed;
   a mistyped entry that names an old-style account refuses that account; the
   summary poll warns after repeated network failures and never overlaps.
+- Fourth round: a cookie is checked against the account it names, and a reset
+  renews the value of every account merged into that one (at any depth), so an
+  ended cookie stays ended after a later merge and a merge never signs anyone
+  out; `reset-pin` clears PINs at every merge level; a codes file recreated
+  unreadable after going missing counts as down, and its error is logged once;
+  `account:` entries naming a merged-away account still apply.
 
 
 ## 2026-09-18 (late) — personal access codes

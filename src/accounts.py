@@ -336,19 +336,27 @@ def create_code_account(db, display_name: str, pin: str, code_key: str,
     return user_id
 
 
-def end_sessions(db, user_id: str, commit: bool = True) -> None:
-    """End every session issued so far for this account.
-
-    web/auth.py compares the cookie's nonce with the nonce of the account the
-    cookie resolves to (after merges). A fresh random nonce cannot equal any
-    earlier one — a counter per account could, since two accounts' counters
-    can meet after a merge (csdp review round 3)."""
+def merged_family(db, user_id: str) -> list:
+    """The account a user resolves to, plus every account merged into it at any
+    depth (A→B→C: all three). Loop-safe: UNION drops repeats."""
     final = resolve_user_id(db, user_id) or user_id
-    db.conn.execute("UPDATE users SET session_nonce = ? WHERE user_id = ?",
-                    (secrets.token_urlsafe(16), final))
-    if final != user_id:
+    return [r[0] for r in db.conn.execute(
+        "WITH RECURSIVE fam(id) AS (SELECT ? UNION "
+        "SELECT u.user_id FROM users u JOIN fam ON u.merged_into = fam.id) "
+        "SELECT id FROM fam", (final,))]
+
+
+def end_sessions(db, user_id: str, commit: bool = True) -> None:
+    """End every session that reaches this account's data.
+
+    web/auth.py compares a cookie's nonce with the nonce of the account the
+    cookie NAMES. Each account in the merged family gets a fresh random nonce,
+    so cookies of merged-away accounts end too, and an ended cookie can never
+    match again — not even after a later merge, which leaves nonces alone
+    (csdp review rounds 3 and 4)."""
+    for uid in merged_family(db, user_id):
         db.conn.execute("UPDATE users SET session_nonce = ? WHERE user_id = ?",
-                        (secrets.token_urlsafe(16), user_id))
+                        (secrets.token_urlsafe(16), uid))
     if commit:
         db.conn.commit()
 
@@ -446,10 +454,9 @@ def merge_users(db, source_id: str, target_id: str) -> dict:
         conn.execute("UPDATE access_code_bindings SET user_id = ? WHERE user_id = ?",
                      (target_id, source_id))
         conn.execute("UPDATE users SET merged_into = ? WHERE user_id = ?", (target_id, source_id))
-        # Session nonces are left alone: a live cookie of either account keeps
-        # working (AC7: nobody is signed out mid-merge) only while its nonce
-        # matches the merged account's. A cookie a reset already ended holds a
-        # random nonce no account will ever have again, so it cannot revive.
+        # Session nonces are left alone: cookies are checked against the
+        # account they name, so a live cookie of either account keeps working
+        # (AC7: nobody is signed out mid-merge) and an ended one stays ended.
         conn.commit()
     except BaseException:
         conn.rollback()

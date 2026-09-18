@@ -261,6 +261,8 @@ class CodeStore:
         self.empty = False         # the file exists but has no entries
         self.skipped_keys: set = set()
         self.skipped_accounts: set = set()
+        self._good = False         # the current entries came from a good parse
+        self._last_error = ""      # log a read error once, not per request
 
     def down(self, db) -> bool:
         """True when no code can be trusted: the file is broken, or it is
@@ -299,20 +301,21 @@ class CodeStore:
                 elif not self._loaded:
                     logger.warning("No access codes file at %s", self.path)
                 self._entries, self.warnings, self.missing, self.broken = {}, [], True, False
+                self._good = False
                 self.empty, self.skipped_keys, self.skipped_accounts = False, set(), set()
             else:
                 self.missing = False
                 try:
                     text = self.path.read_text(encoding="utf-8")
                 except UnicodeDecodeError as e:
-                    self._entries, self.broken = {}, True
+                    self._entries, self.broken, self._good = {}, True, False
                     self.skipped_keys, self.skipped_accounts = set(), set()
                     self.warnings = [f"access codes file is not UTF-8 text, so no codes work: {e}"]
                     logger.warning("%s", self.warnings[0])
                     self._stamp, self._loaded = stamp, True
                     return
                 except OSError as e:
-                    if self._loaded and not self.broken:
+                    if self._good:
                         # Keep the last good copy rather than locking everyone
                         # out because of a read that raced an editor's save.
                         logger.warning("Could not read %s: %s — keeping the last copy",
@@ -320,11 +323,16 @@ class CodeStore:
                         return
                     # No good copy to fall back on (first read after a start):
                     # fail closed and say why. Not stamped, so it retries.
-                    self._entries, self.broken = {}, True
+                    # This includes a file recreated unreadable after it went
+                    # missing: the empty "missing" state is not a good copy.
+                    self._entries, self.broken, self._good = {}, True, False
                     self.warnings = [f"access codes file cannot be opened, so no codes work: {e}"]
-                    logger.warning("%s", self.warnings[0])
+                    if self.warnings[0] != self._last_error:
+                        logger.warning("%s", self.warnings[0])
+                        self._last_error = self.warnings[0]
                     return
                 self._entries, self.warnings, skips = parse_codes_with_skips(text)
+                self._last_error = ""
                 self.skipped_keys, self.skipped_accounts = skips.keys, skips.accounts
                 self.broken = (not self._entries and
                                any(w.startswith(_FILE_PROBLEM) for w in self.warnings))
@@ -333,6 +341,7 @@ class CodeStore:
                 # flow-style or BOM-prefixed file is not "blank". An emptied
                 # `codes:` list is the owner's choice and is not blank either.
                 self.empty = skips.blank
+                self._good = not self.broken
                 if self.empty:
                     logger.warning("Access codes file %s is blank — if codes are in use, "
                                    "nobody can sign in with one", self.path)
@@ -415,13 +424,15 @@ def session_refusal(db, store: CodeStore, user_id: str, shared_code_set: bool,
     keys = [r["code_key"] for r in db.conn.execute(
         "SELECT code_key FROM access_code_bindings WHERE user_id = ? OR user_id IN "
         "(SELECT user_id FROM users WHERE merged_into = ?)", (user_id, user_id))]
-    login = db.conn.execute("SELECT login_name FROM users WHERE user_id = ?",
-                            (user_id,)).fetchone()
-    login_name = (login["login_name"] or "").lower() if login else ""
+    # `account:` entries may name this account or any account merged into it.
+    from .accounts import merged_family
+    family = merged_family(db, user_id)
+    names = {(r["login_name"] or "").lower() for r in db.conn.execute(
+        f"SELECT login_name FROM users WHERE user_id IN ({','.join('?' * len(family))})",
+        family) if r["login_name"]}
     mine = [store.get_by_key(k) for k in keys]
-    if login_name:
-        mine += [e for e in store.entries() if e.account.lower() == login_name]
-    if store.account_entry_problem(login_name):
+    mine += [e for e in store.entries() if e.account.lower() in names]
+    if any(store.account_entry_problem(n) for n in names):
         # An entry naming this account was skipped for a mistake: it may say
         # `disabled`, so do not let them in on the old path (fail closed).
         if not any(e is not None and e.refusal(today) is None for e in mine):
@@ -593,11 +604,12 @@ def reset_pin(db, store: CodeStore, for_name: str) -> str:
         raise LookupError(f"{for_name!r} has codes for more than one account; edit by hand.")
     user_id = users.pop()
     # Also end open sessions: a reset usually means someone else may know the PIN.
-    from .accounts import end_sessions
-    # Also clear the PINs of accounts merged into this one: their old name +
-    # PIN would otherwise still reach it (csdp review round 3).
-    db.conn.execute("UPDATE users SET pin_hash = NULL, failed_logins = 0, locked_until = NULL "
-                    "WHERE user_id = ? OR merged_into = ?", (user_id, user_id))
+    from .accounts import end_sessions, merged_family
+    # Also clear the PINs of every account merged into this one, at any depth:
+    # their old name + PIN would otherwise still reach it (csdp review 3, 4).
+    for uid in merged_family(db, user_id):
+        db.conn.execute("UPDATE users SET pin_hash = NULL, failed_logins = 0, "
+                        "locked_until = NULL WHERE user_id = ?", (uid,))
     end_sessions(db, user_id)
     db.conn.commit()
     return user_id
