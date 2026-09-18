@@ -27,6 +27,7 @@ import os
 import re
 import secrets
 import threading
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -73,6 +74,17 @@ def codes_file_path() -> str:
     """ACCESS_CODES_FILE, else DATA_DIR/access_codes.yaml (same rule as the db)."""
     from .db import resolve_data_path
     return str(Path(resolve_data_path("ACCESS_CODES_FILE", "access_codes.yaml")).expanduser())
+
+
+def read_grace_seconds() -> int:
+    """How long an unreadable file may be served from the last good copy
+    (ACCESS_CODES_READ_GRACE_SECONDS, default 60) before sign-in fails closed."""
+    raw = os.environ.get("ACCESS_CODES_READ_GRACE_SECONDS", "")
+    try:
+        return max(0, int(raw)) if raw else 60
+    except ValueError:
+        logger.warning("ACCESS_CODES_READ_GRACE_SECONDS=%r is not a whole number — using 60", raw)
+        return 60
 
 
 def code_days() -> int:
@@ -262,7 +274,9 @@ class CodeStore:
         self.skipped_keys: set = set()
         self.skipped_accounts: set = set()
         self._good = False         # the current entries came from a good parse
-        self._last_error = ""      # log a read error once, not per request
+        self._last_state = ("", "")  # what was last logged (see _note)
+        self._unreadable_since: Optional[float] = None
+        self._clock = time.monotonic
 
     def down(self, db) -> bool:
         """True when no code can be trusted: the file is broken, or it is
@@ -285,71 +299,83 @@ class CodeStore:
         self._refresh()
         return bool(login_name) and login_name.lower() in self.skipped_accounts
 
+    def _clear(self) -> None:
+        self._entries, self.warnings = {}, []
+        self.broken = self.empty = self._good = False
+        self.skipped_keys, self.skipped_accounts = set(), set()
+
+    def _note(self, state: str, message: str = "") -> None:
+        """Log once per change of state or error, never once per request."""
+        if (state, message) != self._last_state:
+            if message:
+                logger.warning("%s", message)
+            self._last_state = (state, message)
+
     def _refresh(self) -> None:
+        """Re-read the file when it changes. States: missing, not UTF-8,
+        unreadable (retried on every call), loaded (re-read on a new stamp)."""
         try:
             st = self.path.stat()
             stamp = (st.st_mtime_ns, st.st_size, st.st_ino)
         except FileNotFoundError:
             stamp = None
         with self._lock:
-            if self._loaded and stamp == self._stamp:
+            if self._loaded and stamp == self._stamp and self._unreadable_since is None:
                 return
             if stamp is None:
-                if self._loaded and not self.missing:
-                    logger.warning("Access codes file %s has gone — no code works "
-                                   "until it is back", self.path)
-                elif not self._loaded:
-                    logger.warning("No access codes file at %s", self.path)
-                self._entries, self.warnings, self.missing, self.broken = {}, [], True, False
-                self._good = False
-                self.empty, self.skipped_keys, self.skipped_accounts = False, set(), set()
-            else:
-                self.missing = False
-                try:
-                    text = self.path.read_text(encoding="utf-8")
-                except UnicodeDecodeError as e:
-                    self._entries, self.broken, self._good = {}, True, False
-                    self.skipped_keys, self.skipped_accounts = set(), set()
-                    self.warnings = [f"access codes file is not UTF-8 text, so no codes work: {e}"]
-                    logger.warning("%s", self.warnings[0])
-                    self._stamp, self._loaded = stamp, True
+                gone = self._loaded and not self.missing
+                self._clear()
+                self.missing, self._unreadable_since = True, None
+                self._note("missing", (f"Access codes file {self.path} has gone — no code "
+                                       "works until it is back") if gone
+                           else f"No access codes file at {self.path}")
+                self._stamp, self._loaded = None, True
+                return
+            self.missing = False
+            try:
+                text = self.path.read_text(encoding="utf-8")
+            except UnicodeDecodeError as e:
+                self._clear()
+                self.broken, self._unreadable_since = True, None
+                self.warnings = [f"access codes file is not UTF-8 text, so no codes work: {e}"]
+                self._note("not-utf8", self.warnings[0])
+                self._stamp, self._loaded = stamp, True
+                return
+            except OSError as e:
+                now = self._clock()
+                if self._unreadable_since is None:
+                    self._unreadable_since = now
+                if self._good and now - self._unreadable_since < read_grace_seconds():
+                    # Most likely a read that raced an editor's save: keep the
+                    # last good copy, briefly. Not for ever — a file that stays
+                    # unreadable would keep a just-disabled person in (review 5).
+                    self._note("unreadable-grace", f"Could not read {self.path}: {e} — "
+                               "using the last copy for now")
                     return
-                except OSError as e:
-                    if self._good:
-                        # Keep the last good copy rather than locking everyone
-                        # out because of a read that raced an editor's save.
-                        logger.warning("Could not read %s: %s — keeping the last copy",
-                                       self.path, e)
-                        return
-                    # No good copy to fall back on (first read after a start):
-                    # fail closed and say why. Not stamped, so it retries.
-                    # This includes a file recreated unreadable after it went
-                    # missing: the empty "missing" state is not a good copy.
-                    self._entries, self.broken, self._good = {}, True, False
-                    self.warnings = [f"access codes file cannot be opened, so no codes work: {e}"]
-                    if self.warnings[0] != self._last_error:
-                        logger.warning("%s", self.warnings[0])
-                        self._last_error = self.warnings[0]
-                    return
-                self._entries, self.warnings, skips = parse_codes_with_skips(text)
-                self._last_error = ""
-                self.skipped_keys, self.skipped_accounts = skips.keys, skips.accounts
-                self.broken = (not self._entries and
-                               any(w.startswith(_FILE_PROBLEM) for w in self.warnings))
-                # Blank (or comments only), as when an editor truncates the file
-                # before writing it. Decided from the parse, not the text, so a
-                # flow-style or BOM-prefixed file is not "blank". An emptied
-                # `codes:` list is the owner's choice and is not blank either.
-                self.empty = skips.blank
-                self._good = not self.broken
-                if self.empty:
-                    logger.warning("Access codes file %s is blank — if codes are in use, "
-                                   "nobody can sign in with one", self.path)
-                for w in self.warnings:
-                    logger.warning("%s", w)
-                logger.info("Loaded %d access code(s) from %s", len(self._entries), self.path)
-            self._stamp = stamp
-            self._loaded = True
+                self._clear()
+                self.broken, self._loaded = True, True
+                self.warnings = [f"access codes file cannot be opened, so no codes work: {e}"]
+                self._note("unreadable", self.warnings[0])
+                return          # _unreadable_since stays set, so the next call retries
+            self._unreadable_since = None
+            self._entries, self.warnings, skips = parse_codes_with_skips(text)
+            self.skipped_keys, self.skipped_accounts = skips.keys, skips.accounts
+            self.broken = (not self._entries and
+                           any(w.startswith(_FILE_PROBLEM) for w in self.warnings))
+            # Blank (or comments only), as when an editor truncates the file
+            # before writing it. Decided from the parse, not the text, so a
+            # flow-style or BOM-prefixed file is not "blank". An emptied
+            # `codes:` list is the owner's choice and is not blank either.
+            self.empty = skips.blank
+            self._good = not self.broken
+            self._note("loaded")
+            if self.empty:
+                logger.warning("Access codes file %s is blank — if codes are in use, "
+                               "nobody can sign in with one", self.path)
+            for w in self.warnings:          # once per change of the file
+                logger.warning("%s", w)
+            logger.info("Loaded %d access code(s) from %s", len(self._entries), self.path)
+            self._stamp, self._loaded = stamp, True
 
     def get(self, code: str) -> Optional[CodeEntry]:
         self._refresh()
@@ -388,7 +414,9 @@ def bound_user(db, entry: CodeEntry) -> Optional[str]:
                            entry.number, entry.account)
             return None
         bind(db, entry.key, user["user_id"])
-        return bound_user_by_key(db, entry.key)
+        from .accounts import resolve_user_id
+        bound = bound_user_by_key(db, entry.key)
+        return (resolve_user_id(db, bound) or bound) if bound else None
     return None
 
 
@@ -420,15 +448,15 @@ def session_refusal(db, store: CodeStore, user_id: str, shared_code_set: bool,
         # Fail closed for everyone, including accounts from before codes: with
         # the file unreadable we cannot tell whose entry says `disabled`.
         return UNAVAILABLE_MESSAGE
-    # Bindings made under an account later merged into this one count too.
-    keys = [r["code_key"] for r in db.conn.execute(
-        "SELECT code_key FROM access_code_bindings WHERE user_id = ? OR user_id IN "
-        "(SELECT user_id FROM users WHERE merged_into = ?)", (user_id, user_id))]
-    # `account:` entries may name this account or any account merged into it.
+    # Codes bound to this account or to any account merged into it, at any
+    # depth, and `account:` entries naming any of them.
     from .accounts import merged_family
     family = merged_family(db, user_id)
+    marks = ",".join("?" * len(family))           # placeholders only; ids are bound
+    keys = [r["code_key"] for r in db.conn.execute(
+        f"SELECT code_key FROM access_code_bindings WHERE user_id IN ({marks})", family)]
     names = {(r["login_name"] or "").lower() for r in db.conn.execute(
-        f"SELECT login_name FROM users WHERE user_id IN ({','.join('?' * len(family))})",
+        f"SELECT login_name FROM users WHERE user_id IN ({marks})",
         family) if r["login_name"]}
     mine = [store.get_by_key(k) for k in keys]
     mine += [e for e in store.entries() if e.account.lower() in names]

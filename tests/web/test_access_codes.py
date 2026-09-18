@@ -852,3 +852,98 @@ def test_pc8_an_entry_for_a_merged_away_name_still_applies(ctx, app):
     r = TestClient(app).post("/api/session", json={"access_code": ACCESS_CODE,
                                                    "name": "alice3", "pin": "al-pin-111"})
     assert r.status_code == 403
+
+
+# ── csdp fix re-review, round 5 (2026-09-18) ──────────────────────────────────
+
+def test_pc5_an_unreadable_file_uses_the_last_copy_only_briefly(ctx, app, caplog):
+    """After one good load, an unreadable file kept the old copy for ever — a
+    person just disabled in that file stayed in."""
+    if os.geteuid() == 0:
+        pytest.skip("root can read a mode-000 file")
+    code = add_code("Grace")
+    c, _ = _sign_in(app, code)
+    clock = [1000.0]
+    ctx.codes._clock = lambda: clock[0]
+    _write(_codes_file().read_text().replace("    for: Grace\n", "    for: Grace\n    disabled: true\n"))
+    _codes_file().chmod(0)
+    try:
+        caplog.clear()
+        assert c.get("/api/me").status_code == 200            # within the grace period
+        clock[0] += 61
+        r = c.get("/api/me")
+        assert r.status_code == 503 and r.json()["detail"] == access_codes.UNAVAILABLE_MESSAGE
+        for _ in range(5):
+            c.get("/api/me")
+        grace = [x for x in caplog.records if "using the last copy" in x.getMessage()]
+        closed = [x for x in caplog.records if "cannot be opened" in x.getMessage()]
+        assert len(grace) == 1 and len(closed) == 1             # once each, not per request
+    finally:
+        _codes_file().chmod(0o600)
+    assert c.get("/api/me").status_code == 401                 # readable: disabled applies
+
+
+def test_pc6_a_reset_during_a_merged_away_sign_in_ends_that_session(ctx, app, monkeypatch):
+    ra, _ = accounts.create_account(ctx.db, "ra", "ra-pin-111", user_store.new_user_id)
+    rb, _ = accounts.create_account(ctx.db, "rb", "rb-pin-111", user_store.new_user_id)
+    accounts.merge_users(ctx.db, ra, rb)
+    add_code("Rb", account="rb")
+    real = accounts.verify_secret
+    fired = []
+
+    def reset_after_check(secret, stored):
+        ok = real(secret, stored)
+        if ok and not fired:
+            fired.append(1)
+            access_codes.reset_pin(ctx.db, ctx.codes, "Rb")    # owner resets mid-sign-in
+        return ok
+    monkeypatch.setattr(accounts, "verify_secret", reset_after_check)
+    c = TestClient(app)
+    r = c.post("/api/session", json={"access_code": ACCESS_CODE, "name": "ra", "pin": "ra-pin-111"})
+    monkeypatch.setattr(accounts, "verify_secret", real)
+    # Either the sign-in is refused, or its cookie is already ended.
+    assert r.status_code != 200 or c.get("/api/me").status_code == 401
+
+
+def test_pc8_a_code_bound_deep_in_a_merge_chain_still_applies(ctx, app):
+    ka, _ = accounts.create_account(ctx.db, "ka", "ka-pin-111", user_store.new_user_id)
+    kb, _ = accounts.create_account(ctx.db, "kb", "kb-pin-111", user_store.new_user_id)
+    kc, _ = accounts.create_account(ctx.db, "kc", "kc-pin-111", user_store.new_user_id)
+    accounts.merge_users(ctx.db, ka, kb)
+    accounts.merge_users(ctx.db, kb, kc)
+    code = add_code("Ka", account="ka")
+    c, r = _sign_in(app, code, pin="kc-pin-111")
+    assert r.status_code == 200 and r.json()["user_id"] == kc
+    assert access_codes.bound_user(ctx.db, ctx.codes.get(code)) == kc
+    text = _codes_file().read_text().replace("    account: ka\n", "")
+    _write(text.replace("    for: Ka\n", "    for: Ka\n    disabled: true\n"))
+    assert c.get("/api/me").status_code == 401
+
+
+def test_ac7_long_merge_chains_sign_nobody_out(ctx, app):
+    ids = [accounts.create_account(ctx.db, f"d{i}", "dd-pin-111", user_store.new_user_id)[0]
+           for i in range(8)]
+    c = TestClient(app)
+    assert c.post("/api/session", json={"access_code": ACCESS_CODE, "name": "d0",
+                                        "pin": "dd-pin-111"}).status_code == 200
+    for a, b in zip(ids, ids[1:]):
+        accounts.merge_users(ctx.db, a, b)
+        assert c.get("/api/me").json()["user_id"] == b
+    assert len(accounts.merged_family(ctx.db, ids[0])) == 8
+
+
+def test_pc2_a_second_incident_is_logged_and_missing_is_noticed(ctx, app, caplog):
+    _sign_in(app, add_code("Someone"))
+    f = _codes_file()
+    good = f.read_text()
+    f.unlink()
+    assert ctx.codes.down(ctx.db) and ctx.codes.missing           # noticed as missing
+    for attempt in range(2):
+        f.mkdir()
+        caplog.clear()
+        assert ctx.codes.down(ctx.db)
+        assert any("cannot be opened" in x.getMessage() for x in caplog.records), attempt
+        f.rmdir()
+        assert ctx.codes.down(ctx.db) and ctx.codes.missing       # noticed as missing
+    f.write_text(good)
+    assert not ctx.codes.down(ctx.db)

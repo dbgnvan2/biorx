@@ -61,6 +61,12 @@ last push. All findings fixed, each with a test:
   out; `reset-pin` clears PINs at every merge level; a codes file recreated
   unreadable after going missing counts as down, and its error is logged once;
   `account:` entries naming a merged-away account still apply.
+- Fifth round: an unreadable codes file is served from the last good copy for
+  at most `ACCESS_CODES_READ_GRACE_SECONDS` (60), then sign-in stops (before, a
+  just-disabled person stayed in for as long as the file was unreadable);
+  file states are logged once per change; merges of any depth work (a limit of
+  5 signed people out); codes bound deep in a merge chain still apply; the
+  cookie names the row whose PIN was checked.
 
 
 ## 2026-09-18 (late) — personal access codes

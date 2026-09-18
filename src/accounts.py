@@ -132,9 +132,13 @@ def _by_name(db, name: str):
     ).fetchone()
 
 
-def resolve_user_id(db, user_id: str, depth: int = 5) -> Optional[str]:
-    """Follow merged_into, so a cookie for a merged user reaches the target."""
-    for _ in range(depth):
+def resolve_user_id(db, user_id: str) -> Optional[str]:
+    """Follow merged_into, so a cookie for a merged user reaches the target.
+    Any depth (a fixed limit signed people out after the fifth merge); None
+    for an unknown id or a loop, which only a hand edit can make."""
+    seen = set()
+    while user_id not in seen:
+        seen.add(user_id)
         row = db.conn.execute("SELECT user_id, merged_into FROM users WHERE user_id = ?",
                               (user_id,)).fetchone()
         if row is None:
@@ -142,6 +146,7 @@ def resolve_user_id(db, user_id: str, depth: int = 5) -> Optional[str]:
         if not row["merged_into"]:
             return row["user_id"]
         user_id = row["merged_into"]
+    logger.warning("merged_into loop at user %s — refusing", user_id)
     return None
 
 
@@ -198,16 +203,19 @@ def _failed(db, user_id: str, attempt: int, now: datetime) -> None:
 
 
 class SignedIn(str):
-    """A user id (compares equal to the plain string) that also carries the
-    account's session nonce, read in the same statement that accepted the PIN.
-    The cookie is issued with it, so a PIN reset that lands while the PIN is
-    being checked cannot leave the old PIN's session alive (csdp review)."""
+    """The account signed in to (a plain user id for routes: the account the
+    data lives in, after merges), carrying the cookie to issue: the row whose
+    PIN was accepted and its session nonce, read in the same statement that
+    accepted the PIN. A reset landing mid-check therefore ends this session
+    too, merged-away names included (csdp review rounds 2 and 5)."""
 
     nonce: str = ""
+    cookie_user: str = ""
 
-    def __new__(cls, user_id: str, nonce: Optional[str]):
+    def __new__(cls, user_id: str, nonce: Optional[str], cookie_user: str = ""):
         obj = super().__new__(cls, user_id)
         obj.nonce = nonce or ""
+        obj.cookie_user = cookie_user or user_id
         return obj
 
 
@@ -225,13 +233,12 @@ def _record_success(db, user_id: str, checked_hash: Optional[str]) -> int:
 
 
 def _signed_in(db, row_user_id: str, nonce: str) -> "SignedIn":
-    final = resolve_user_id(db, row_user_id) or row_user_id
-    if final != row_user_id:
-        # A merged account: the cookie is for the account the data moved to.
-        r = db.conn.execute("SELECT session_nonce FROM users WHERE user_id = ?",
-                            (final,)).fetchone()
-        nonce = (r["session_nonce"] or "") if r else ""
-    return SignedIn(final, nonce)
+    final = resolve_user_id(db, row_user_id)
+    if final is None:
+        raise BadCredentials("This account cannot be opened. Ask the owner.")
+    # The cookie names the checked row with the nonce read with the PIN;
+    # current_user follows the merge to the data.
+    return SignedIn(final, nonce, cookie_user=row_user_id)
 
 
 # ── Operations ────────────────────────────────────────────────────────────────
@@ -339,7 +346,11 @@ def create_code_account(db, display_name: str, pin: str, code_key: str,
 def merged_family(db, user_id: str) -> list:
     """The account a user resolves to, plus every account merged into it at any
     depth (A→B→C: all three). Loop-safe: UNION drops repeats."""
-    final = resolve_user_id(db, user_id) or user_id
+    final = resolve_user_id(db, user_id)
+    if final is None:
+        # Unknown id or a hand-made loop: say so, and act on this one account.
+        logger.warning("Cannot follow merges from user %s — acting on it alone", user_id)
+        final = user_id
     return [r[0] for r in db.conn.execute(
         "WITH RECURSIVE fam(id) AS (SELECT ? UNION "
         "SELECT u.user_id FROM users u JOIN fam ON u.merged_into = fam.id) "

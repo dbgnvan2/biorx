@@ -52,6 +52,7 @@ def issue_session(response: Response, ctx: AppContext, user_id: str,
     """Sign the user id, and the account's session nonce, into the cookie. A
     SignedIn id carries the nonce read when its PIN was accepted; use it."""
     nonce = getattr(user_id, "nonce", None)
+    user_id = getattr(user_id, "cookie_user", None) or user_id
     if nonce is None:
         row = ctx.db.conn.execute("SELECT session_nonce FROM users WHERE user_id = ?",
                                   (user_id,)).fetchone()
