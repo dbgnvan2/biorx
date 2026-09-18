@@ -80,7 +80,7 @@ an existing filter opens with its own sources, keywords and days.
 
 | Fix | Proof | Status |
 |---|---|---|
-| PDF proxy SSRF (every hop, all non-public ranges, fail closed, pinned IP, size cap, PDF magic) | `tests/web/test_safe_fetch.py` (28 tests) | done |
+| PDF proxy SSRF (every hop, all non-public ranges, fail closed, pinned IP, size cap, PDF magic) | `tests/web/test_safe_fetch.py` (27 tests) | done |
 | Proxy maps outcomes 403/422/413/502 | `tests/web/test_references_routes.py::test_ref5_pdf_proxy_maps_fetch_outcomes` | done |
 | Client-supplied add-item route removed | `test_references_routes.py::test_ref3_no_route_adds_a_client_supplied_paper` | done |
 | List delete removes item rows | `test_references_routes.py::test_ref1_delete_list_removes_its_item_rows` | done |
