@@ -80,7 +80,7 @@ an existing filter opens with its own sources, keywords and days.
 
 | Fix | Proof | Status |
 |---|---|---|
-| PDF proxy SSRF (every hop, all non-public ranges, fail closed, pinned IP, size cap, PDF magic) | `tests/web/test_safe_fetch.py` (36 tests) | done |
+| PDF proxy SSRF (every hop, all non-public ranges, fail closed, pinned IP, size cap, PDF magic) | `tests/web/test_safe_fetch.py` (37 tests, incl. a real trickling socket) | done |
 | Proxy maps outcomes 403/422/413/502 | `tests/web/test_references_routes.py::test_ref5_pdf_proxy_maps_fetch_outcomes` | done |
 | Client-supplied add-item route removed | `test_references_routes.py::test_ref3_no_route_adds_a_client_supplied_paper` | done |
 | List delete removes item rows | `test_references_routes.py::test_ref1_delete_list_removes_its_item_rows` | done |
@@ -92,7 +92,7 @@ an existing filter opens with its own sources, keywords and days.
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |
 | PDF download for Europe PMC papers | Proxy works (arXiv PDF fetched live); PMC links are web pages → 422. See TODO | partial |
-| Summary route fetches guarded, no shared-cache writes | `tests/web/test_summary_fetch_guard.py` (6 tests) | done |
+| Summary route fetches guarded, no shared-cache writes, abstract-only labelled | `tests/web/test_summary_fetch_guard.py` (10 tests) | done |
 | Legacy filter shape converted on read and run | `tests/web/test_filters_routes.py::test_lf1_*`, `test_lf2_*` | done |
 | Discover empty run releases slot | `test_discover_routes.py::test_dt3_no_papers_gives_the_slot_back` | done |
 | Pinned connection parameters | `test_safe_fetch.py::test_pinned_get_connects_to_the_ip_and_verifies_the_hostname` | done |

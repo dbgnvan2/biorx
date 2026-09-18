@@ -20,7 +20,11 @@ Found by learning-qa, /code-review and /security-review over the unpushed range.
   cached under the client's DOI/title where later summaries of the real paper
   would read it. Both now go through `src/safe_fetch.py`, into a temp file.
 - DNS failures are a retryable 502, not a 403; a whole download has a time
-  limit; the PDF signature may follow leading bytes.
+  limit that holds even against a server trickling bytes; the PDF signature
+  may follow leading bytes.
+- A summary made from the abstract alone now says so, and why ("from the
+  abstract only (full text not used: the link leads to a web page…)"). An
+  `http://` PDF link is tried as `https://`.
 
 ### Fixed
 - **Discover Terms** searched on single letters of the description, never showed

@@ -736,7 +736,9 @@ function renderSummary(job, result) {
   const body = $("summary-body");
   body.textContent = "";
   if (!result) return;
-  $("summary-meta").textContent = `${result.provider} · ${result.model} · ${result.key_source} key`;
+  $("summary-meta").textContent = `${result.provider} · ${result.model} · ${result.key_source} key` +
+    (result.full_text && result.full_text !== "used"
+      ? ` · from the abstract only (full text ${result.full_text})` : "");
   if ((result.key_findings || []).length) {
     const heading = document.createElement("strong");
     heading.textContent = "Key findings";

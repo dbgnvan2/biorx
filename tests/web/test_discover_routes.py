@@ -220,3 +220,14 @@ def test_dt3_no_papers_gives_the_slot_back(signed_in, ctx, owner_key):
     body = _run(signed_in, ctx, FakeOrchestrator(papers=[]), '{"terms": ["a"]}', OWNER_BODY)
     assert body["status"] == "done"
     assert user_store.owner_usage_today(ctx.db, user_id) == 0
+
+
+def test_dt3_connection_released_even_if_settling_raises(signed_in, ctx, owner_key, monkeypatch):
+    released = []
+    real_release = ctx.db.release
+    monkeypatch.setattr(ctx.db, "release", lambda: (released.append(1), real_release()))
+    monkeypatch.setattr(user_store, "release_usage",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db locked")))
+    body = _run(signed_in, ctx, FakeOrchestrator(papers=[]), '{"terms": ["a"]}', OWNER_BODY)
+    assert body["status"] == "error"
+    assert released, "the pooled connection was not released"

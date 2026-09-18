@@ -77,6 +77,10 @@ class TooLarge(Exception):
     """The upstream body exceeds the byte cap."""
 
 
+class DeadlineExceeded(Exception):
+    """Internal: the overall download deadline passed mid-read."""
+
+
 def _normalise(addr: ipaddress._BaseAddress) -> ipaddress._BaseAddress:
     if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
         return addr.ipv4_mapped
@@ -119,8 +123,9 @@ def resolve_public(host: str, port: int = 443,
 class _PinnedResponse:
     """The slice of a response fetch_pdf uses, over a urllib3 response."""
 
-    def __init__(self, resp, pool):
+    def __init__(self, resp, pool, read_timeout: float = 30):
         self._resp, self._pool = resp, pool
+        self._read_timeout = read_timeout
         self.status_code = resp.status
         self.headers = resp.headers
 
@@ -128,8 +133,28 @@ class _PinnedResponse:
     def is_redirect(self) -> bool:
         return self.status_code in (301, 302, 303, 307, 308) and "Location" in self.headers
 
-    def iter_content(self, size: int):
-        return self._resp.stream(size)
+    def iter_content(self, size: int, deadline: Optional[float] = None,
+                     clock: Callable = time.monotonic):
+        """Yield bytes as they arrive. With a deadline, each socket read waits
+        at most until the deadline, so a server trickling bytes cannot hold
+        the reader past it (stream(size) would wait for a full `size`)."""
+        while True:
+            if deadline is not None:
+                remaining = deadline - clock()
+                if remaining <= 0:
+                    raise DeadlineExceeded()
+                sock = getattr(self._resp.connection, "sock", None) if self._resp.connection else None
+                if sock is not None:
+                    sock.settimeout(min(self._read_timeout, remaining))
+            try:
+                chunk = self._resp.read1(size)
+            except (urllib3.exceptions.ReadTimeoutError, socket.timeout) as e:
+                if deadline is not None and clock() >= deadline:
+                    raise DeadlineExceeded() from e
+                raise
+            if not chunk:
+                return
+            yield chunk
 
     def close(self) -> None:
         try:
@@ -158,7 +183,7 @@ def pinned_get(url: str, ip: str, timeout: float, headers: dict) -> _PinnedRespo
     except BaseException:
         pool.close()
         raise
-    return _PinnedResponse(resp, pool)
+    return _PinnedResponse(resp, pool, read_timeout=timeout)
 
 
 def _ipv4_first(addrs: Set[str]) -> list:
@@ -218,12 +243,15 @@ def _fetch_public(url: str, max_bytes: int, timeout: float, headers: dict,
 
             data = bytearray()
             try:
-                for chunk in resp.iter_content(CHUNK):
+                for chunk in resp.iter_content(CHUNK, deadline=deadline, clock=clock):
                     data.extend(chunk)
                     if len(data) > max_bytes:
                         raise TooLarge()
                     if clock() > deadline:
-                        raise FetchFailed(f"The download took longer than {deadline_seconds:.0f} s.")
+                        raise DeadlineExceeded()
+            except DeadlineExceeded as e:
+                raise FetchFailed(
+                    f"The download took longer than {deadline_seconds:.0f} s.") from e
             except (urllib3.exceptions.HTTPError, OSError) as e:
                 raise FetchFailed("The download was interrupted.") from e
             return bytes(data), resp.headers

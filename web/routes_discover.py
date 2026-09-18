@@ -123,13 +123,17 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
             # return when no papers were found, which never calls the model.
             # Same rule as summaries: given back only if the provider was never
             # reached; a call that was made may have cost money.
-            if usage_id is not None:
-                if provider_called:
-                    user_store.finalize_usage(ctx.db, usage_id, resolved.provider,
-                                              resolved.model)
-                else:
-                    user_store.release_usage(ctx.db, usage_id)
-            ctx.db.release()
+            try:
+                if usage_id is not None:
+                    if provider_called:
+                        user_store.finalize_usage(ctx.db, usage_id, resolved.provider,
+                                                  resolved.model)
+                    else:
+                        user_store.release_usage(ctx.db, usage_id)
+            finally:
+                # Always, even if settling the slot raised: a pooled thread
+                # must not keep its connection.
+                ctx.db.release()
 
     return work
 

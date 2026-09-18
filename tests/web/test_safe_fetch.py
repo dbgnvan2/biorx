@@ -45,7 +45,7 @@ class FakeResp:
     def is_redirect(self):
         return self.status_code in (301, 302, 303, 307, 308) and "Location" in self.headers
 
-    def iter_content(self, size):
+    def iter_content(self, size, deadline=None, clock=None):
         for i in range(0, len(self._body), size):
             yield self._body[i:i + size]
 
@@ -297,3 +297,50 @@ def test_pdf_magic_may_follow_leading_bytes():
     data, _ = fetch("https://pub.example/p.pdf",
                     {"https://pub.example/p.pdf": FakeResp(body=body)}, {"pub.example": [PUBLIC]})
     assert data == body
+
+
+def test_deadline_holds_against_a_real_trickling_server():
+    """Re-sweep 2: the deadline was only checked after a full 64 KiB chunk, so
+    a server sending a byte every few hundred ms held the reader until the
+    whole body arrived. Real socket, real clock; plain HTTP pool injected in
+    place of the TLS one (the read loop is the same _PinnedResponse)."""
+    import threading
+    import time as _time
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    stop = threading.Event()
+
+    def serve():
+        conn, _ = srv.accept()
+        conn.recv(4096)
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n%PDF-")
+        try:
+            while not stop.is_set():
+                conn.sendall(b"x")
+                _time.sleep(0.2)
+        except OSError:
+            pass
+        finally:
+            conn.close()
+    threading.Thread(target=serve, daemon=True).start()
+
+    def get(url, ip, timeout, headers):
+        pool = urllib3.HTTPConnectionPool("127.0.0.1", port=port, retries=False,
+                                          timeout=urllib3.Timeout(total=timeout))
+        resp = pool.urlopen("GET", "/", redirect=False, preload_content=False)
+        return safe_fetch._PinnedResponse(resp, pool, read_timeout=timeout)
+
+    start = _time.monotonic()
+    try:
+        with pytest.raises(FetchFailed, match="longer than"):
+            safe_fetch._fetch_public("https://pub.example/p.pdf", 10**6, 1.0, {},
+                                     dns({"pub.example": [PUBLIC]}), get,
+                                     deadline_seconds=1.5)
+    finally:
+        stop.set()
+        srv.close()
+    elapsed = _time.monotonic() - start
+    assert elapsed < 3.0, f"deadline 1.5 s but the read ran {elapsed:.1f} s"

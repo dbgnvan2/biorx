@@ -99,7 +99,8 @@ def _resolve_for(ctx: AppContext, user_id: str,
     return resolved, usage_id
 
 
-def _extract_text(ctx: AppContext, paper: Dict[str, Any]) -> str:
+def _extract_text(ctx: AppContext, paper: Dict[str, Any],
+                  outcome: Optional[Dict[str, str]] = None) -> str:
     """Get text to summarize: the PDF if we can fetch it, else "".
 
     The paper dict comes from the client, so its URL does too. The PDF is
@@ -107,34 +108,59 @@ def _extract_text(ctx: AppContext, paper: Dict[str, Any]) -> str:
     checked) into a temporary file, and never into the shared PDF cache: that
     cache is keyed by DOI and title, which a client could use to plant a file
     that every later summary of the real paper would read.
+
+    `outcome["full_text"]` records "used" or why not, so an abstract-only
+    summary is labelled as one rather than looking like a full-text one (P2).
     """
     import tempfile
 
     from src import safe_fetch
     from src.pdf_handler import PDFHandler
 
+    outcome = outcome if outcome is not None else {}
     url = pdf_url(paper)
     if not url:
+        outcome["full_text"] = "not used: no PDF link"
+        return ""
+    # safe_fetch is https-only. Many open-access hosts serve both; try the
+    # https form of an http link before giving up on it.
+    candidates = [url]
+    if url.startswith("http://"):
+        candidates = ["https://" + url[len("http://"):]]
+    data = None
+    for candidate in candidates:
+        try:
+            data = safe_fetch.fetch_pdf(candidate)
+        except (safe_fetch.FetchRefused, safe_fetch.FetchFailed,
+                safe_fetch.NotAPdf, safe_fetch.TooLarge) as e:
+            # A paper whose PDF will not download is still summarizable from
+            # its abstract; say so in the log and in the result.
+            reason = str(e) or type(e).__name__
+            if isinstance(e, safe_fetch.NotAPdf):
+                reason = "the link leads to a web page, not a PDF"
+            elif isinstance(e, safe_fetch.TooLarge):
+                reason = "the PDF is too large"
+            outcome["full_text"] = f"not used: {reason}"
+            logger.info("No PDF text for %s (%s): %s",
+                        paper.get("doi") or paper.get("canonical_id"),
+                        type(e).__name__, e)
+    if data is None:
         return ""
     try:
-        data = safe_fetch.fetch_pdf(url)
-    except (safe_fetch.FetchRefused, safe_fetch.FetchFailed,
-            safe_fetch.NotAPdf, safe_fetch.TooLarge) as e:
-        # A paper whose PDF will not download is still summarizable from its
-        # abstract; say so in the log rather than failing the job.
-        logger.info("No PDF text for %s (%s): %s",
-                    paper.get("doi") or paper.get("canonical_id"), type(e).__name__, e)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = f"{tmp}/paper.pdf"
+            with open(path, "wb") as fh:
+                fh.write(data)
+            text = PDFHandler(tmp).extract_text(path) or ""
+    except Exception as e:
+        # Disk full, no writable tmp, or an unreadable PDF: fall back to the
+        # abstract, as the cache-based code did.
+        logger.info("Could not extract PDF text for %s: %s",
+                    paper.get("doi") or paper.get("canonical_id"), e)
+        outcome["full_text"] = "not used: the PDF could not be read"
         return ""
-    with tempfile.TemporaryDirectory() as tmp:
-        path = f"{tmp}/paper.pdf"
-        with open(path, "wb") as fh:
-            fh.write(data)
-        try:
-            return PDFHandler(tmp).extract_text(path) or ""
-        except Exception as e:
-            logger.info("Could not extract PDF text for %s: %s",
-                        paper.get("doi") or paper.get("canonical_id"), e)
-            return ""
+    outcome["full_text"] = "used" if text else "not used: the PDF had no extractable text"
+    return text
 
 
 def _paper_row_id(ctx: AppContext, paper: Dict[str, Any]) -> Optional[int]:
@@ -163,7 +189,8 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
         provider_called = False
         try:
             job.phase = "Fetching the paper"
-            full_text = _extract_text(ctx, paper)
+            text_outcome: Dict[str, str] = {}
+            full_text = _extract_text(ctx, paper, text_outcome)
             abstract = paper.get("abstract", "") or ""
 
             if not abstract and not full_text:
@@ -232,6 +259,9 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
                 "provider": resolved.provider,
                 "model": resolved.model,
                 "key_source": resolved.key_source,
+                # "used", or why the summary is from the abstract alone.
+                "full_text": text_outcome.get("full_text") or
+                             ("used" if full_text else "not used"),
                 **summary,
             }
         except BaseException:
