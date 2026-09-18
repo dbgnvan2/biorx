@@ -42,3 +42,6 @@ biorxiv.db
 
 # Logs
 *.log
+
+# Local env backups (hold secrets)
+.env.bak*
