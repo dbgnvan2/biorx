@@ -1,7 +1,9 @@
 """
 Fetch a PDF from a URL without letting the URL reach internal services.
 
-Purpose: SSRF-safe PDF download for the web app's PDF proxy.
+Purpose: SSRF-safe fetches for the web app: the PDF proxy, and the PDF text
+         and abstract scraping behind POST /api/summaries (both take URLs a
+         client can supply).
 Spec:    docs/web_parity_spec_2026-09-17.md#SEC-2
 Tests:   tests/web/test_safe_fetch.py
 
@@ -31,6 +33,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import socket
+import time
 import urllib.parse
 from typing import Callable, Optional, Set
 
@@ -41,6 +44,21 @@ logger = logging.getLogger(__name__)
 
 MAX_REDIRECTS = 5
 CHUNK = 64 * 1024
+DEFAULT_PDF_MAX_BYTES = 100 * 1024 * 1024
+DEFAULT_HTML_MAX_BYTES = 5 * 1024 * 1024
+# The socket timeout applies per read; this bounds a whole download, so a
+# server trickling one byte at a time cannot hold a worker indefinitely.
+DEFAULT_DEADLINE_SECONDS = 120
+# PDF readers accept the %PDF- header anywhere in the first 1024 bytes.
+PDF_MAGIC_WINDOW = 1024
+
+# Globally-routable by the stdlib's reckoning, but translate to IPv4 space
+# that may be private: IPv4-compatible (deprecated) and NAT64 prefixes.
+_TRANSLATED_V6 = [
+    ipaddress.ip_network("::/96"),
+    ipaddress.ip_network("64:ff9b::/96"),
+    ipaddress.ip_network("64:ff9b:1::/48"),
+]
 
 
 class FetchRefused(Exception):
@@ -70,6 +88,8 @@ def is_public_address(ip: str) -> bool:
         addr = _normalise(ipaddress.ip_address(ip.split("%", 1)[0]))
     except ValueError:
         return False
+    if isinstance(addr, ipaddress.IPv6Address) and any(addr in n for n in _TRANSLATED_V6):
+        return False
     return addr.is_global and not addr.is_multicast
 
 
@@ -81,11 +101,15 @@ def resolve_public(host: str, port: int = 443,
         raise FetchRefused("URL has no host.")
     try:
         infos = getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-    except (socket.gaierror, UnicodeError, OSError) as e:
-        raise FetchRefused(f"Host {host!r} does not resolve.") from e
+    except UnicodeError as e:
+        raise FetchRefused(f"Host {host!r} is not a valid name.") from e
+    except OSError as e:
+        # Fail closed (nothing is fetched), but as a retryable failure: a DNS
+        # hiccup is not a policy decision (learnings P1).
+        raise FetchFailed(f"Host {host!r} did not resolve.") from e
     addrs = {info[4][0] for info in infos}
     if not addrs:
-        raise FetchRefused(f"Host {host!r} does not resolve.")
+        raise FetchFailed(f"Host {host!r} did not resolve.")
     bad = [a for a in addrs if not is_public_address(a)]
     if bad:
         raise FetchRefused(f"Host {host!r} resolves to a non-public address.")
@@ -124,8 +148,12 @@ def pinned_get(url: str, ip: str, timeout: float, headers: dict) -> _PinnedRespo
         timeout=urllib3.Timeout(total=timeout), retries=False,
     )
     path = (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
+    host = parsed.hostname or ""
+    host_header = f"[{host}]" if ":" in host else host
+    if parsed.port:
+        host_header += f":{parsed.port}"       # never the userinfo part of netloc
     try:
-        resp = pool.urlopen("GET", path, headers={**headers, "Host": parsed.netloc},
+        resp = pool.urlopen("GET", path, headers={**headers, "Host": host_header},
                             redirect=False, preload_content=False, assert_same_host=False)
     except BaseException:
         pool.close()
@@ -137,28 +165,37 @@ def _ipv4_first(addrs: Set[str]) -> list:
     return sorted(addrs, key=lambda a: (":" in a, a))
 
 
-def fetch_pdf(url: str, max_bytes: int, timeout: float = 30,
-              user_agent: str = "BioRx/1.0",
-              getaddrinfo: Callable = socket.getaddrinfo,
-              get: Callable = pinned_get) -> bytes:
-    """Download a PDF under the rules in the module docstring."""
+def _fetch_public(url: str, max_bytes: int, timeout: float, headers: dict,
+                  getaddrinfo: Callable, get: Callable,
+                  deadline_seconds: float = DEFAULT_DEADLINE_SECONDS,
+                  clock: Callable = time.monotonic):
+    """The hop loop shared by fetch_pdf and fetch_html. Returns (bytes, headers)."""
+    deadline = clock() + deadline_seconds
     for _hop in range(MAX_REDIRECTS + 1):
-        parsed = urllib.parse.urlparse(url)
+        if clock() > deadline:
+            raise FetchFailed(f"The download took longer than {deadline_seconds:.0f} s.")
+        try:
+            parsed = urllib.parse.urlparse(url)
+            port = parsed.port or 443
+        except ValueError as e:                 # e.g. a port out of range
+            raise FetchRefused("Malformed URL.") from e
         if parsed.scheme != "https":
-            raise FetchRefused("PDF URL must use https.")
-        allowed = resolve_public(parsed.hostname or "", parsed.port or 443, getaddrinfo)
+            raise FetchRefused("URL must use https.")
+        allowed = resolve_public(parsed.hostname or "", port, getaddrinfo)
 
         resp = None
         last_error: Optional[Exception] = None
         for ip in _ipv4_first(allowed):      # a host without IPv6 egress still works
             try:
-                resp = get(url, ip=ip, timeout=timeout, headers={"User-Agent": user_agent})
+                resp = get(url, ip=ip, timeout=timeout, headers=headers)
                 break
             except (urllib3.exceptions.HTTPError, OSError) as e:
                 last_error = e
+            except (ValueError, UnicodeError) as e:
+                raise FetchRefused("Malformed URL.") from e
         if resp is None:
-            logger.info("PDF fetch failed for %s: %s", url, last_error)
-            raise FetchFailed("Could not reach the PDF host.") from last_error
+            logger.info("Fetch failed for %s: %s", url, last_error)
+            raise FetchFailed("Could not reach the host.") from last_error
 
         try:
             if resp.is_redirect:
@@ -169,7 +206,7 @@ def fetch_pdf(url: str, max_bytes: int, timeout: float = 30,
                 continue
 
             if resp.status_code >= 400:
-                raise FetchFailed(f"The PDF host answered {resp.status_code}.")
+                raise FetchFailed(f"The host answered {resp.status_code}.")
 
             declared = resp.headers.get("Content-Length")
             if declared:
@@ -185,12 +222,41 @@ def fetch_pdf(url: str, max_bytes: int, timeout: float = 30,
                     data.extend(chunk)
                     if len(data) > max_bytes:
                         raise TooLarge()
+                    if clock() > deadline:
+                        raise FetchFailed(f"The download took longer than {deadline_seconds:.0f} s.")
             except (urllib3.exceptions.HTTPError, OSError) as e:
-                raise FetchFailed("The PDF download was interrupted.") from e
-            if not bytes(data[:5]) == b"%PDF-":
-                raise NotAPdf()
-            return bytes(data)
+                raise FetchFailed("The download was interrupted.") from e
+            return bytes(data), resp.headers
         finally:
             resp.close()
 
     raise FetchFailed(f"More than {MAX_REDIRECTS} redirects.")
+
+
+def fetch_pdf(url: str, max_bytes: int = DEFAULT_PDF_MAX_BYTES, timeout: float = 30,
+              user_agent: str = "BioRx/1.0",
+              getaddrinfo: Callable = socket.getaddrinfo,
+              get: Callable = pinned_get) -> bytes:
+    """Download a PDF under the rules in the module docstring."""
+    data, _ = _fetch_public(url, max_bytes, timeout, {"User-Agent": user_agent},
+                            getaddrinfo, get)
+    if b"%PDF-" not in data[:PDF_MAGIC_WINDOW]:
+        raise NotAPdf()
+    return data
+
+
+def fetch_html(url: str, headers: Optional[dict] = None, timeout: float = 20,
+               max_bytes: int = DEFAULT_HTML_MAX_BYTES,
+               getaddrinfo: Callable = socket.getaddrinfo,
+               get: Callable = pinned_get) -> str:
+    """Download a web page under the same rules (no PDF check), as text."""
+    data, resp_headers = _fetch_public(url, max_bytes, timeout, dict(headers or {}),
+                                       getaddrinfo, get)
+    charset = "utf-8"
+    ctype = resp_headers.get("Content-Type", "") or ""
+    if "charset=" in ctype:
+        charset = ctype.split("charset=", 1)[1].split(";")[0].strip().strip('"') or "utf-8"
+    try:
+        return data.decode(charset, errors="replace")
+    except LookupError:
+        return data.decode("utf-8", errors="replace")

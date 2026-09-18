@@ -12,12 +12,6 @@
   real PDF URL source (PMC OA service / Unpaywall `url_for_pdf`) before the
   References tab's "Download PDFs" is useful for these papers. Same root as the
   N2 note below.
-- **`PDFHandler.download_pdf` (summaries) fetches client-supplied URLs unguarded.**
-  `POST /api/summaries` takes a paper dict from the client and `_extract_text`
-  downloads `pdf_url(paper)` with plain `requests` (redirects followed, no
-  address check). The text goes to the LLM, so an internal response can leak
-  into a summary. Route it through `src/safe_fetch.py` (P5 sibling of the proxy
-  fix). Not fixed here: pre-existing code outside the reviewed range.
 - **`/healthz` is unauthenticated** and returns `db_path` and `startup_warnings`.
 - **Static assets have no cache-busting**: after a deploy, browsers keep the old
   `app.js`/`styles.css` until a hard reload (seen during the live check).
@@ -29,6 +23,12 @@
   add a kind and a cap.
 - **"Use date range" checkbox** in the Search tab has the stacked layout the
   source pickers had.
+- **Summaries no longer use the PDF cache on the web path.** The fix for cache
+  poisoning fetches each PDF into a temp file; a repeat summary re-downloads.
+  A cache keyed by a hash of the server-validated URL would restore reuse.
+- **Institution as a list** from the earlier web build is joined with ", "
+  on read; `filter_papers` treats that as one term, so a multi-institution
+  legacy filter matches nothing. None are known to exist.
 
 ## From batch-H gates (2026-09-16) — deferred, in-loop fix threshold not met
 

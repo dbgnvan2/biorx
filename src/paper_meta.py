@@ -110,9 +110,13 @@ class _TextExtractor(HTMLParser):
             self.text_parts.append(data)
 
 
-def scrape_abstract_from_url(url: str) -> str:
+def scrape_abstract_from_url(url: str, fetch_html=None) -> str:
     """
     Attempt to scrape an abstract from a publisher page.
+
+    fetch_html, when given, fetches the page instead of plain requests. The web
+    app passes src.safe_fetch.fetch_html, because there the URL can come from a
+    client (POST /api/summaries); the desktop app, run by its owner, does not.
 
     Tries in order:
       1. JSON-LD structured data (schema.org/ScholarlyArticle description)
@@ -121,12 +125,17 @@ def scrape_abstract_from_url(url: str) -> str:
     Returns empty string if nothing useful is found or the page is paywalled.
     """
     try:
-        resp = requests.get(
-            url, headers=_BROWSER_HEADERS, timeout=SCRAPE_TIMEOUT, allow_redirects=True
-        )
-        if not resp.ok or len(resp.text) < MIN_HTML_CHARS:
+        if fetch_html is not None:
+            html = fetch_html(url, headers=_BROWSER_HEADERS, timeout=SCRAPE_TIMEOUT)
+        else:
+            resp = requests.get(
+                url, headers=_BROWSER_HEADERS, timeout=SCRAPE_TIMEOUT, allow_redirects=True
+            )
+            if not resp.ok:
+                return ""
+            html = resp.text
+        if len(html) < MIN_HTML_CHARS:
             return ""
-        html = resp.text
     except Exception as e:
         logger.debug("Abstract scrape fetch failed for %s: %s", url, e)
         return ""
@@ -279,7 +288,7 @@ def _crossref_abstract(doi: str) -> str:
     return record.abstract or ""
 
 
-def recover_abstract(paper: Dict[str, Any]) -> AbstractRecovery:
+def recover_abstract(paper: Dict[str, Any], fetch_html=None) -> AbstractRecovery:
     """Find an abstract for a paper whose record has none.
 
     Spec:  docs/implementation_plan_2026-09-16_backlog.md#N2
@@ -365,7 +374,9 @@ def recover_abstract(paper: Dict[str, Any]) -> AbstractRecovery:
     if doi:
         urls.append(f"https://doi.org/{doi}")
     for url in urls:
-        if attempt("scrape", lambda u=url: scrape_abstract_from_url(u)):
+        scrape = ((lambda u=url: scrape_abstract_from_url(u, fetch_html=fetch_html))
+                  if fetch_html is not None else (lambda u=url: scrape_abstract_from_url(u)))
+        if attempt("scrape", scrape):
             return result
 
     if result.tried:

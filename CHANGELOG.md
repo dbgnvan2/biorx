@@ -14,6 +14,13 @@ Found by learning-qa, /code-review and /security-review over the unpushed range.
 - **Removed `POST /api/references/{id}/items`**, which stored a client-supplied
   paper (and its URL) for the proxy to fetch. Papers enter lists through
   save-as-list only.
+- **Summaries fetch through the same guard.** `POST /api/summaries` downloaded
+  the client's `pdf_url` and scraped its abstract URLs with plain `requests`,
+  so an internal page could be read back through a summary, and the PDF was
+  cached under the client's DOI/title where later summaries of the real paper
+  would read it. Both now go through `src/safe_fetch.py`, into a temp file.
+- DNS failures are a retryable 502, not a 403; a whole download has a time
+  limit; the PDF signature may follow leading bytes.
 
 ### Fixed
 - **Discover Terms** searched on single letters of the description, never showed
@@ -21,11 +28,14 @@ Found by learning-qa, /code-review and /security-review over the unpushed range.
   replies as "no terms". Settings and stop words are now in `llm_config.yaml`.
 - **Filters saved from the web** lost their keywords (so matched everything),
   crashed every search (institution saved as a list), and ignored date ranges.
+  Filters already stored in that shape are converted on the server wherever
+  they are read or run (`src/filtering.normalise_filter`).
 - **Reference lists:** deleting a list now deletes its items; a duplicate name
   is a 409, not a 500; save-as-list waits for the search to finish and reports
   papers it could not store; CSV exports the right bioRxiv version.
 - Bulk PDF download and remove report what failed.
 - `/api/me` reports the model that will actually run.
+- A Discover run that finds no papers gives its daily-cap slot back.
 
 ## 2026-09-17 — web Settings tab is per user
 

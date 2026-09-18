@@ -129,9 +129,13 @@ def test_the_internal_host_is_never_requested():
     assert get.calls == [("https://evil.example/p.pdf", PUBLIC)]
 
 
-def test_unresolvable_host_fails_closed():
-    with pytest.raises(FetchRefused, match="does not resolve"):
-        fetch("https://nowhere.example/p.pdf", {}, {})
+def test_unresolvable_host_fails_closed_as_retryable():
+    """Nothing is fetched (closed), but a DNS failure is a 502-class
+    FetchFailed, not a 403 policy refusal (P1: transient is not terminal)."""
+    get = http({})
+    with pytest.raises(FetchFailed, match="did not resolve"):
+        fetch_pdf("https://nowhere.example/p.pdf", 10_000, getaddrinfo=dns({}), get=get)
+    assert get.calls == []
 
 
 def test_host_with_one_private_address_among_public_is_refused():
@@ -211,3 +215,85 @@ def test_is_public_address_basics():
     assert safe_fetch.is_public_address("2606:4700::1111")
     for ip in ("169.254.169.254", "::ffff:10.0.0.1", "not-an-ip", "224.0.0.1"):
         assert not safe_fetch.is_public_address(ip), ip
+
+
+# ── Edges found by the second security pass (2026-09-17) ──────────────────────
+
+@pytest.mark.parametrize("ip", ["64:ff9b::a00:1", "::a00:1", "64:ff9b:1::1"])
+def test_nat64_and_ipv4_compatible_forms_are_not_public(ip):
+    assert not safe_fetch.is_public_address(ip)
+
+
+def test_out_of_range_port_is_refused_not_a_500():
+    with pytest.raises(FetchRefused, match="Malformed"):
+        fetch("https://pub.example:99999/p.pdf", {}, {"pub.example": [PUBLIC]})
+
+
+def test_host_header_never_carries_userinfo(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(self, method, path, headers=None, **kw):
+        seen["headers"] = headers
+        raise urllib3.exceptions.NewConnectionError(None, "stop here")
+    monkeypatch.setattr(urllib3.HTTPSConnectionPool, "urlopen", fake_urlopen)
+    with pytest.raises(urllib3.exceptions.NewConnectionError):
+        safe_fetch.pinned_get("https://user:pw@pub.example:8443/x", ip=PUBLIC,
+                              timeout=1, headers={})
+    assert seen["headers"]["Host"] == "pub.example:8443"
+
+
+def test_fetch_html_applies_the_same_rules_and_decodes():
+    page = FakeResp(headers={"Content-Type": "text/html; charset=latin-1"},
+                    body="<p>caf\xe9</p>".encode("latin-1"))
+    get = http({"https://pub.example/a": page})
+    text = safe_fetch.fetch_html("https://pub.example/a", getaddrinfo=dns({"pub.example": [PUBLIC]}),
+                                 get=get)
+    assert text == "<p>caf\xe9</p>"
+    with pytest.raises(FetchRefused):
+        safe_fetch.fetch_html("https://meta.example/",
+                              getaddrinfo=dns({"meta.example": ["169.254.169.254"]}), get=get)
+
+
+# ── Re-sweep of the fix commit (2026-09-17) ───────────────────────────────────
+
+def test_pinned_get_connects_to_the_ip_and_verifies_the_hostname(monkeypatch):
+    """The rebinding defence rests on this: the pool's host is the checked IP,
+    and TLS is verified against the URL's hostname with CA checks on."""
+    built = {}
+
+    class FakePool:
+        def __init__(self, host, **kw):
+            built.update(host=host, **kw)
+
+        def urlopen(self, method, path, headers=None, **kw):
+            built.update(path=path, headers=headers, urlopen_kw=kw)
+            return type("R", (), {"status": 200, "headers": {}})()
+
+        def close(self):
+            pass
+    monkeypatch.setattr(urllib3, "HTTPSConnectionPool", FakePool)
+    safe_fetch.pinned_get("https://pub.example/a/b.pdf?x=1", ip=PUBLIC, timeout=5, headers={})
+    assert built["host"] == PUBLIC
+    assert built["server_hostname"] == "pub.example"
+    assert built["assert_hostname"] == "pub.example"
+    assert built["cert_reqs"] == "CERT_REQUIRED"
+    assert built["path"] == "/a/b.pdf?x=1"
+    assert built["headers"]["Host"] == "pub.example"
+    assert built["urlopen_kw"]["redirect"] is False
+
+
+def test_overall_deadline_stops_a_trickling_server():
+    ticks = iter(range(0, 1000, 50))          # each clock() call is 50 s later
+    body = b"%PDF-" + b"x" * (safe_fetch.CHUNK * 3)
+    get = http({"https://pub.example/p.pdf": FakeResp(body=body)})
+    with pytest.raises(FetchFailed, match="longer than"):
+        safe_fetch._fetch_public("https://pub.example/p.pdf", 10**9, 5, {},
+                                 dns({"pub.example": [PUBLIC]}), get,
+                                 deadline_seconds=120, clock=lambda: next(ticks))
+
+
+def test_pdf_magic_may_follow_leading_bytes():
+    body = b"\n\r junk " + b"%PDF-1.4 rest"
+    data, _ = fetch("https://pub.example/p.pdf",
+                    {"https://pub.example/p.pdf": FakeResp(body=body)}, {"pub.example": [PUBLIC]})
+    assert data == body

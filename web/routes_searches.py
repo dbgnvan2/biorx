@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from src import user_store
-from src.filtering import filter_papers
+from src.filtering import filter_papers, normalise_filter
 from src.jobs import Job, JobLookup
 
 from .auth import current_user, get_context
@@ -51,7 +51,9 @@ def source_from_failure_status(message: str) -> str:
 
 
 # Job kinds whose result is a list of papers (a search, or a filter's test run).
-SEARCH_JOB_KINDS = ("search", "filter_test")
+SEARCH_JOB_KIND = "search"
+FILTER_TEST_JOB_KIND = "filter_test"
+SEARCH_JOB_KINDS = (SEARCH_JOB_KIND, FILTER_TEST_JOB_KIND)
 
 MAX_RESULTS_CEILING = 2000
 DEFAULT_MAX_RESULTS = 200
@@ -74,6 +76,9 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
     is recorded on the job, so an empty result set is never mistaken for a quiet
     week when a source was simply unreachable (learnings P2).
     """
+    # The query builders read the canonical shape too, not only filter_papers.
+    filter_dict = normalise_filter(filter_dict)
+
     def work(job: Job) -> List[Dict[str, Any]]:
         matched: List[Dict[str, Any]] = []
 
@@ -131,7 +136,7 @@ def start_search(body: SearchRequest,
         "source_selection", {"all": True, "selected": []}
     )
     job = ctx.jobs.submit(
-        "search", user_id,
+        SEARCH_JOB_KIND, user_id,
         _run_search(ctx, filter_dict, selection, body.max_results),
     )
     return job.to_dict()

@@ -87,3 +87,42 @@ def test_one_user_cannot_see_or_delete_anothers_filter(app):
 def test_an_empty_name_is_rejected(signed_in):
     assert signed_in.post("/api/filters",
                           json={"name": "", "filter": FILTER}).status_code == 422
+
+
+# ── LF: filters in the earlier web build's shape (2026-09-17 re-sweep) ─────────
+
+LEGACY = {"text_groups": [{"keywords": "zebrafish"}], "date_from": "2020-01-01",
+          "date_to": "2020-12-31", "institution": ["Harvard"]}
+
+
+def test_lf1_legacy_filter_is_served_in_canonical_shape(signed_in):
+    fid = signed_in.post("/api/filters", json={"name": "Old", "filter": LEGACY}).json()["id"]
+    f = next(x for x in signed_in.get("/api/filters").json()["filters"] if x["id"] == fid)
+    assert f["text_groups"] == [{"both": "zebrafish"}]
+    assert (f["start_date"], f["end_date"]) == ("2020-01-01", "2020-12-31")
+    assert f["institution"] == "Harvard"
+    assert "date_from" not in f
+
+
+def test_lf2_legacy_filter_runs_filtered_not_open():
+    """Run path, not the editor: the stored dict goes straight to the server."""
+    from src.filtering import filter_papers, normalise_filter
+    from src.sources.query_builder import build_europepmc_query
+    cortisol = {"title": "Cortisol in humans", "abstract": "", "author_corresponding_institution": "Harvard"}
+    assert filter_papers([cortisol], LEGACY) == []          # adversarial: was returned
+    q = build_europepmc_query(normalise_filter(LEGACY))
+    assert "zebrafish" in q and "2020-01-01" in q and "2020-12-31" in q
+
+
+def test_lf2_run_search_normalises_before_querying(ctx):
+    """_run_search hands the query builders the canonical shape."""
+    from unittest.mock import MagicMock
+    from web.routes_searches import _run_search
+    seen = {}
+    orch = MagicMock()
+    orch.search = lambda filter_dict, **_: seen.setdefault("fd", filter_dict)
+    ctx.get_orchestrator = lambda: orch
+    work = _run_search(ctx, LEGACY, {"all": True, "selected": []}, 10)
+    work(MagicMock(sources_failed=[]))
+    assert seen["fd"]["text_groups"] == [{"both": "zebrafish"}]
+    assert seen["fd"]["start_date"] == "2020-01-01"

@@ -381,7 +381,7 @@ def test_ps10_client_reads_filters_in_the_shape_the_api_returns(signed_in):
     if not node:
         pytest.skip("node is not installed; filterFields not exercised here")
 
-    saved = {"text_groups": [{"keywords": "maternal, stress"}], "days_back": 30,
+    saved = {"text_groups": [{"both": "maternal, stress"}], "days_back": 30,
              "category": "neuroscience",
              "source_selection": {"all": False, "selected": ["pubmed"]}}
     r = signed_in.post("/api/filters", json={"name": "contract", "enabled": True,

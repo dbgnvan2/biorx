@@ -19,7 +19,7 @@ from src import user_store
 
 from .auth import current_user, get_context
 from .deps import AppContext
-from .routes_searches import SearchRequest, _run_search
+from .routes_searches import FILTER_TEST_JOB_KIND, SearchRequest, _run_search
 
 router = APIRouter()
 
@@ -86,7 +86,7 @@ def test_filter(filter_id: int,
     selection = filter_dict.get("source_selection", {"all": True, "selected": []})
     from .routes_searches import DEFAULT_MAX_RESULTS
     job = ctx.jobs.submit(
-        "filter_test", user_id,
+        FILTER_TEST_JOB_KIND, user_id,
         _run_search(ctx, filter_dict, selection, DEFAULT_MAX_RESULTS),
     )
     return job.to_dict()

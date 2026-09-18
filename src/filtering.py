@@ -18,6 +18,40 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 
+def normalise_filter(f: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a copy of a filter_dict in the canonical (desktop) shape.
+
+    An earlier web build saved three fields in shapes nothing else reads:
+      * text groups as {"keywords": ...}  -> "both" (else the group matched all)
+      * date_from / date_to               -> start_date / end_date (else ignored)
+      * institution as a list             -> a string (else .strip() crashed)
+    Applied wherever a stored or submitted filter is read or run, so the fix
+    does not depend on the filter being re-saved from the editor (P19).
+    """
+    out = dict(f or {})
+    groups = []
+    for g in out.get("text_groups") or []:
+        g = dict(g or {})
+        if "keywords" in g:
+            legacy = g.pop("keywords") or ""
+            if legacy and not g.get("both"):
+                g["both"] = legacy
+        groups.append(g)
+    if "text_groups" in out:
+        out["text_groups"] = groups
+    for old, new in (("date_from", "start_date"), ("date_to", "end_date")):
+        if old in out:
+            value = out.pop(old)
+            if value and not out.get(new):
+                out[new] = value
+    inst = out.get("institution")
+    if isinstance(inst, (list, tuple)):
+        out["institution"] = ", ".join(str(i).strip() for i in inst if str(i).strip())
+    elif inst is None and "institution" in out:
+        out["institution"] = ""
+    return out
+
+
 def split_terms(s: str) -> List[str]:
     """Split a comma-separated field into non-empty lowercase terms."""
     return [t.strip().lower() for t in s.split(",") if t.strip()]
@@ -83,6 +117,7 @@ def text_group_matches(paper: Dict[str, Any], group: Dict[str, str]) -> bool:
 
 def filter_papers(papers: List[Dict[str, Any]], f: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Apply filter criteria to a list of papers. No API calls."""
+    f = normalise_filter(f)
     text_groups = f.get("text_groups", [])
     if not text_groups and f.get("keywords"):
         text_groups = [{"title": "", "abstract": "", "both": ", ".join(f["keywords"])}]

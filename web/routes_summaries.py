@@ -100,23 +100,41 @@ def _resolve_for(ctx: AppContext, user_id: str,
 
 
 def _extract_text(ctx: AppContext, paper: Dict[str, Any]) -> str:
-    """Get text to summarize: the PDF if we can fetch it, else the abstract."""
-    from src.pdf_handler import PDFHandler, default_pdf_dir
+    """Get text to summarize: the PDF if we can fetch it, else "".
+
+    The paper dict comes from the client, so its URL does too. The PDF is
+    fetched through src/safe_fetch (public https hosts only, every redirect
+    checked) into a temporary file, and never into the shared PDF cache: that
+    cache is keyed by DOI and title, which a client could use to plant a file
+    that every later summary of the real paper would read.
+    """
+    import tempfile
+
+    from src import safe_fetch
+    from src.pdf_handler import PDFHandler
 
     url = pdf_url(paper)
     if not url:
         return ""
     try:
-        handler = PDFHandler(default_pdf_dir())
-        path = handler.download_pdf(url, paper.get("title", ""), paper.get("doi", ""))
-        if path:
-            return handler.extract_text(path) or ""
-    except Exception as e:
+        data = safe_fetch.fetch_pdf(url)
+    except (safe_fetch.FetchRefused, safe_fetch.FetchFailed,
+            safe_fetch.NotAPdf, safe_fetch.TooLarge) as e:
         # A paper whose PDF will not download is still summarizable from its
         # abstract; say so in the log rather than failing the job.
-        logger.info("Could not extract PDF text for %s: %s",
-                    paper.get("doi") or paper.get("canonical_id"), e)
-    return ""
+        logger.info("No PDF text for %s (%s): %s",
+                    paper.get("doi") or paper.get("canonical_id"), type(e).__name__, e)
+        return ""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = f"{tmp}/paper.pdf"
+        with open(path, "wb") as fh:
+            fh.write(data)
+        try:
+            return PDFHandler(tmp).extract_text(path) or ""
+        except Exception as e:
+            logger.info("Could not extract PDF text for %s: %s",
+                        paper.get("doi") or paper.get("canonical_id"), e)
+            return ""
 
 
 def _paper_row_id(ctx: AppContext, paper: Dict[str, Any]) -> Optional[int]:
@@ -153,7 +171,9 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
                 # lookup away — an open-access paper on PMC, for instance. Try
                 # the same recovery chain the desktop app uses before giving up.
                 job.phase = "Looking for the abstract"
-                recovered = recover_abstract(paper)
+                # Guarded: the URLs it scrapes come from the client's paper.
+                from src.safe_fetch import fetch_html
+                recovered = recover_abstract(paper, fetch_html=fetch_html)
                 if recovered.found:
                     abstract = recovered.text
                     paper["abstract"] = abstract       # stored with the paper below

@@ -117,17 +117,18 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
                     f"{resolved.provider} did not return a list of terms ({e})."
                 ) from e
 
-            if usage_id is not None:
-                user_store.finalize_usage(ctx.db, usage_id, resolved.provider,
-                                          resolved.model)
             return {"terms": terms, "papers_found": len(papers), "keywords": keywords}
-        except BaseException:
-            # Same rule as summaries: give the owner-key slot back only when
-            # the provider was never reached.
-            if usage_id is not None and not provider_called:
-                user_store.release_usage(ctx.db, usage_id)
-            raise
         finally:
+            # Settle the owner-key slot on every exit — including the early
+            # return when no papers were found, which never calls the model.
+            # Same rule as summaries: given back only if the provider was never
+            # reached; a call that was made may have cost money.
+            if usage_id is not None:
+                if provider_called:
+                    user_store.finalize_usage(ctx.db, usage_id, resolved.provider,
+                                              resolved.model)
+                else:
+                    user_store.release_usage(ctx.db, usage_id)
             ctx.db.release()
 
     return work

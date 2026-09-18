@@ -211,3 +211,12 @@ def test_dt5_repo_config_has_a_discover_block():
 def test_discover_requires_auth(client):
     assert client.post("/api/discover-terms", json={"description": "x"}).status_code == 401
     assert client.get("/api/discover-terms/abc").status_code == 401
+
+
+def test_dt3_no_papers_gives_the_slot_back(signed_in, ctx, owner_key):
+    """Re-sweep finding: the early return (no papers, model never called) kept
+    the slot, so empty runs used up the daily cap."""
+    user_id = signed_in.get("/api/me").json()["user_id"]
+    body = _run(signed_in, ctx, FakeOrchestrator(papers=[]), '{"terms": ["a"]}', OWNER_BODY)
+    assert body["status"] == "done"
+    assert user_store.owner_usage_today(ctx.db, user_id) == 0

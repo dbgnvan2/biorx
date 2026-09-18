@@ -21,6 +21,8 @@ from datetime import datetime, timedelta, timezone
 import sqlite3
 from typing import Any, Dict, List, Optional
 
+from .filtering import normalise_filter
+
 from .crypto import KeyEncryptionUnavailable, decrypt_key, encrypt_key, last4
 
 logger = logging.getLogger(__name__)
@@ -215,6 +217,7 @@ def list_filters(db, user_id: str) -> List[Dict[str, Any]]:
             logger.warning("Filter %s for user %s is not valid JSON — skipped",
                            row["id"], user_id)
             continue
+        payload = normalise_filter(payload)
         payload["id"] = row["id"]
         payload["name"] = row["name"]
         payload["enabled"] = bool(row["enabled"])
@@ -234,6 +237,7 @@ def get_filter(db, user_id: str, filter_id: int) -> Optional[Dict[str, Any]]:
         payload = json.loads(row["filter_json"])
     except ValueError:
         return None
+    payload = normalise_filter(payload)
     payload["id"] = row["id"]
     payload["name"] = row["name"]
     payload["enabled"] = bool(row["enabled"])
