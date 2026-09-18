@@ -31,32 +31,10 @@
       <h1>BioRx</h1>
       <span id="who" class="muted small"></span>
       <span class="spacer"></span>
-      <button id="toggle-settings" class="link">LLM settings</button>
       <button id="sign-out" class="link">Sign out</button>
     </header>
 
     <div id="notice" class="banner hidden"></div>
-
-    <!-- LLM settings panel (collapsible) -->
-    <div id="settings" class="card hidden">
-      <h2>LLM settings</h2>
-      <p id="key-state" class="muted small"></p>
-      <div id="byo-disabled" class="banner warn hidden small"></div>
-      <div id="byo" class="row">
-        <label class="shrink" style="min-width:160px"><span>Provider</span>
-          <select id="key-provider"></select></label>
-        <label><span>Your API key</span>
-          <input id="api-key" type="password" autocomplete="off"
-                 placeholder="Stored encrypted; only the last 4 are ever shown"></label>
-        <label class="shrink" style="min-width:220px"><span>Model <span id="model-hint" class="muted small"></span></span>
-          <input id="preferred-model" type="text" autocomplete="off"
-                 placeholder="leave blank for default"></label>
-        <div class="shrink">
-          <button id="save-key" class="primary">Save</button>
-          <button id="remove-key">Remove key</button>
-        </div>
-      </div>
-    </div>
 
     <!-- Tab navigation -->
     <div class="tab-bar">
@@ -292,21 +270,37 @@
 
     <!-- ═══ Settings tab ════════════════════════════════════════════════════ -->
     <div id="panel-settings" class="hidden">
+      <p class="muted small">These settings are yours alone. They do not change the app
+        for anyone else.</p>
       <div class="card">
-        <h2>Configuration files</h2>
-        <p class="muted small">Changes take effect on the server's next request.</p>
-        <div class="row" style="margin-bottom:8px;gap:8px">
-          <label class="shrink"><span>Edit:</span>
-            <select id="settings-file-select">
-              <option value="sources_config.yaml">Sources — which APIs are enabled and your contact email</option>
-              <option value="llm_config.yaml">LLM — provider, model, and token budget</option>
-            </select></label>
-          <button id="btn-settings-reload">Reload from disk</button>
-          <button id="btn-settings-save" class="primary">Save</button>
+        <h2>LLM settings</h2>
+        <p id="key-state" class="muted small"></p>
+        <div id="byo-disabled" class="banner warn hidden small"></div>
+        <div id="byo" class="row">
+          <label class="shrink" style="min-width:160px"><span>Provider</span>
+            <select id="key-provider"></select></label>
+          <label><span>Your API key</span>
+            <input id="api-key" type="password" autocomplete="off"
+                   placeholder="Stored encrypted; only the last 4 are ever shown"></label>
+          <label class="shrink" style="min-width:220px"><span>Model <span id="model-hint" class="muted small"></span></span>
+            <input id="preferred-model" type="text" autocomplete="off"
+                   placeholder="leave blank for default"></label>
+          <div class="shrink">
+            <button id="save-key" class="primary">Save</button>
+            <button id="remove-key">Remove key</button>
+          </div>
         </div>
-        <p id="settings-status" class="muted small"></p>
-        <textarea id="settings-editor" rows="24"
-          style="width:100%;font-family:monospace;font-size:12px"></textarea>
+      </div>
+      <div class="card">
+        <h2>Default sources</h2>
+        <p class="muted small">Sources ticked here start out ticked in the Search tab
+          and in new filters. You can still change them for any single search.
+          Saved in this browser only.</p>
+        <div><span id="default-sources"></span></div>
+        <div style="margin-top:8px">
+          <button id="btn-save-default-sources" class="primary">Save defaults</button>
+          <span id="default-sources-status" class="muted small"></span>
+        </div>
       </div>
     </div><!-- /panel-settings -->
 

@@ -126,7 +126,7 @@ Each summary resolves a credential in this order:
 2. the server owner's key from the environment;
 3. otherwise an error telling them to add a key.
 
-A colleague can paste their own DeepSeek or Anthropic key under **LLM settings**.
+A colleague can paste their own DeepSeek or Anthropic key in the **Settings** tab.
 It is encrypted with Fernet before storage and only its last four characters are
 ever shown. This requires `KEY_ENC_SECRET`; without it the app still runs on the
 owner key and the UI says plainly that personal keys cannot be stored. The

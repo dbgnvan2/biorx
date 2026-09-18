@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-17 — web Settings tab is per user
+
+### Changed
+- **The web app no longer edits the server's config files.** The Settings tab
+  added in the parity commit let any signed-in user read and overwrite
+  `sources_config.yaml` and `llm_config.yaml`, changing the app for everyone.
+  `web/routes_settings.py` is removed; those files are owner-only.
+- **Settings tab now holds each user's own settings:** the LLM panel (moved from
+  the header) and new **default sources**, saved in the browser, which set the
+  sources ticked in the Search tab and in new filters.
+- The contact email moves out of the tracked `sources_config.yaml`; set
+  `BIORX_CONTACT_EMAIL` in the environment.
+
+### Fixed
+- Opening a saved filter in the web app showed blank fields, and saving it then
+  erased its keywords, dates and sources. The client read `f.filter`, a key the
+  API never returns.
+- Source checkboxes stacked above their labels, one per row.
+
 ## 2026-09-16 — polite User-Agent for all API calls (batch-H)
 
 ### Added / Fixed

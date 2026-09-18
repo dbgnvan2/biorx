@@ -56,3 +56,22 @@ not exist; that check is why they were caught rather than claimed.
 | W7.a live deployment | Needs the Railway account, a volume and real env vars | The README's deploy checklist. **The image has never been built** — no Docker daemon here. |
 | Live DeepSeek and Anthropic calls | Cost money and need keys | Flagged integration-only (standards L9). Every suite test mocks them. One manual smoke per provider after deploy. |
 | D3 "no secrets in source", whole history | The repo test covers the working tree | `git grep` per security.md S1 before the first public push. |
+
+## Per-user settings (docs/implementation_plan_2026-09-17_per_user_settings.md)
+
+| ID | Criterion | Proof | Status |
+|---|---|---|---|
+| PS1 | `/api/settings/*` gone | `tests/web/test_settings_routes.py::test_ps1_settings_routes_removed` | done |
+| PS2 | config files untouched by a PUT attempt | `tests/web/test_settings_routes.py::test_ps2_put_does_not_touch_config_files` | done |
+| PS3 | no route exposes config text | `tests/web/test_settings_routes.py::test_ps3_no_route_returns_config_text` | done |
+| PS4 | client has no config editor or calls | `tests/web/test_frontend_wiring.py::test_ps4_client_never_touches_server_config` | done |
+| PS5 | LLM panel + default sources inside Settings tab | `tests/web/test_frontend_wiring.py::test_ps5_settings_tab_contains_llm_and_sources` | done |
+| PS6 | default-sources logic; both pickers use it | `tests/web/test_frontend_wiring.py::test_ps6_default_sources_logic` (node, 9 cases), `test_ps6_both_pickers_use_the_defaults` | done |
+| PS7 | storage access guarded | `tests/web/test_frontend_wiring.py::test_ps7_storage_access_is_guarded` | done |
+| PS8 | route count 30 → 28 | `tests/web/test_auth.py` `PROTECTED_ROUTE_COUNT = 28` | done |
+| PS9 | spec updated | `docs/web_parity_spec_2026-09-17.md` FP3 sections | done |
+| PS10 | saved filters open with their fields | `tests/web/test_frontend_wiring.py::test_ps10_client_reads_filters_in_the_shape_the_api_returns` | done |
+
+Browser check (2026-09-17, local server, temp DB): Settings tab layout; saving defaults
+updates the Search picker and survives reload; a new filter starts from the defaults;
+an existing filter opens with its own sources, keywords and days.

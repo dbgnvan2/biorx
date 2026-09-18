@@ -133,6 +133,7 @@ const LS_KEY      = "biorx_local_key";
 const LS_PROVIDER = "biorx_local_provider";
 const LS_MODEL    = "biorx_local_model";
 const LS_TAB      = "biorx_active_tab";
+const LS_DEFAULT_SOURCES = "biorx_default_sources";
 
 function localSettings() {
   try {
@@ -267,7 +268,7 @@ function switchTab(name) {
   $("panel-settings").classList.toggle("hidden", "settings" !== name);
   if (name === "filters") loadFilterTab();
   if (name === "references") loadRefTab();
-  if (name === "settings") loadSettingsFile();
+  if (name === "settings") renderDefaultSourcesPicker();
 }
 
 function restoreActiveTab() {
@@ -286,21 +287,63 @@ async function loadSources() {
     if (health.startup_warnings && health.startup_warnings.length) {
       notice("⚠ " + health.startup_warnings.join(" | "), "warn");
     }
-    renderSourcePicker($("search-sources"), state.sources);
-    renderSourcePicker($("filter-sources-picker"), state.sources);
+    renderSourcePicker($("search-sources"), state.sources, defaultSourceIds());
+    renderSourcePicker($("filter-sources-picker"), state.sources, defaultSourceIds());
+    renderDefaultSourcesPicker();
   } catch (e) {}
 }
 
-function renderSourcePicker(container, sources) {
+/* The user's default sources: which are pre-ticked in the Search tab and in
+   new filters. Per user, in this browser only; never sent to the server.
+   Pure, so it can be exercised in node (tests/web/test_frontend_wiring.py). */
+function applyDefaultSources(enabledIds, savedRaw) {
+  let saved;
+  try { saved = JSON.parse(savedRaw); } catch (e) { return enabledIds.slice(); }
+  if (!Array.isArray(saved)) return enabledIds.slice();
+  // A saved source the server no longer enables is dropped, not shown.
+  const kept = enabledIds.filter(id => saved.includes(id));
+  return kept.length ? kept : enabledIds.slice();
+}
+
+function defaultSourceIds() {
+  let raw = null;
+  try { raw = localStorage.getItem(LS_DEFAULT_SOURCES); } catch (e) {}
+  return applyDefaultSources(state.sources.map(s => s.id), raw);
+}
+
+function renderDefaultSourcesPicker() {
+  renderSourcePicker($("default-sources"), state.sources, defaultSourceIds());
+}
+
+function saveDefaultSources() {
+  const { selected } = getSourceSelection($("default-sources"));
+  const status = $("default-sources-status");
+  if (!selected.length) {
+    status.textContent = "Tick at least one source.";
+    return;
+  }
+  try {
+    localStorage.setItem(LS_DEFAULT_SOURCES, JSON.stringify(selected));
+  } catch (e) {
+    status.textContent = "This browser is blocking storage; defaults were not saved.";
+    return;
+  }
+  renderSourcePicker($("search-sources"), state.sources, defaultSourceIds());
+  if (state.activeFilterId === null) {
+    renderSourcePicker($("filter-sources-picker"), state.sources, defaultSourceIds());
+  }
+  status.textContent = "Saved.";
+}
+
+function renderSourcePicker(container, sources, checkedIds) {
   if (!container) return;
   container.textContent = "";
   for (const s of sources) {
     const label = document.createElement("label");
-    label.className = "small";
-    label.style.marginRight = "8px";
+    label.className = "small source-pick";
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.checked = true;
+    cb.checked = !checkedIds || checkedIds.includes(s.id);
     cb.dataset.sourceId = s.id;
     const txt = document.createTextNode(" " + s.label);
     label.appendChild(cb);
@@ -762,7 +805,7 @@ async function loadFilterTab() {
   populateSelect("filter-published", PUBLISHED);
   populateSelect("filter-license", LICENSES);
   populateSelect("filter-species", SPECIES);
-  renderSourcePicker($("filter-sources-picker"), state.sources);
+  renderSourcePicker($("filter-sources-picker"), state.sources, defaultSourceIds());
   await reloadFilterList();
 }
 
@@ -789,6 +832,13 @@ async function reloadFilterList() {
   }
 }
 
+/* GET /api/filters returns each filter flat: its fields sit beside id, name
+   and enabled, not under a `filter` key. Pure, so the contract with the real
+   route output is exercised in node (tests/web/test_frontend_wiring.py). */
+function filterFields(f) {
+  return f || {};
+}
+
 function selectFilter(filterId) {
   state.activeFilterId = filterId;
   const f = state.filters.find(x => x.id === filterId);
@@ -797,7 +847,7 @@ function selectFilter(filterId) {
   $("filter-name").value = f.name || "";
   $("filter-enabled").checked = f.enabled !== false;
 
-  const fd = f.filter || {};
+  const fd = filterFields(f);
   const cat = fd.category || "(any)";
   $("filter-category").value = cat;
 
@@ -818,6 +868,12 @@ function selectFilter(filterId) {
   $("filter-species").value    = fd.species    || "(any)";
 
   renderTextGroups(fd.text_groups || [{ keywords: "" }]);
+
+  // Show the filter's own saved sources, so saving it does not silently
+  // replace them with whatever the picker last held.
+  const sel = fd.source_selection;
+  const own = sel && !sel.all && Array.isArray(sel.selected) ? sel.selected : null;
+  renderSourcePicker($("filter-sources-picker"), state.sources, own);
 
   Array.from($("filter-list").children).forEach(li => {
     li.classList.toggle("active", Number(li.dataset.filterId) === filterId);
@@ -909,6 +965,7 @@ async function newFilter() {
   $("filter-authors").value = "";
   $("filter-institution").value = "";
   renderTextGroups([{ keywords: "" }]);
+  renderSourcePicker($("filter-sources-picker"), state.sources, defaultSourceIds());
   $("filter-name").focus();
 }
 
@@ -1275,32 +1332,6 @@ async function exportRefCsv() {
   URL.revokeObjectURL(url);
 }
 
-/* ── Settings tab ────────────────────────────────────────────────────────── */
-
-async function loadSettingsFile() {
-  const filename = $("settings-file-select").value;
-  $("settings-status").textContent = "Loading…";
-  try {
-    const data = await api("GET", `/api/settings/${filename}`);
-    $("settings-editor").value = data.content || "";
-    $("settings-status").textContent = `Loaded ${filename}`;
-  } catch (e) {
-    $("settings-status").textContent = e.message;
-  }
-}
-
-async function saveSettingsFile() {
-  const filename = $("settings-file-select").value;
-  const content = $("settings-editor").value;
-  $("settings-status").textContent = "Saving…";
-  try {
-    await api("PUT", `/api/settings/${filename}`, { content });
-    $("settings-status").textContent = `Saved ${filename}`;
-  } catch (e) {
-    $("settings-status").textContent = e.message;
-  }
-}
-
 /* ── Wiring ──────────────────────────────────────────────────────────────── */
 
 function wire() {
@@ -1308,8 +1339,6 @@ function wire() {
   $("sign-in").addEventListener("click", signIn);
   $("access-code").addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(); });
   $("sign-out").addEventListener("click", signOut);
-  $("toggle-settings").addEventListener("click",
-    () => $("settings").classList.toggle("hidden"));
 
   // LLM settings panel
   $("save-key").addEventListener("click", saveKey);
@@ -1374,9 +1403,7 @@ function wire() {
   $("btn-ref-export-csv").addEventListener("click", exportRefCsv);
 
   // Settings tab
-  $("btn-settings-reload").addEventListener("click", loadSettingsFile);
-  $("btn-settings-save").addEventListener("click", saveSettingsFile);
-  $("settings-file-select").addEventListener("change", loadSettingsFile);
+  $("btn-save-default-sources").addEventListener("click", saveDefaultSources);
 }
 
 async function boot() {

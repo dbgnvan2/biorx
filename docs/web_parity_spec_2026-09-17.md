@@ -18,7 +18,7 @@ Desktop tabs: **Search & Browse**, **Filters**, **Saved References**, **Settings
 ### In scope (this spec)
 - FP1 — Filters tab (full CRUD + test run + AI term discovery)
 - FP2 — References tab (per-user lists, PDF download, CSV/Excel export)
-- FP3 — Settings tab (sources_config.yaml / llm_config.yaml editor)
+- FP3 — Settings tab (per-user settings; see PS1–PS9 plan — server config editing removed)
 - FP4 — Search enhancements (source picker, category, date range, checkboxes, save as reference list, paper detail modal)
 
 ### Out of scope (explicit)
@@ -62,16 +62,13 @@ Both tables added in `Database._run_migrations()`, executed on every startup.
 
 ## Backend additions
 
-### FP3-B — Settings routes (web/routes_settings.py)
+### FP3-B — Settings routes — REMOVED
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET    | `/api/settings/{filename}` | Return raw YAML text. `filename` must be in allowlist. |
-| PUT    | `/api/settings/{filename}` | Validate YAML (yaml.safe_load), write file, return `{"ok": true}`. |
-
-**Security:** allowlist = `{"sources_config.yaml", "llm_config.yaml"}`. Any other name → 403. Path traversal check: reject if `filename` contains `/` or `..`.
-
-**Test:** attempt `../../../etc/passwd` → 403; valid file round-trips correctly; invalid YAML → 422.
+Superseded by `docs/implementation_plan_2026-09-17_per_user_settings.md` (PS1–PS9).
+The first build let any signed-in user read and overwrite the server's
+`sources_config.yaml` and `llm_config.yaml`, which changed the app for every user.
+The web app has no route to those files; they are owner-only, edited on the server
+or via environment variables.
 
 ---
 
@@ -241,18 +238,19 @@ Two-column layout:
 
 ---
 
-### FP3-UI — Settings tab
+### FP3-UI — Settings tab (per user)
 
-- Dropdown: "Sources config" | "LLM config"
-- Monospace textarea (full height)
-- Reload from disk | Save buttons
-- Status line: "Saved — restart server to apply" (web note: changes are live on next request, not next restart, but keep the message consistent)
+Per-user settings only (PS5):
+- LLM settings panel (provider, API key, model), moved from the header.
+- Default sources: which sources start ticked in the Search tab and in new
+  filters. Stored in the browser's localStorage; limited to sources the server
+  enables.
 
 ---
 
 ## Security considerations
 
-- Settings PUT: YAML injection is not executable in this context, but validate with `yaml.safe_load` and return 422 on parse error before writing.
+- Settings: the web app never reads or writes server config files (PS1–PS3).
 - PDF proxy: only fetch URLs that are in the `papers.pdf_url` column (resolved server-side from the paper row by `paper_id`), never accept a URL directly from the client.
 - CSV export: values containing commas are quoted; values containing `=` or `+` at the start are prefixed with `'` to prevent formula injection in Excel (P-equivalent: untrusted data in CSV).
 - Discover terms: cap LLM input; do not pass user-provided `description` unsanitized as a system prompt — wrap it in a user turn with a fixed system prompt.
@@ -265,7 +263,7 @@ Two-column layout:
 | Area | Required tests |
 |------|----------------|
 | D1, D2 | Tables created by migration; CASCADE delete on list delete |
-| FP3-B | Allowlist enforced (403 on unknown file, path traversal); valid round-trip; invalid YAML → 422 |
+| FP3-B | Replaced by PS1–PS3: no settings route; config files byte-identical after a PUT attempt |
 | FP2-B | CRUD round-trip; ownership check (other user's list → 404); CSV headers correct; PDF proxy 502 on bad URL |
 | FP1-B | Filter test returns a job_id; job completes with results |
 | FP4-B | save-as-list creates a reference list with correct items |
@@ -281,12 +279,12 @@ Two-column layout:
 | FP1-B | "Discover Terms with AI" generates keyword suggestions from a free-text description |
 | FP2-A | User can create named reference lists; add and remove papers |
 | FP2-B | PDF download and CSV export work from the References tab |
-| FP3-A | User can read and save `sources_config.yaml` and `llm_config.yaml` from the Settings tab |
-| FP3-B | Saving an invalid YAML is rejected with a clear error before writing |
+| FP3-A | Superseded: Settings tab holds per-user settings only (PS5, PS6) |
+| FP3-B | Superseded: no server config editing from the web (PS1–PS3) |
 | FP4-A | Search tab has source picker, category, date-range toggle, paper checkboxes |
 | FP4-B | Selected papers can be saved as a named reference list |
 | FP4-C | Clicking a paper title opens a detail modal with abstract and summary (if available) |
-| SEC-1 | Settings API rejects unknown filenames and path traversal with 403 |
+| SEC-1 | Superseded: settings API removed; `/api/settings/*` → 404 (PS1) |
 | SEC-2 | PDF proxy only fetches URLs from the database, never from client-supplied URLs |
 | TEST-1 | All new API routes covered by test file; frontend wiring test updated |
 

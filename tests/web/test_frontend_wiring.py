@@ -142,7 +142,6 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/references/{param}/items/{param}",
         "/api/references/{param}/export.csv",
         "/api/references/{param}/pdf/{param}",
-        "/api/settings/{param}",
         "/api/discover-terms",
     }
 
@@ -262,3 +261,151 @@ def test_every_external_link_sets_noopener_noreferrer():
     assert protected == new_tabs, (
         f"{new_tabs} links open a new tab but only {protected} set rel"
     )
+
+
+# ── Per-user settings (docs/implementation_plan_2026-09-17_per_user_settings.md) ──
+
+def test_ps4_client_never_touches_server_config():
+    """The web client has no path to the server's config files."""
+    assert not any(p.startswith("/api/settings") for p in _api_paths_called_by_js())
+    code = _js_without_comments()
+    assert "/api/settings" not in code
+    assert "yaml" not in code.lower()
+    ids = _element_ids_in_html()
+    for gone in ("settings-file-select", "settings-editor",
+                 "btn-settings-save", "btn-settings-reload", "toggle-settings"):
+        assert gone not in ids, f"server-config editor element still present: {gone}"
+
+
+def test_ps5_settings_tab_contains_llm_and_sources():
+    """The LLM panel and the default-sources picker live inside the Settings tab."""
+    from html.parser import HTMLParser
+
+    VOID = {"input", "br", "img", "meta", "link", "hr", "source", "wbr"}
+
+    class Finder(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack, self.inside = [], {}
+
+        def handle_starttag(self, tag, attrs):
+            el_id = dict(attrs).get("id")
+            if el_id:
+                self.inside[el_id] = "panel-settings" in self.stack
+            if tag not in VOID:
+                self.stack.append(el_id)
+
+        def handle_endtag(self, tag):
+            if tag not in VOID and self.stack:
+                self.stack.pop()
+
+    f = Finder()
+    f.feed(INDEX.read_text())
+    assert "panel-settings" in f.inside, "no Settings panel in the page"
+    for el in ("key-provider", "api-key", "preferred-model", "save-key",
+               "default-sources", "btn-save-default-sources"):
+        assert f.inside.get(el) is True, f"#{el} is not inside #panel-settings"
+    # Guard-the-guard: an element outside the panel must read as outside.
+    assert f.inside.get("search-sources") is False
+
+
+@pytest.mark.parametrize("enabled,saved,expected", [
+    (["a", "b", "c"], '["a","c"]', ["a", "c"]),          # normal
+    (["a", "b", "c"], '["c","a"]', ["a", "c"]),          # server order kept
+    (["a", "b"],      '["a","gone"]', ["a"]),            # stale id dropped
+    (["a", "b"],      '["gone"]', ["a", "b"]),           # all stale -> all
+    (["a", "b"],      None, ["a", "b"]),                 # nothing saved
+    (["a", "b"],      "", ["a", "b"]),                   # empty string
+    (["a", "b"],      "{not json", ["a", "b"]),          # corrupt
+    (["a", "b"],      '{"a": true}', ["a", "b"]),        # wrong shape
+    (["a", "b"],      "[]", ["a", "b"]),                 # empty list
+])
+def test_ps6_default_sources_logic(enabled, saved, expected):
+    """Runs the client's own applyDefaultSources in node. Skipped without node."""
+    import json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed; applyDefaultSources not exercised here")
+
+    source = APP_JS.read_text()
+    match = re.search(r"function applyDefaultSources\(enabledIds, savedRaw\) \{.*?\n\}",
+                      source, re.DOTALL)
+    assert match, "applyDefaultSources is no longer defined in app.js"
+
+    script = (match.group(0)
+              + f"\nconsole.log(JSON.stringify(applyDefaultSources("
+                f"{json.dumps(enabled)}, {json.dumps(saved)})));")
+    result = subprocess.run([node, "-e", script], capture_output=True, text=True,
+                            timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.strip()) == expected
+
+
+def test_ps6_both_pickers_use_the_defaults():
+    """The search picker and the new-filter picker are rendered from the saved
+    defaults; the default-sources picker itself is too."""
+    code = _js_without_comments()
+    for picker in ("search-sources", "filter-sources-picker", "default-sources"):
+        assert re.search(
+            rf'renderSourcePicker\(\$\("{picker}"\), state\.sources, defaultSourceIds\(\)\)',
+            code), f"#{picker} is not rendered from the user's default sources"
+
+
+def test_ps7_storage_access_is_guarded():
+    """Every localStorage call for default sources sits inside a try block, so
+    a browser that blocks storage still renders the pickers."""
+    code = _js_without_comments()
+    calls = [m.start() for m in re.finditer(r"localStorage\.\w+\(LS_DEFAULT_SOURCES", code)]
+    assert len(calls) == 2, f"expected one read and one write, found {len(calls)}"
+    for pos in calls:
+        line_start = code.rfind("\n", 0, pos)
+        preceding = code[max(0, line_start - 80):pos]
+        assert "try" in preceding, "a default-sources storage call is not in a try block"
+
+
+def test_ps10_client_reads_filters_in_the_shape_the_api_returns(signed_in):
+    """Producer/consumer contract (learnings P19): a filter saved through the
+    API, read back through GET /api/filters, and passed through the client's
+    own filterFields() must yield the saved fields. The parity commit read
+    `f.filter`, which the API never returns, so every saved filter opened
+    blank and a Save wiped it."""
+    import json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed; filterFields not exercised here")
+
+    saved = {"text_groups": [{"keywords": "maternal, stress"}], "days_back": 30,
+             "category": "neuroscience",
+             "source_selection": {"all": False, "selected": ["pubmed"]}}
+    r = signed_in.post("/api/filters", json={"name": "contract", "enabled": True,
+                                             "filter": saved})
+    assert r.status_code == 201
+    listed = [f for f in signed_in.get("/api/filters").json()["filters"]
+              if f["name"] == "contract"]
+    assert len(listed) == 1
+
+    match = re.search(r"function filterFields\(f\) \{.*?\n\}",
+                      APP_JS.read_text(), re.DOTALL)
+    assert match, "filterFields is no longer defined in app.js"
+    script = (match.group(0)
+              + f"\nconsole.log(JSON.stringify(filterFields({json.dumps(listed[0])})));")
+    result = subprocess.run([node, "-e", script], capture_output=True, text=True,
+                            timeout=20)
+    assert result.returncode == 0, result.stderr
+    fields = json.loads(result.stdout.strip())
+    for key, value in saved.items():
+        assert fields.get(key) == value, f"client lost {key!r} reading the API's filter"
+
+
+def test_ps10_select_filter_reads_through_filter_fields():
+    code = _js_without_comments()
+    body = re.search(r"function selectFilter\(filterId\) \{.*?\n\}", code, re.DOTALL)
+    assert body, "selectFilter is no longer defined"
+    assert "filterFields(f)" in body.group(0)
+    assert "f.filter" not in body.group(0)

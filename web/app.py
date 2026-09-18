@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (routes_discover, routes_filters, routes_references,
-               routes_searches, routes_session, routes_settings, routes_summaries)
+               routes_searches, routes_session, routes_summaries)
 from .deps import AppContext, build_context
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,6 @@ def create_app(ctx: AppContext = None) -> FastAPI:
     application.include_router(routes_searches.router)
     application.include_router(routes_summaries.router)
     application.include_router(routes_references.router)
-    application.include_router(routes_settings.router)
     application.include_router(routes_discover.router)
 
     @application.get("/healthz")

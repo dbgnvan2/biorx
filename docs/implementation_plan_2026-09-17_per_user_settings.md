@@ -1,7 +1,7 @@
 # Plan — Web Settings tab: per-user settings instead of server config editing
 **Date:** 2026-09-17
 **Replaces:** FP3 in `docs/web_parity_spec_2026-09-17.md` (FP3-A, FP3-B, SEC-1)
-**Status:** awaiting approval — no code written
+**Status:** approved 2026-09-17; implemented
 
 ## Problem
 
@@ -37,8 +37,9 @@ provider base URLs, token budget, daily cap.
 | PS4 | The client no longer calls `/api/settings` and the YAML editor elements are gone. | `test_frontend_wiring.py`: expected endpoint set 23 → 21; element-id test drops `settings-file-select`, `settings-editor`, `btn-settings-save`, `btn-settings-reload` |
 | PS5 | The Settings tab contains the LLM panel (provider, key, model) and the default-sources picker. | `test_frontend_wiring.py::test_ps5_settings_tab_contains_llm_and_sources` — parses `index.html`, asserts `#key-provider`, `#api-key`, `#preferred-model`, `#default-sources` are descendants of `#panel-settings` |
 | PS6 | Saved default sources are applied to both pickers on load; a saved source the server no longer enables is dropped, not shown. Empty/missing/corrupt storage falls back to "all enabled checked". | `test_frontend_wiring.py::test_ps6_default_sources_logic` — runs a pure function `applyDefaultSources(enabled, saved)` from `app.js` in node (same pattern as the existing `safeUrl` test) with: normal case, stale id, empty, corrupt JSON. Skipped when node is absent. |
-| PS7 | localStorage failures (private window, blocked storage) don't break the page. | Covered by PS6 corrupt/empty cases for the parser; the `try/catch` around storage access is a human-review item (see below) |
+| PS7 | localStorage failures (private window, blocked storage) don't break the page. | PS6 corrupt/empty cases for the parser; `test_frontend_wiring.py::test_ps7_storage_access_is_guarded` asserts every default-sources storage call is inside a `try` |
 | PS8 | Route count guard updated. | `tests/web/test_auth.py`: `PROTECTED_ROUTE_COUNT` 30 → 28 |
+| PS10 | (found while building) Opening a saved filter in the web UI shows its saved fields, including its own sources. The parity commit read `f.filter`, which `GET /api/filters` never returns, so every filter opened blank and Save wiped it. | `test_frontend_wiring.py::test_ps10_client_reads_filters_in_the_shape_the_api_returns` (real route output through the client's `filterFields` in node), `test_ps10_select_filter_reads_through_filter_fields` |
 | PS9 | Spec updated so FP3 describes per-user settings. | `docs/web_parity_spec_2026-09-17.md` FP3 section rewritten; `docs/spec_coverage_webapp.md` rows for FP3-A/FP3-B/SEC-1 replaced by PS1–PS9 |
 
 ## Implementation order
@@ -54,10 +55,12 @@ provider base URLs, token budget, daily cap.
 ## Human review (not code-testable)
 
 - Visual check that the Settings tab layout reads correctly and the pickers show the saved defaults after reload (step 7).
-- PS7 storage-throws behaviour: verified by reading the `try/catch` in the diff.
+- PS7: the test checks the `try` is there, not the behaviour in a storage-blocking browser. Not run in one.
 
 ## Adjacent issues found, not fixed
 
 - `/healthz` is unauthenticated and returns `db_path` and `startup_warnings` — minor information disclosure on a shared deployment. Separate change.
-- `sources_config.yaml` is tracked in git and the working tree now holds a personal email in `contact_email`. Committing it would publish the email to GitHub. Suggest reverting that line and setting `BIORX_CONTACT_EMAIL` in the environment instead (already supported and takes precedence).
+- ~~`contact_email` in tracked `sources_config.yaml`~~ — done: line reverted, `BIORX_CONTACT_EMAIL` set in `~/.zshrc`.
+- Static assets have no cache-busting: after a deploy, browsers keep the old `app.js`/`styles.css` until a hard reload (seen during the browser check).
+- The "Use date range" checkbox in the Search tab has the same stacked layout the source pickers had.
 - The spec gap that let this through: FP3 never said *whose* settings. Worth a line in `LEARNINGS.md` at check-off.
