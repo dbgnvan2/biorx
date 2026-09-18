@@ -124,11 +124,8 @@ def _extract_text(ctx: AppContext, paper: Dict[str, Any],
         return ""
     # safe_fetch is https-only. Many open-access hosts serve both; try the
     # https form of an http link before giving up on it.
-    candidates = [url]
-    if url.startswith("http://"):
-        candidates = ["https://" + url[len("http://"):]]
     data = None
-    for candidate in candidates:
+    for candidate in [safe_fetch.https_candidate(url)]:
         try:
             data = safe_fetch.fetch_pdf(candidate)
         except (safe_fetch.FetchRefused, safe_fetch.FetchFailed,

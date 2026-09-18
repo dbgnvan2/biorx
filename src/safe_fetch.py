@@ -261,6 +261,14 @@ def _fetch_public(url: str, max_bytes: int, timeout: float, headers: dict,
     raise FetchFailed(f"More than {MAX_REDIRECTS} redirects.")
 
 
+def https_candidate(url: str) -> str:
+    """The https form of an http URL (fetches here are https-only; many
+    open-access hosts serve both). Other URLs are returned unchanged."""
+    if url.lower().startswith("http://"):
+        return "https://" + url[len("http://"):]
+    return url
+
+
 def fetch_pdf(url: str, max_bytes: int = DEFAULT_PDF_MAX_BYTES, timeout: float = 30,
               user_agent: str = "BioRx/1.0",
               getaddrinfo: Callable = socket.getaddrinfo,

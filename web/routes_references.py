@@ -172,7 +172,8 @@ def proxy_pdf(list_id: int, paper_id: int,
                             detail="No PDF URL for this paper.")
 
     try:
-        data = safe_fetch.fetch_pdf(url, PDF_MAX_BYTES, timeout=PDF_TIMEOUT_SECONDS)
+        data = safe_fetch.fetch_pdf(safe_fetch.https_candidate(url), PDF_MAX_BYTES,
+                                    timeout=PDF_TIMEOUT_SECONDS)
     except safe_fetch.FetchRefused as exc:
         logger.warning("PDF proxy refused %s: %s", url, exc)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc

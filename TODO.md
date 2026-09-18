@@ -5,6 +5,18 @@
 
 ## From the web-parity /csdp review (2026-09-17) — adjacent issues found, not fixed
 
+- **Any user can overwrite the shared summary for a DOI (security, pre-existing).**
+  `POST /api/summaries` stores the client's paper dict and replaces the one
+  summary row per paper (`_paper_row_id` + `insert_summary`). A user can send a
+  real DOI with an invented abstract and change the summary every other user
+  sees. Fix before wider sharing: summarize only from server-held paper data
+  (look the paper up by DOI/canonical_id and ignore client text fields), or
+  store summaries per user. Found by the cold sweep; outside the reviewed range.
+- **Filter Test runs the saved filter, not the form.** Unsaved edits are not
+  tested; the desktop tests the form. Spec asks for the stored filter — a
+  design choice to revisit.
+- **Preferred model is not tied to a provider**: switching provider sends the
+  old provider's model name (loud provider error, not silent).
 - **PDF download delivers few PDFs for Europe PMC papers.** `pdf_url()` returns
   `best_oa_url`, which for PMC records is the article web page; the proxy now
   says "No PDF available (web page)" (422) where it used to return the HTML as a

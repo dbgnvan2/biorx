@@ -191,12 +191,29 @@ def _pdf_route(signed_in, ctx, name):
     return f"/api/references/{list_id}/pdf/{pid}"
 
 
-def test_pdf_proxy_refuses_http_url(signed_in, monkeypatch, ctx):
-    """http:// URLs are rejected — https only. Goes through the real fetcher,
-    which refuses before any network call."""
+def test_ref6_http_pdf_link_is_tried_as_https(signed_in, monkeypatch, ctx):
+    """Cold sweep: the summary path upgraded http links and the proxy did not.
+    Both now use safe_fetch.https_candidate; the fetcher itself stays
+    https-only (tests/web/test_safe_fetch.py::test_redirect_to_http_is_refused)."""
     import web.routes_references as rr
-    route = _pdf_route(signed_in, ctx, "PDFTest")
-    monkeypatch.setattr(rr, "_pdf_url_from_paper", lambda p: "http://evil.example.com/x.pdf")
+    route = _pdf_route(signed_in, ctx, "PDFHttp")
+    monkeypatch.setattr(rr, "_pdf_url_from_paper", lambda p: "http://pub.example/x.pdf")
+    asked = []
+
+    def fake_fetch(url, *a, **k):
+        asked.append(url)
+        return b"%PDF-1.7 ok"
+    monkeypatch.setattr(rr.safe_fetch, "fetch_pdf", fake_fetch)
+    assert signed_in.get(route).status_code == 200
+    assert asked == ["https://pub.example/x.pdf"]
+
+
+def test_ref6_proxy_refuses_non_http_schemes(signed_in, monkeypatch, ctx):
+    """Only http(s) is upgraded; anything else reaches the fetcher unchanged
+    and is refused before any network use."""
+    import web.routes_references as rr
+    route = _pdf_route(signed_in, ctx, "PDFFile")
+    monkeypatch.setattr(rr, "_pdf_url_from_paper", lambda p: "file:///etc/passwd")
     assert signed_in.get(route).status_code == 403
 
 

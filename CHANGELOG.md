@@ -40,6 +40,10 @@ Found by learning-qa, /code-review and /security-review over the unpushed range.
 - Bulk PDF download and remove report what failed.
 - `/api/me` reports the model that will actually run.
 - A Discover run that finds no papers gives its daily-cap slot back.
+- Saving or removing an API key reports a server failure instead of claiming
+  success (a key could stay stored and billed after "Key removed.").
+- Filter Test says when a source could not be reached, as the Search tab does.
+- The PDF proxy tries an `http://` link as `https://`, like the summary path.
 
 ## 2026-09-17 — web Settings tab is per user
 

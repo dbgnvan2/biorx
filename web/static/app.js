@@ -152,7 +152,8 @@ function saveLocalSettings(provider, key, model) {
     if (provider) localStorage.setItem(LS_PROVIDER, provider);
     if (model)    localStorage.setItem(LS_MODEL, model);
     else          localStorage.removeItem(LS_MODEL);
-  } catch (e) {}
+    return true;
+  } catch (e) { return false; }
 }
 
 function clearLocalSettings() {
@@ -160,7 +161,8 @@ function clearLocalSettings() {
     localStorage.removeItem(LS_KEY);
     localStorage.removeItem(LS_PROVIDER);
     localStorage.removeItem(LS_MODEL);
-  } catch (e) {}
+    return true;
+  } catch (e) { return false; }
 }
 
 /* ── Profile / LLM settings ──────────────────────────────────────────────── */
@@ -211,6 +213,9 @@ function renderMe() {
   }
 }
 
+/* Report exactly what was and was not saved. A failed server call must not
+   be followed by "Settings saved." — a key the user thinks is gone could
+   still be stored and billed (P2). */
 async function saveKey() {
   notice("");
   const keyVal      = $("api-key").value.trim();
@@ -218,12 +223,14 @@ async function saveKey() {
   const providerVal = $("key-provider").value;
   const existingLocal = localSettings();
   const keyToStore = keyVal || existingLocal.key;
+  let localOk = true;
   if (keyToStore) {
-    saveLocalSettings(providerVal, keyToStore, modelVal);
-    if (keyVal) $("api-key").value = "";
+    localOk = saveLocalSettings(providerVal, keyToStore, modelVal);
+    if (keyVal && localOk) $("api-key").value = "";
   } else if (modelVal !== existingLocal.model) {
-    saveLocalSettings(providerVal, "", modelVal);
+    localOk = saveLocalSettings(providerVal, "", modelVal);
   }
+  let serverError = "";
   try {
     if (keyVal && state.me.byo_enabled) {
       state.me = await api("PUT", "/api/me/llm-key", { provider: providerVal, api_key: keyVal, model: modelVal });
@@ -232,19 +239,29 @@ async function saveKey() {
     } else {
       state.me = await api("GET", "/api/me");
     }
-  } catch (e) {}
+  } catch (e) { serverError = e.message; }
   renderMe();
-  notice("Settings saved.", "ok");
+  const problems = [];
+  if (!localOk) problems.push("this browser is blocking storage, so nothing was saved here");
+  if (serverError) problems.push(`the server copy was not updated: ${serverError}`);
+  if (problems.length) notice(`Settings not fully saved — ${problems.join("; ")}.`);
+  else notice("Settings saved.", "ok");
 }
 
 async function removeKey() {
   notice("");
-  clearLocalSettings();
-  try { state.me = await api("DELETE", "/api/me/llm-key"); } catch (e) {}
+  const localOk = clearLocalSettings();
+  let serverError = "";
+  try { state.me = await api("DELETE", "/api/me/llm-key"); }
+  catch (e) { serverError = e.message; }
   try { state.me = await api("GET", "/api/me"); } catch (e) {}
   $("api-key").placeholder = "Stored encrypted; only the last 4 are ever shown";
   renderMe();
-  notice("Key removed.", "ok");
+  const problems = [];
+  if (!localOk) problems.push("the key saved in this browser could not be cleared");
+  if (serverError) problems.push(`the key stored on the server was not removed: ${serverError}`);
+  if (problems.length) notice(`Key not fully removed — ${problems.join("; ")}.`);
+  else notice("Key removed.", "ok");
 }
 
 async function refreshMe() {
@@ -1081,12 +1098,22 @@ async function pollFilterTest() {
   if (["done", "error", "cancelled"].includes(job.status)) {
     clearInterval(state.filterTestPolling);
     state.filterTestPolling = null;
+    // Same rule as the main search: an unreachable source makes "0 matched"
+    // mean "incomplete", not "this filter finds nothing".
+    const failed = (job.sources_failed || []).length
+      ? ` Could not reach: ${job.sources_failed.join(", ")}. Results are incomplete.` : "";
     if (job.status === "done") {
-      const page = await api("GET", `/api/searches/${state.filterTestJobId}/results?limit=50`);
+      let page;
+      try {
+        page = await api("GET", `/api/searches/${state.filterTestJobId}/results?limit=50`);
+      } catch (e) {
+        $("filter-test-status").textContent = `Could not load the results: ${e.message}`;
+        return;
+      }
       renderFilterTestResults(page.results || []);
-      $("filter-test-status").textContent = `${page.total} papers matched`;
+      $("filter-test-status").textContent = `${page.total} papers matched.${failed}`;
     } else {
-      $("filter-test-status").textContent = job.error || job.status;
+      $("filter-test-status").textContent = (job.error || job.status) + failed;
     }
   }
 }

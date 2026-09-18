@@ -10,9 +10,13 @@ Tests:   tests/web/test_discover_routes.py
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
+
+
+logger = logging.getLogger(__name__)
 
 
 class DiscoverParseError(ValueError):
@@ -29,6 +33,9 @@ class DiscoverSettings:
 def discover_settings(config: Dict[str, Any]) -> DiscoverSettings:
     """Read the `discover:` block of llm_config.yaml (repo rule 8/9)."""
     block = (config or {}).get("discover") or {}
+    if not block.get("stop_words"):
+        logger.warning("llm_config has no discover.stop_words — descriptions are "
+                       "searched with every word, including 'the' and 'of'")
     return DiscoverSettings(
         days_back=int(block.get("days_back", 90)),
         max_papers=int(block.get("max_papers", 30)),

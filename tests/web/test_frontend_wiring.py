@@ -500,3 +500,69 @@ def test_dt2_client_polls_the_discover_endpoint():
     body = re.search(r"async function pollDiscover\(\) \{.*?\n\}", code, re.DOTALL).group(0)
     assert "/api/discover-terms/" in body
     assert "/api/searches/" not in body
+
+
+# ── Cold sweep (2026-09-17) ───────────────────────────────────────────────────
+
+def _run_handler(name, api_stub, extra=""):
+    """Run one of the client's settings handlers in node with a stubbed api()
+    and DOM, returning the notices it produced."""
+    source = APP_JS.read_text()
+    fns = [re.search(rf"(async )?function {n}\(.*?\n\}}", source, re.DOTALL).group(0)
+           for n in ("localSettings", "saveLocalSettings", "clearLocalSettings", name)]
+    consts = "\n".join(re.findall(r"^const LS_\w+\s*=.*$", source, re.MULTILINE))
+    prelude = """
+const store = {};
+globalThis.localStorage = { getItem: k => store[k] ?? null, setItem: (k, v) => { store[k] = v; },
+                            removeItem: k => { delete store[k]; } };
+const els = {};
+const $ = id => (els[id] = els[id] || { value: "", placeholder: "", textContent: "",
+                                         classList: { add(){}, remove(){}, toggle(){} } });
+const notices = [];
+function notice(m, kind = "error") { notices.push([kind, m]); }
+function renderMe() {}
+const state = { me: { byo_enabled: true, preferred_model: "" } };
+""" + api_stub + extra
+    script = prelude + consts + "\n" + "\n".join(fns) + \
+        f"\n{name}().then(() => console.log(JSON.stringify(notices)));"
+    import json
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    result = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip())
+
+
+FAILING_API = """
+async function api(method, path) {
+  if (method !== "GET") { const e = new Error("503 Service Unavailable"); e.status = 503; throw e; }
+  return state.me;
+}"""
+
+
+def test_cs1_remove_key_does_not_claim_success_when_the_server_fails():
+    notices = _run_handler("removeKey", FAILING_API)
+    assert ["ok", "Key removed."] not in notices
+    assert any(k == "error" and "503" in m for k, m in notices), notices
+
+
+def test_cs1_save_key_does_not_claim_success_when_the_server_fails():
+    notices = _run_handler("saveKey", FAILING_API,
+                           '\n$("api-key").value = "sk-new-key-123456"; $("key-provider").value = "anthropic";')
+    assert ["ok", "Settings saved."] not in notices
+    assert any(k == "error" and "server copy was not updated" in m for k, m in notices), notices
+
+
+def test_cs1_success_is_still_reported():
+    ok_api = "async function api() { return state.me; }"
+    assert _run_handler("removeKey", ok_api)[-1] == ["ok", "Key removed."]
+
+
+def test_cs2_filter_test_reports_unreachable_sources():
+    code = _js_without_comments()
+    body = re.search(r"async function pollFilterTest\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "sources_failed" in body
+    assert "Results are incomplete" in body
