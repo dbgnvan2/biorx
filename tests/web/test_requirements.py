@@ -59,6 +59,9 @@ def test_every_dependency_is_pinned():
     ("pdfplumber", "pdfplumber"),
     ("urllib3", "urllib3"),       # src/safe_fetch.py imports it directly
     ("certifi", "certifi"),
+    # CI installs only this file and then runs `pytest`: without the pin every
+    # CI run failed with "pytest: command not found" (all runs to 2026-09-17).
+    ("pytest", "pytest"),
 ])
 def test_each_pinned_package_is_real_and_importable(name, module):
     """
