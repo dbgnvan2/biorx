@@ -187,12 +187,19 @@ desktop GUI into a headless container.
 1. Create a Railway project from this repository; it picks up `railway.json`.
 2. **Attach a volume mounted at `/data`.** Without it the database and any
    downloaded PDFs are lost on every redeploy.
-3. Set the variables from `.env.example`. At minimum:
-   `SESSION_SECRET`, `KEY_ENC_SECRET`, `LLM_PROVIDER`, and the matching
-   provider key.
-4. Deploy, then make access codes inside the container:
-   `python -m src.access_codes add --for "Alice"` (they go to
-   `/data/access_codes.yaml`, on the volume). Then walk the checklist below.
+3. Set the variables from `.env.example`. At minimum: `SESSION_SECRET` and
+   `KEY_ENC_SECRET` (each a long random string —
+   `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`; keep a copy
+   of `KEY_ENC_SECRET`, changing it makes stored API keys unreadable),
+   `LLM_PROVIDER` (e.g. `deepseek`) and the matching provider key. Leave
+   `ACCESS_CODE` and `SESSION_COOKIE_INSECURE` unset.
+4. Settings → Networking → **Generate Domain** for the public HTTPS address.
+5. Make access codes inside the running service (they go to
+   `/data/access_codes.yaml`, on the volume). With the Railway CLI
+   (`brew install railway`, `railway login`, then `railway link` in this
+   folder): `railway ssh`, then `python -m src.access_codes add --for "Alice"`.
+   A new deployment starts with an empty database: nothing moves over from a
+   local run. Then walk the checklist below.
 
 #### Deploy checklist (manual — these cannot be tested in CI)
 
@@ -214,7 +221,8 @@ date and model — that is the only thing that exercises the real API.
 
 ### What is deliberately not there
 
-No accounts, SSO, or per-user permissions. No editing `sources_config.yaml` from
+No SSO or per-user permissions beyond each person's own account (access code +
+PIN). No editing `sources_config.yaml` from
 the browser. No scheduled searches — `agents/monitor.py` still owns that. The
 web app offers what the desktop app offers, and nothing more.
 
