@@ -264,7 +264,6 @@ def recover_session(body: RecoverRequest, response: Response,
                 ctx.db, ctx.codes, uid, bool(ctx.access_code)) if ctx.codes else None))
     except accounts.AccountError as e:
         raise _account_error(e) from e
-    user_id = accounts.resolve_user_id(ctx.db, user_id) or user_id
     issue_session(response, ctx, user_id, secure=ctx.cookie_secure)
     out = _me(ctx, user_id)
     out["recovery_code"] = code

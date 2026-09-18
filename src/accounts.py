@@ -321,16 +321,19 @@ def sign_in_user(db, user_id: str, pin: str, now: Optional[datetime] = None) -> 
 
 
 def create_code_account(db, display_name: str, pin: str, code_key: str,
-                        new_user_id: Callable[[], str]) -> Optional[str]:
+                        new_user_id: Callable[[], str]) -> Optional["SignedIn"]:
     """Make the account for a code's first use, with its PIN, and bind the code
     in the same transaction. None if another request bound the code first
     (PC9) — the caller then signs in against that account instead."""
     check_new_pin(pin)
     user_id = new_user_id()
+    # The session nonce is set here, in the same transaction, and carried to
+    # the cookie, so a reset right after first use ends this session too.
+    nonce = secrets.token_urlsafe(16)
     conn = db.conn
     try:
-        conn.execute("INSERT INTO users (user_id, display_name, pin_hash) VALUES (?, ?, ?)",
-                     (user_id, display_name, hash_secret(pin)))
+        conn.execute("INSERT INTO users (user_id, display_name, pin_hash, session_nonce) "
+                     "VALUES (?, ?, ?, ?)", (user_id, display_name, hash_secret(pin), nonce))
         cur = conn.execute("INSERT OR IGNORE INTO access_code_bindings (code_key, user_id) "
                            "VALUES (?, ?)", (code_key, user_id))
         if cur.rowcount != 1:
@@ -340,7 +343,7 @@ def create_code_account(db, display_name: str, pin: str, code_key: str,
     except BaseException:
         conn.rollback()
         raise
-    return user_id
+    return SignedIn(user_id, nonce)
 
 
 def merged_family(db, user_id: str) -> list:
@@ -374,8 +377,10 @@ def end_sessions(db, user_id: str, commit: bool = True) -> None:
 
 def recover(db, name: str, code: str, new_pin: str,
             now: Optional[datetime] = None,
-            refusal: Optional[Callable[[str], Optional[str]]] = None) -> Tuple[str, str]:
-    """Set a new PIN with the recovery code. (user_id, new recovery code).
+            refusal: Optional[Callable[[str], Optional[str]]] = None) -> Tuple["SignedIn", str]:
+    """Set a new PIN with the recovery code. (SignedIn, new recovery code): the
+    account the data lives in, with a cookie naming the recovered row and the
+    nonce it was given in the same transaction.
 
     refusal(user_id) -> reason is checked after the code is verified and before
     anything changes, so a person whose access code was turned off cannot use
@@ -405,8 +410,13 @@ def recover(db, name: str, code: str, new_pin: str,
         (hash_secret(new_pin), hash_secret(_normalise_code(fresh)), row["user_id"]),
     )
     end_sessions(db, row["user_id"], commit=False)
+    nonce = db.conn.execute("SELECT session_nonce FROM users WHERE user_id = ?",
+                            (row["user_id"],)).fetchone()[0]
     db.conn.commit()
-    return row["user_id"], fresh
+    final = resolve_user_id(db, row["user_id"])
+    if final is None:
+        raise BadCredentials("This account cannot be opened. Ask the owner.")
+    return SignedIn(final, nonce, cookie_user=row["user_id"]), fresh
 
 
 def merge_users(db, source_id: str, target_id: str) -> dict:

@@ -947,3 +947,75 @@ def test_pc2_a_second_incident_is_logged_and_missing_is_noticed(ctx, app, caplog
         assert ctx.codes.down(ctx.db) and ctx.codes.missing       # noticed as missing
     f.write_text(good)
     assert not ctx.codes.down(ctx.db)
+
+
+# ── csdp fix re-review, round 6 (2026-09-18) ──────────────────────────────────
+
+def test_pc4_a_reset_right_after_first_use_ends_that_session(ctx, app):
+    """First use returned a plain id; the cookie's nonce was read later, so a
+    reset landing in between left the session alive."""
+    from fastapi import Response
+    from web.auth import issue_session
+    add_code("First")
+    entry = ctx.codes.entries()[0]
+    signed = accounts.create_code_account(ctx.db, "First", TEST_PIN, entry.key,
+                                          user_store.new_user_id)
+    access_codes.reset_pin(ctx.db, ctx.codes, "First")       # lands before the cookie
+    resp = Response()
+    issue_session(resp, ctx, signed, secure=False)
+    c = TestClient(app)
+    c.cookies.set("biorx_session", resp.headers["set-cookie"].split(";")[0].split("=", 1)[1])
+    assert c.get("/api/me").status_code == 401
+
+
+def test_pc6_recovery_cookie_names_the_recovered_row(ctx, app):
+    from web.auth import read_session_nonce
+    qa, code = accounts.create_account(ctx.db, "rq", "rq-pin-111", user_store.new_user_id)
+    qb, _ = accounts.create_account(ctx.db, "rq2", "rq2-pin-11", user_store.new_user_id)
+    accounts.merge_users(ctx.db, qa, qb)
+    c = TestClient(app)
+    r = c.post("/api/session/recover", json={"access_code": ACCESS_CODE, "name": "rq",
+                                             "recovery_code": code, "new_pin": "new-pin-999"})
+    assert r.status_code == 200 and r.json()["user_id"] == qb
+    cookie_user, nonce = read_session_nonce(ctx, c.cookies.get("biorx_session"))
+    assert cookie_user == qa and nonce
+    assert c.get("/api/me").json()["user_id"] == qb
+
+
+def test_pc2_a_folder_that_cannot_be_searched_is_down_not_a_crash(ctx, app, tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory permissions")
+    folder = tmp_path / "codes-dir"
+    folder.mkdir()
+    f = folder / "codes.yaml"
+    f.write_text("codes:\n  - code: CCCC-CCCC-CCCC\n    for: Carol\n    created: 2026-09-18\n")
+    store = access_codes.CodeStore(str(f))
+    assert [e.for_name for e in store.entries()] == ["Carol"]
+    _sign_in(app, add_code("Someone"))                       # codes in use
+    folder.chmod(0o600)
+    try:
+        clock = [1000.0]
+        store._clock = lambda: clock[0]
+        assert not store.down(ctx.db)                           # no PermissionError; grace
+        clock[0] += 61
+        assert store.down(ctx.db)                               # then fails closed
+    finally:
+        folder.chmod(0o700)
+
+
+def test_pc2_a_bad_grace_setting_is_warned_once_per_incident(ctx, monkeypatch, caplog):
+    if os.geteuid() == 0:
+        pytest.skip("root can read a mode-000 file")
+    monkeypatch.setenv("ACCESS_CODES_READ_GRACE_SECONDS", "a minute")
+    add_code("Once")
+    ctx.codes.entries()
+    _write(_codes_file().read_text() + "\n")
+    _codes_file().chmod(0)
+    try:
+        caplog.clear()
+        for _ in range(5):
+            ctx.codes.entries()
+        bad = [x for x in caplog.records if "not a whole number" in x.getMessage()]
+        assert len(bad) == 1
+    finally:
+        _codes_file().chmod(0o600)

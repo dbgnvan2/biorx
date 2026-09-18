@@ -67,6 +67,11 @@ last push. All findings fixed, each with a test:
   file states are logged once per change; merges of any depth work (a limit of
   5 signed people out); codes bound deep in a merge chain still apply; the
   cookie names the row whose PIN was checked.
+- Sixth round (no high findings left): first use of a code and PIN recovery
+  also carry the session value set in their own transaction; a codes folder
+  that cannot be searched is handled like an unreadable file (grace, then
+  closed) instead of raising on every request; a bad grace setting is warned
+  once per incident.
 
 
 ## 2026-09-18 (late) — personal access codes

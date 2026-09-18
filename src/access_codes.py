@@ -276,6 +276,7 @@ class CodeStore:
         self._good = False         # the current entries came from a good parse
         self._last_state = ("", "")  # what was last logged (see _note)
         self._unreadable_since: Optional[float] = None
+        self._grace = 60
         self._clock = time.monotonic
 
     def down(self, db) -> bool:
@@ -311,16 +312,41 @@ class CodeStore:
                 logger.warning("%s", message)
             self._last_state = (state, message)
 
+    def _unreadable(self, e: OSError) -> None:
+        """The file exists but cannot be read (or stat'ed). Called with the lock held."""
+        now = self._clock()
+        if self._unreadable_since is None:
+            self._unreadable_since = now
+            self._grace = read_grace_seconds()      # read once per incident
+        if self._good and now - self._unreadable_since < self._grace:
+            # Most likely a read that raced an editor's save: keep the last
+            # good copy, briefly. Not for ever — a file that stays unreadable
+            # would keep a just-disabled person in (review round 5).
+            self._note("unreadable-grace", f"Could not read {self.path}: {e} — "
+                       "using the last copy for now")
+            return
+        self._clear()
+        self.missing, self.broken, self._loaded = False, True, True
+        self.warnings = [f"access codes file cannot be opened, so no codes work: {e}"]
+        self._note("unreadable", self.warnings[0])
+        # _unreadable_since stays set, so the next call retries.
+
     def _refresh(self) -> None:
         """Re-read the file when it changes. States: missing, not UTF-8,
         unreadable (retried on every call), loaded (re-read on a new stamp)."""
+        stat_error: Optional[OSError] = None
         try:
             st = self.path.stat()
             stamp = (st.st_mtime_ns, st.st_size, st.st_ino)
         except FileNotFoundError:
             stamp = None
+        except OSError as e:          # e.g. the folder is not searchable
+            stamp, stat_error = ("stat-error",), e
         with self._lock:
             if self._loaded and stamp == self._stamp and self._unreadable_since is None:
+                return
+            if stat_error is not None:
+                self._unreadable(stat_error)
                 return
             if stamp is None:
                 gone = self._loaded and not self.missing
@@ -342,21 +368,8 @@ class CodeStore:
                 self._stamp, self._loaded = stamp, True
                 return
             except OSError as e:
-                now = self._clock()
-                if self._unreadable_since is None:
-                    self._unreadable_since = now
-                if self._good and now - self._unreadable_since < read_grace_seconds():
-                    # Most likely a read that raced an editor's save: keep the
-                    # last good copy, briefly. Not for ever — a file that stays
-                    # unreadable would keep a just-disabled person in (review 5).
-                    self._note("unreadable-grace", f"Could not read {self.path}: {e} — "
-                               "using the last copy for now")
-                    return
-                self._clear()
-                self.broken, self._loaded = True, True
-                self.warnings = [f"access codes file cannot be opened, so no codes work: {e}"]
-                self._note("unreadable", self.warnings[0])
-                return          # _unreadable_since stays set, so the next call retries
+                self._unreadable(e)
+                return
             self._unreadable_since = None
             self._entries, self.warnings, skips = parse_codes_with_skips(text)
             self.skipped_keys, self.skipped_accounts = skips.keys, skips.accounts
