@@ -52,8 +52,11 @@ def _get_item_or_404(ctx: AppContext, list_id: int, item_id: int) -> Dict[str, A
 
 
 def _safe_filename(name: str) -> str:
-    """A list name reduced to characters safe in a Content-Disposition header."""
-    return "".join(c if c.isalnum() or c in "-_ " else "_" for c in (name or "references"))
+    """A list name reduced to characters safe in a Content-Disposition header.
+    ASCII only: headers are Latin-1, and str.isalnum() also accepts letters
+    such as "中" that cannot be encoded there."""
+    return "".join(c if (c.isascii() and c.isalnum()) or c in "-_ " else "_"
+                   for c in (name or "references"))
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────

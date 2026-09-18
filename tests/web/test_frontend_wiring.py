@@ -881,3 +881,33 @@ def test_deepseek_help_button_toggles_the_guide():
     code = _js_without_comments()
     assert '$("help-deepseek-toggle").addEventListener' in code
     assert '$("help-deepseek").classList.toggle("hidden")' in code
+
+
+# ── csdp review 2026-09-18 ────────────────────────────────────────────────────
+
+def test_a_redraw_does_not_re_offer_summarize_while_one_runs():
+    code = _js_without_comments()
+    render = re.search(r"function renderResults\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "state.summarizing.has(paperKey(paper))" in render
+    start = re.search(r"async function startSummary\(paper, button\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "if (state.summarizing.has(key)) return;" in start
+    assert "state.summarizing.delete(key)" in start
+
+
+def test_leaving_a_signed_in_page_reloads_so_nothing_carries_over():
+    code = _js_without_comments()
+    gate = re.search(r"async function showGate\(message\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "location.reload()" in gate and "SS_GATE_MESSAGE" in gate
+    boot = re.search(r"async function boot\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "sessionStorage.getItem(SS_GATE_MESSAGE)" in boot
+
+
+def test_downloads_handle_sign_out_and_network_errors():
+    code = _js_without_comments()
+    api = re.search(r"async function api\(.*?\n\}", code, re.DOTALL).group(0)
+    assert "Could not reach the server" in api
+    raw = api[api.index("opts.raw"):]
+    assert "showGate(detail)" in raw[:600]
+    for fn in ("saveSummariesPdf", "exportRefSummariesPdf", "exportRefCsv"):
+        body = re.search(rf"async function {fn}\(\) \{{.*?\n\}}", code, re.DOTALL).group(0)
+        assert "catch (e)" in body and "resp.status === 401" in body, fn

@@ -319,12 +319,13 @@ def search_summaries(job_id: str,
     """Stored summaries for this search's results, newest first (S1, S2)."""
     job = _finished_search(ctx, job_id, user_id)
     items, summaries = _job_summaries(ctx, job)
-    out = []
+    out, seen = [], set()
     for item in items:
         p = item["paper"]
         s = summaries.get(p["paper_id"]) if p["paper_id"] is not None else None
-        if not s:
-            continue
+        if not s or p["paper_id"] in seen:
+            continue          # two results can resolve to the same paper row
+        seen.add(p["paper_id"])
         out.append({
             "canonical_id": p.get("canonical_id") or "",
             "doi": p.get("doi") or "",
@@ -358,6 +359,7 @@ def search_summaries_pdf(job_id: str, body: SummariesPdfBody,
     items, summaries = _job_summaries(ctx, job, body.paper_ids)
     title = body.title.strip() or "Search results"
     data = build_summaries_pdf(title, items, summaries)
-    safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in title)
+    from .routes_references import _safe_filename
+    safe = _safe_filename(title)
     return Response(content=data, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{safe} - summaries.pdf"'})

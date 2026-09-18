@@ -263,3 +263,46 @@ def test_a_real_access_code_that_merely_resembles_one_still_works(tmp_path):
             code, name="Old User", create=False)).status_code == 200
     finally:
         ctx_.jobs.shutdown(); ctx_.db.close()
+
+
+# ── csdp security review 2026-09-18 ───────────────────────────────────────────
+
+def test_a_non_ascii_access_code_is_a_401_not_a_500(client):
+    r = client.post("/api/session", json={"access_code": "café-code", "name": "x",
+                                           "pin": "whatever-1"})
+    assert r.status_code == 401
+
+
+def test_security_headers(client, signed_in):
+    page = client.get("/")
+    assert page.headers["x-frame-options"] == "DENY"
+    assert page.headers["x-content-type-options"] == "nosniff"
+    csp = page.headers["content-security-policy"]
+    assert "frame-ancestors 'none'" in csp and "script-src 'self'" in csp
+    api = client.get("/api/me")
+    assert api.headers["x-content-type-options"] == "nosniff"
+    assert "content-security-policy" not in api.headers      # JSON/PDF: no CSP
+
+
+def test_a_broken_merge_chain_is_refused_not_treated_as_the_old_account(ctx, client):
+    from fastapi import Response
+    from src import user_store
+    from web.auth import issue_session
+    a = user_store.create_user(ctx.db, "a")
+    b = user_store.create_user(ctx.db, "b")
+    ctx.db.conn.execute("UPDATE users SET merged_into = ? WHERE user_id = ?", (b, a))
+    ctx.db.conn.execute("UPDATE users SET merged_into = ? WHERE user_id = ?", (a, b))
+    ctx.db.conn.commit()
+    resp = Response()
+    issue_session(resp, ctx, a, secure=False)
+    client.cookies.set("biorx_session", resp.headers["set-cookie"].split(";")[0].split("=", 1)[1])
+    assert client.get("/api/me").status_code == 401
+
+
+def test_a_cookie_from_before_session_epochs_still_works(ctx, client):
+    from itsdangerous import URLSafeTimedSerializer
+    from src import user_store
+    uid = user_store.create_user(ctx.db, "old cookie")
+    token = URLSafeTimedSerializer(ctx.session_secret, salt="biorx-session-v1").dumps(uid)
+    client.cookies.set("biorx_session", token)
+    assert client.get("/api/me").status_code == 200

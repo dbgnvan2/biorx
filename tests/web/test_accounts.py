@@ -233,3 +233,61 @@ def test_ac9_thresholds_come_from_env_and_are_documented(monkeypatch):
     example = (Path(__file__).parent.parent.parent / ".env.example").read_text()
     for var in ("LOGIN_MAX_FAILURES", "LOGIN_LOCK_MINUTES", "LOGIN_PIN_MIN_LENGTH"):
         assert var in example, var
+
+
+# ── csdp security review 2026-09-18 ───────────────────────────────────────────
+
+@pytest.mark.parametrize("path", ["name", "code"])
+def test_ac4_parallel_wrong_pins_are_all_counted(ctx, monkeypatch, path):
+    """200 wrong PINs sent at once were all checked (187 before the first lock)
+    because each read the count before any wrote it. At most
+    LOGIN_MAX_FAILURES may be checked per lock window."""
+    import threading
+    monkeypatch.setenv("LOGIN_MAX_FAILURES", "5")
+    uid, _ = accounts.create_account(ctx.db, "Target", "right-pin-1", user_store.new_user_id)
+    outcomes, barrier = [], threading.Barrier(30)
+
+    def guess(i):
+        barrier.wait()
+        try:
+            if path == "name":
+                accounts.sign_in(ctx.db, "Target", f"wrong-pin-{i:03d}")
+            else:
+                accounts.sign_in_user(ctx.db, uid, f"wrong-pin-{i:03d}")
+            outcomes.append("in")
+        except accounts.AccountLocked:
+            outcomes.append("locked")
+        except accounts.BadCredentials:
+            outcomes.append("checked")
+    threads = [threading.Thread(target=guess, args=(i,)) for i in range(30)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert outcomes.count("in") == 0
+    assert outcomes.count("checked") <= 5, outcomes.count("checked")
+    with pytest.raises(accounts.AccountLocked):
+        accounts.sign_in(ctx.db, "Target", "right-pin-1")
+
+
+def test_ac5_recovering_a_pin_ends_other_sessions(app):
+    c_old, me = _create(app, name="Stolen", pin="old-pin-11")
+    assert c_old.get("/api/me").status_code == 200
+    r = _client(app).post("/api/session/recover", json={
+        "access_code": ACCESS_CODE, "name": "Stolen", "recovery_code": me["recovery_code"],
+        "new_pin": "new-pin-22"})
+    assert r.status_code == 200
+    stale = c_old.get("/api/me")
+    assert stale.status_code == 401 and "PIN was changed" in stale.json()["detail"]
+
+
+def test_ac7_merge_refuses_a_target_that_is_already_merged(ctx):
+    a = user_store.create_user(ctx.db, "a")
+    b = user_store.create_user(ctx.db, "b")
+    c = user_store.create_user(ctx.db, "c")
+    accounts.merge_users(ctx.db, b, c)
+    with pytest.raises(accounts.AccountError, match="already merged"):
+        accounts.merge_users(ctx.db, a, b)            # would strand a's data
+    with pytest.raises(accounts.AccountError, match="already merged"):
+        accounts.merge_users(ctx.db, b, a)            # b is already gone
+    assert accounts.merge_users(ctx.db, a, c)["filters"] == 0

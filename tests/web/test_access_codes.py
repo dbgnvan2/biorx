@@ -93,7 +93,34 @@ def test_pc2_a_file_that_cannot_be_read_is_reported_not_a_crash(ctx, app, client
     os.utime(_codes_file(), ns=(1, 10**18))
     assert client.get("/healthz").status_code == 200
     assert any("problem" in w for w in client.get("/healthz").json()["startup_warnings"])
-    assert _sign_in(app, code)[1].status_code == 401
+    # Not "your code is wrong": the file is the problem, and it says so (503).
+    _, r = _sign_in(app, code)
+    assert r.status_code == 503 and r.json()["detail"] == access_codes.UNAVAILABLE_MESSAGE
+
+
+def test_pc2_a_broken_file_tells_open_sessions_the_real_reason(ctx, app):
+    """csdp review: a typo in the file told every signed-in person their own
+    code had been turned off."""
+    code = add_code("Mid Edit")
+    c, _ = _sign_in(app, code)
+    good = _codes_file().read_text()
+    _write(good + "  - code: [unclosed\n")
+    r = c.get("/api/me")
+    assert r.status_code == 503 and r.json()["detail"] == access_codes.UNAVAILABLE_MESSAGE
+    assert TestClient(app).post("/api/session/lookup", json={"code": code}).status_code == 503
+    _write(good)
+    assert c.get("/api/me").status_code == 200
+
+
+def test_pc2_numbers_and_blanks_do_not_slip_through():
+    """csdp review: `expires: 20270101` loaded as a number and quietly fell back
+    to created + 180 days; a bare `disabled:` left the person on."""
+    text = ("codes:\n"
+            "  - code: AAAA-AAAA-AAAA\n    for: Num\n    created: 2026-01-01\n    expires: 20270101\n"
+            "  - code: BBBB-BBBB-BBBB\n    for: Blank\n    created: 2026-09-18\n    disabled:\n")
+    entries, warnings = access_codes.parse_codes(text)
+    assert "AAAAAAAAAAAA" not in entries and any("Num" in w for w in warnings)
+    assert entries["BBBBBBBBBBBB"].disabled and any("Blank" in w for w in warnings)
 
 
 def test_pc2_content_without_a_codes_list_is_reported():
@@ -219,10 +246,12 @@ def test_pc6_reset_pin(ctx, app):
     assert access_codes.reset_pin(ctx.db, ctx.codes, "erin") == uid
     lookup = TestClient(app).post("/api/session/lookup", json={"code": code}).json()
     assert lookup == {"name": "Erin", "pin_set": False}
-    _, r = _sign_in(app, code, pin="new-pin-222")
+    # The reset also ends sessions opened with the old PIN.
+    assert c.get("/api/me").status_code == 401
+    c2, r = _sign_in(app, code, pin="new-pin-222")
     assert r.status_code == 200 and r.json()["user_id"] == uid
     assert _sign_in(app, code, pin="old-pin-111")[1].status_code == 401
-    assert any(f["name"] == "Mine" for f in c.get("/api/filters").json()["filters"])
+    assert any(f["name"] == "Mine" for f in c2.get("/api/filters").json()["filters"])
 
 
 def test_pc6_reset_pin_for_an_unused_code_says_so(ctx):
@@ -476,8 +505,15 @@ def test_pc12_ignored_and_documented():
     gitignore = (ROOT / ".gitignore").read_text().splitlines()
     assert "access_codes.yaml" in gitignore
     example = ROOT / "access_codes.example.yaml"
-    entries, warnings = access_codes.parse_codes(example.read_text())
-    assert entries and warnings == []
+    text = example.read_text()
+    entries, warnings = access_codes.parse_codes(text)
+    # No live codes in a public file (the first to use a code sets its PIN)...
+    assert entries == {} and warnings == []
+    # ...but the commented examples are valid when uncommented.
+    import re
+    uncommented = re.sub(r"(?m)^#(  +(?:- )?\w+:)", r"\1", text)
+    entries, warnings = access_codes.parse_codes(uncommented)
+    assert len(entries) == 2 and warnings == []
     env = (ROOT / ".env.example").read_text()
     assert "ACCESS_CODES_FILE" in env and "ACCESS_CODE_DAYS" in env
 
@@ -495,3 +531,62 @@ def test_pc14_lookup_reveals_only_name(app):
     assert "biorx_session" not in c.cookies                   # a lookup is not a sign-in
     r = c.post("/api/session/lookup", json={"code": "ZZZZ-ZZZZ-ZZZZ"})
     assert r.status_code == 401 and r.json()["detail"] == access_codes.BAD_CODE_OR_PIN
+
+
+# ── csdp review 2026-09-18 ────────────────────────────────────────────────────
+
+def test_pc14_lookup_does_no_dummy_hash_but_sign_in_does(app, monkeypatch):
+    """The lookup answers at once for a known code, so a dummy scrypt for an
+    unknown one hid nothing and let anyone make the server hash for free."""
+    calls = []
+    real = accounts.verify_secret
+    monkeypatch.setattr(accounts, "verify_secret", lambda *a: calls.append(1) or real(*a))
+    c = TestClient(app)
+    assert c.post("/api/session/lookup", json={"code": "ZZZZ-ZZZZ-ZZZZ"}).status_code == 401
+    assert calls == []
+    assert c.post("/api/session", json={"code": "ZZZZ-ZZZZ-ZZZZ", "pin": "x" * 8}).status_code == 401
+    assert calls == [1]
+
+
+def test_pc14_lookup_refuses_a_code_sign_in_would_refuse(app):
+    code = add_code("Ghost", account="no-such-person")
+    r = TestClient(app).post("/api/session/lookup", json={"code": code})
+    assert r.status_code == 403
+
+
+def test_pc8_recover_is_refused_when_the_code_is_turned_off(ctx, app):
+    """Recovery changed the PIN and issued a cookie that the next request
+    refused. Now it is refused before anything changes."""
+    _, recovery = accounts.create_account(ctx.db, "Sly2", "sly-pin-11", user_store.new_user_id)
+    add_code("Sly2", account="Sly2")
+    _write(_codes_file().read_text().replace("    for: Sly2\n", "    for: Sly2\n    disabled: true\n"))
+    r = TestClient(app).post("/api/session/recover", json={
+        "access_code": ACCESS_CODE, "name": "Sly2", "recovery_code": recovery,
+        "new_pin": "new-pin-999"})
+    assert r.status_code == 403 and r.json()["detail"] == access_codes.DISABLED_MESSAGE
+    assert "biorx_session" not in r.cookies
+    # The PIN was not changed.
+    assert accounts.sign_in(ctx.db, "Sly2", "sly-pin-11")
+
+
+def test_pc11_add_refuses_an_unknown_account(tmp_path):
+    from src.db import Database
+    dbp = tmp_path / "a.db"
+    Database(str(dbp)).close()
+    f = tmp_path / "codes.yaml"
+    env = dict(os.environ, ACCESS_CODES_FILE=str(f), BIORX_DB_PATH=str(dbp))
+    out = subprocess.run([sys.executable, "-m", "src.access_codes", "add", "--for", "X",
+                          "--account", "typo-name"], cwd=ROOT, env=env,
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 1 and "Nothing added" in out.stdout and not f.exists()
+
+
+def test_pc11_renew_keeps_the_next_entrys_comment_with_it(tmp_path):
+    f = tmp_path / "c.yaml"
+    f.write_text("codes:\n  - code: AAAA-AAAA-AAAA\n    for: Alice\n    created: 2020-01-01\n"
+                 "  # Bob, from the lab\n"
+                 "  - code: BBBB-BBBB-BBBB\n    for: Bob\n    created: 2020-01-01\n")
+    access_codes.renew_entry(str(f), "Alice", today=date(2026, 9, 18))
+    lines = f.read_text().splitlines()
+    assert lines[lines.index("  # Bob, from the lab") + 1] == "  - code: BBBB-BBBB-BBBB"
+    assert lines[lines.index("  # Bob, from the lab") - 1].strip().startswith("expires:")

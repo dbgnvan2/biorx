@@ -228,3 +228,21 @@ def test_s3_unfinished_search_is_409(signed_in, ctx):
         assert signed_in.post(f"/api/searches/{job_id}/summaries.pdf", json={}).status_code == 409
     finally:
         release.set()
+
+
+# ── csdp review 2026-09-18 ────────────────────────────────────────────────────
+
+def test_s1_two_results_for_one_paper_list_its_summary_once(signed_in, ctx):
+    same_paper = {**SUMMARIZED, "canonical_id": "pmid:999", "source": "pubmed"}
+    job_id = _finished_search(signed_in, ctx, [SUMMARIZED, same_paper])
+    _summarize_stored(ctx, SUMMARIZED, "the finding", "2026-09-18 10:00:00")
+    body = signed_in.get(f"/api/searches/{job_id}/summaries").json()
+    assert len(body["summaries"]) == 1
+
+
+def test_s3_non_latin_title_gives_a_safe_filename(signed_in, ctx):
+    """str.isalnum() accepts 中; a Latin-1 header cannot carry it."""
+    job_id = _finished_search(signed_in, ctx, [SUMMARIZED])
+    r = signed_in.post(f"/api/searches/{job_id}/summaries.pdf", json={"title": "中文 review"})
+    assert r.status_code == 200
+    assert 'filename="__ review - summaries.pdf"' in r.headers["content-disposition"]

@@ -417,7 +417,10 @@ class Database:
         for col, definition in (("login_name", "TEXT"), ("pin_hash", "TEXT"),
                                 ("recovery_hash", "TEXT"),
                                 ("failed_logins", "INTEGER DEFAULT 0"),
-                                ("locked_until", "TEXT"), ("merged_into", "TEXT")):
+                                ("locked_until", "TEXT"), ("merged_into", "TEXT"),
+                                # Bumped when a PIN is reset or recovered, so
+                                # cookies issued before it stop working.
+                                ("session_epoch", "INTEGER DEFAULT 0")):
             self._add_column_if_missing(cursor, "users", col, definition)
         cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login_name "

@@ -129,7 +129,7 @@ forgets theirs, look it up and tell them. The file is git-ignored; see
 - The browser can remember the code ("Remember my code on this device"), so
   most sign-ins ask only for the PIN, and a sign-in lasts 30 days.
 - After `reset-pin`, whoever enters the code first chooses the new PIN, so tell
-  the person straight away.
+  the person straight away. The reset also signs them out everywhere.
 - PINs are stored as scrypt hashes. After `LOGIN_MAX_FAILURES` wrong PINs
   (default 5) an account is locked for `LOGIN_LOCK_MINUTES` (default 15), so
   someone who sees a code cannot guess the PIN.

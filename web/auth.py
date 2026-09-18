@@ -42,13 +42,18 @@ def check_access_code(supplied: str, expected: str) -> bool:
     """Constant-time comparison, so the code cannot be recovered by timing."""
     if not expected:
         return False
-    return hmac.compare_digest(supplied.strip(), expected.strip())
+    # Bytes, not str: compare_digest raises TypeError on non-ASCII strings,
+    # which turned a typed "é" into a 500 (csdp security review).
+    return hmac.compare_digest(supplied.strip().encode(), expected.strip().encode())
 
 
 def issue_session(response: Response, ctx: AppContext, user_id: str,
                   secure: bool = True) -> None:
-    """Sign the user id into the session cookie."""
-    token = _serializer(ctx.session_secret).dumps(user_id)
+    """Sign the user id, and the user's session epoch, into the cookie."""
+    row = ctx.db.conn.execute("SELECT session_epoch FROM users WHERE user_id = ?",
+                              (user_id,)).fetchone()
+    epoch = (row["session_epoch"] or 0) if row else 0
+    token = _serializer(ctx.session_secret).dumps({"u": user_id, "e": epoch})
     response.set_cookie(
         SESSION_COOKIE, token,
         max_age=SESSION_MAX_AGE_SECONDS,
@@ -64,12 +69,24 @@ def clear_session(response: Response) -> None:
 
 def read_session(ctx: AppContext, token: Optional[str]) -> Optional[str]:
     """Return the user id in a cookie, or None if it is absent or untrustworthy."""
+    got = read_session_epoch(ctx, token)
+    return got[0] if got else None
+
+
+def read_session_epoch(ctx: AppContext, token: Optional[str]):
+    """(user_id, epoch) from a cookie, or None. Cookies from before epochs carry
+    a bare user id and count as epoch 0."""
     if not token:
         return None
     try:
-        return _serializer(ctx.session_secret).loads(
+        data = _serializer(ctx.session_secret).loads(
             token, max_age=SESSION_MAX_AGE_SECONDS
         )
+        if isinstance(data, str):
+            return data, 0
+        if isinstance(data, dict) and isinstance(data.get("u"), str):
+            return data["u"], int(data.get("e") or 0)
+        return None
     except SignatureExpired:
         logger.info("Session cookie expired")
         return None
@@ -94,12 +111,21 @@ async def current_user(
     Applied to every /api route except the one that creates a session, so a
     write endpoint cannot be reached unauthenticated (security S3).
     """
-    user_id = read_session(ctx, biorx_session)
-    if user_id:
+    got = read_session_epoch(ctx, biorx_session)
+    user_id = None
+    if got:
+        cookie_user, epoch = got
+        row = ctx.db.conn.execute("SELECT session_epoch FROM users WHERE user_id = ?",
+                                  (cookie_user,)).fetchone()
+        if row is not None and (row["session_epoch"] or 0) != epoch:
+            # The PIN was reset or recovered after this cookie was issued.
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="Your PIN was changed. Sign in again.")
         # A user merged into another (src/accounts.py) keeps working: the
-        # cookie resolves to the account the data now lives in.
+        # cookie resolves to the account the data now lives in. A broken merge
+        # chain (None) is refused, not treated as the merged-away account.
         from src.accounts import resolve_user_id
-        user_id = resolve_user_id(ctx.db, user_id) or user_id
+        user_id = resolve_user_id(ctx.db, cookie_user) if row is not None else cookie_user
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -117,5 +143,8 @@ async def current_user(
         from src.access_codes import session_refusal
         reason = session_refusal(ctx.db, ctx.codes, user_id, bool(ctx.access_code))
         if reason:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=reason)
+            from src.access_codes import UNAVAILABLE_MESSAGE
+            code = (status.HTTP_503_SERVICE_UNAVAILABLE if reason == UNAVAILABLE_MESSAGE
+                    else status.HTTP_401_UNAUTHORIZED)
+            raise HTTPException(status_code=code, detail=reason)
     return user_id

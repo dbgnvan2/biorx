@@ -1,7 +1,12 @@
 # Personal access codes — one per person.
-# Copy to DATA_DIR/access_codes.yaml (or set ACCESS_CODES_FILE), or just run
+# The real file is DATA_DIR/access_codes.yaml (or ACCESS_CODES_FILE). The
+# easiest way to make it is
 #   python -m src.access_codes add --for "Alice"
-# which creates the file for you.
+# which creates the file and a fresh random code.
+#
+# The entries below are commented out on purpose: this file is public on
+# GitHub, and the first person to enter a new code chooses its PIN. Never use
+# these example codes.
 #
 # Kept readable on purpose: when someone forgets their code, look it up here.
 # Each entry: code, for (who it is for), created or expires (YYYY-MM-DD).
@@ -10,11 +15,12 @@
 #           sign-in name), disabled: true (turns this person off).
 # Changes take effect without restarting the server.
 codes:
-  - code: K7QM-3RTX-9WPA
-    for: Alice
-    created: 2026-09-18
-  - code: B4ZN-HT2C-M8QE
-    for: Dave
-    account: dave
-    created: 2026-09-18
-    expires: 2027-03-17
+#  - code: XXXX-XXXX-XXXX
+#    for: Alice
+#    created: 2026-09-18
+#  - code: YYYY-YYYY-YYYY
+#    for: Dave
+#    account: dave
+#    created: 2026-09-18
+#    expires: 2027-03-17
+#    disabled: true

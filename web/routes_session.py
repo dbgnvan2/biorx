@@ -118,6 +118,8 @@ def _gate(ctx: AppContext, access_code: str) -> None:
 def _account_error(e: accounts.AccountError) -> HTTPException:
     if isinstance(e, accounts.AccountLocked):
         code = status.HTTP_429_TOO_MANY_REQUESTS
+    elif isinstance(e, accounts.AccountCutOff):
+        code = status.HTTP_403_FORBIDDEN
     elif isinstance(e, accounts.BadCredentials):
         code = status.HTTP_401_UNAUTHORIZED
     elif isinstance(e, accounts.NameTaken):
@@ -138,10 +140,18 @@ def _seed_filters(ctx: AppContext, user_id: str) -> None:
         logger.exception("Could not seed filters for %s", user_id)
 
 
-def _entry_or_refuse(ctx: AppContext, code: str) -> access_codes.CodeEntry:
+def _entry_or_refuse(ctx: AppContext, code: str,
+                     same_work: bool = True) -> access_codes.CodeEntry:
+    if ctx.codes is not None and ctx.codes.unavailable():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail=access_codes.UNAVAILABLE_MESSAGE)
     entry = ctx.codes.get(code) if ctx.codes is not None else None
     if entry is None:
-        accounts.verify_secret(code, None)     # same work as a real check
+        if same_work:
+            # On sign-in, an unknown code costs what a wrong PIN costs. Not on
+            # the lookup: it answers at once for a known code, so the dummy
+            # hash hid nothing and only cost CPU (csdp security review).
+            accounts.verify_secret(code, None)
         logger.info("Rejected an unknown access code")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail=access_codes.BAD_CODE_OR_PIN)
@@ -155,8 +165,12 @@ def _entry_or_refuse(ctx: AppContext, code: str) -> access_codes.CodeEntry:
 def lookup_code(body: LookupRequest, ctx: AppContext = Depends(get_context)):
     """Who a code belongs to, for "Welcome back, NAME" (PC14). Public, and says
     only the name and whether a PIN is set — never an id, key or data."""
-    entry = _entry_or_refuse(ctx, body.code)
+    entry = _entry_or_refuse(ctx, body.code, same_work=False)
     user_id = access_codes.bound_user(ctx.db, entry)
+    if user_id is None and entry.account:
+        # Sign-in would refuse it; do not ask the person to choose a PIN first.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="This code is not set up correctly. Ask the owner.")
     return {"name": entry.for_name,
             "pin_set": bool(user_id and accounts.has_pin(ctx.db, user_id))}
 
@@ -192,7 +206,9 @@ def _refuse_if_cut_off(ctx: AppContext, user_id: str) -> None:
         return
     reason = access_codes.session_refusal(ctx.db, ctx.codes, user_id, bool(ctx.access_code))
     if reason:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=reason)
+        raise HTTPException(status_code=(status.HTTP_503_SERVICE_UNAVAILABLE
+                                         if reason == access_codes.UNAVAILABLE_MESSAGE
+                                         else status.HTTP_403_FORBIDDEN), detail=reason)
 
 
 @router.post("/api/session")
@@ -233,7 +249,10 @@ def recover_session(body: RecoverRequest, response: Response,
     """Forgot PIN: name + recovery code + new PIN. Returns a new recovery code."""
     _gate(ctx, body.access_code)
     try:
-        user_id, code = accounts.recover(ctx.db, body.name, body.recovery_code, body.new_pin)
+        user_id, code = accounts.recover(
+            ctx.db, body.name, body.recovery_code, body.new_pin,
+            refusal=lambda uid: (access_codes.session_refusal(
+                ctx.db, ctx.codes, uid, bool(ctx.access_code)) if ctx.codes else None))
     except accounts.AccountError as e:
         raise _account_error(e) from e
     user_id = accounts.resolve_user_id(ctx.db, user_id) or user_id

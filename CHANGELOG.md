@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-09-18 (review) — fixes from the pre-push review
+
+Three reviews (learning-qa, correctness, security) over everything since the
+last push. All findings fixed, each with a test:
+
+### Security
+- **PIN lockout could be bypassed by sending guesses in parallel** (about 190
+  checks per window instead of 5). Each attempt now takes its slot in one
+  atomic UPDATE before the PIN is checked.
+- Resetting (`reset-pin`) or recovering a PIN now ends every session opened
+  before it (a session epoch in the signed cookie).
+- Recovery is refused, before anything changes, for a person whose access code
+  is turned off or expired.
+- The public code lookup no longer runs a dummy password hash (free CPU for
+  anyone); a code tied to a missing account is refused there too.
+- Security headers: `X-Frame-Options`, `X-Content-Type-Options`,
+  `Referrer-Policy` on every response; a Content-Security-Policy on the page.
+- A non-ASCII shared code gave a 500; now a 401.
+- `access_codes.example.yaml` no longer ships live example codes.
+
+### Fixed
+- A broken or vanished codes file told each person their own code was turned
+  off; it now says sign-in is unavailable and to tell the owner (503).
+- `expires: 20270101` (a number) and a blank `disabled:` were accepted quietly;
+  now refused / treated as disabled, with a warning.
+- Merging into an account that is itself merged is refused (data would be
+  unreachable); a looped merge chain signs the cookie out instead of using the
+  old account.
+- `add --account` checks the account exists; `renew` keeps a comment with the
+  entry it belongs to.
+- Summarize buttons stay disabled while that paper's summary runs (a redraw
+  re-enabled them, so a second click billed twice).
+- Signing out, or being signed out, reloads the page so the next person on the
+  device sees none of the last person's results or summaries.
+- PDF and CSV downloads go back to the sign-in page when signed out, and report
+  network errors instead of hanging on "Building…".
+- Search summaries list a paper once when two results are the same paper; PDF
+  filenames with non-Latin titles no longer fail.
+
+
 ## 2026-09-18 (late) — personal access codes
 
 ### Added

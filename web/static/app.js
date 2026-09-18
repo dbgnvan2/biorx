@@ -48,6 +48,7 @@ const state = {
   fetched: 0,
   results: [],
   checkedPapers: new Set(),   // canonical_ids of checked search results
+  summarizing: new Set(),     // paperKey()s with a summary in progress
   activeTab: "search",
   sources: [],                // from /healthz
   // Filters tab
@@ -74,8 +75,24 @@ async function api(method, path, body, opts) {
     options.headers["Content-Type"] = "application/json";
     options.body = JSON.stringify(body);
   }
-  const response = await fetch(path, options);
-  if (opts && opts.raw) return response;
+  let response;
+  try {
+    response = await fetch(path, options);
+  } catch (e) {
+    const error = new Error("Could not reach the server. Check your connection and try again.");
+    error.status = 0;
+    throw error;
+  }
+  if (opts && opts.raw) {
+    // Downloads read the response themselves, but a signed-out session still
+    // goes back to the sign-in page with its reason (csdp review 2026-09-18).
+    if (response.status === 401 && state.me && !path.startsWith("/api/session")) {
+      let detail = SIGN_IN_MESSAGE;
+      try { detail = (await response.clone().json()).detail || detail; } catch (e) {}
+      showGate(detail);
+    }
+    return response;
+  }
   let payload = null;
   try { payload = await response.json(); } catch (e) { payload = null; }
   if (!response.ok) {
@@ -132,7 +149,17 @@ function showGateStep(step) {
   $("legacy-step").classList.toggle("hidden", step !== "legacy-step");
 }
 
+const SS_GATE_MESSAGE = "biorx_gate_message";
+
 async function showGate(message) {
+  // Leaving a signed-in page: reload, so nothing of the last person's search,
+  // summaries, ticks or running timers carries over to whoever signs in next
+  // on this device (csdp review 2026-09-18). The reason survives the reload.
+  if (!$("app").classList.contains("hidden")) {
+    try { sessionStorage.setItem(SS_GATE_MESSAGE, message || ""); } catch (e) { /* ignore */ }
+    location.reload();
+    return;
+  }
   state.me = null;
   $("app").classList.add("hidden");
   $("gate").classList.remove("hidden");
@@ -786,8 +813,13 @@ function renderResults() {
       actions.append(" ");
     }
     const summarize = document.createElement("button");
-    summarize.textContent = "Summarize";
+    // A redraw while a summary runs must not offer the button again: a second
+    // click would bill the model twice (csdp review 2026-09-18).
+    const busy = state.summarizing.has(paperKey(paper));
+    summarize.textContent = busy ? "Summarizing…" : "Summarize";
+    summarize.disabled = busy;
     summarize.dataset.canonicalId = paper.canonical_id || "";
+    summarize.dataset.paperKey = paperKey(paper);
     summarize.addEventListener("click", () => startSummary(paper, summarize));
     actions.appendChild(summarize);
 
@@ -890,14 +922,26 @@ function modalShows(paper) {
   return !$("paper-modal").classList.contains("hidden") && state.modalPaper === paperKey(paper);
 }
 
+function setSummarizeButtons(key, busy) {
+  for (const b of document.querySelectorAll("button[data-paper-key]")) {
+    if (b.dataset.paperKey !== key) continue;
+    b.disabled = busy;
+    b.textContent = busy ? "Summarizing…" : "Summarize";
+  }
+}
+
 async function startSummary(paper, button) {
+  const key = paperKey(paper);
+  if (state.summarizing.has(key)) return;
   notice("");
+  state.summarizing.add(key);
   button.disabled = true;
   button.textContent = "Summarizing…";
+  setSummarizeButtons(key, true);
   await openModal(paper, { lookup: false });
   $("modal-summary-meta").textContent = "Starting…";
 
-  const done = () => { button.disabled = false; button.textContent = "Summarize"; };
+  const done = () => { state.summarizing.delete(key); setSummarizeButtons(key, false); };
   try {
     const stored = await api("POST", "/api/summaries/lookup", { paper });
     if (modalShows(paper)) renderStoredSummary(stored);
@@ -1073,7 +1117,11 @@ async function saveSummariesPdf() {
     title: (state.searchLabel || "Search results").slice(0, 200),
     paper_ids: state.checkedPapers.size ? Array.from(state.checkedPapers) : null,
   };
-  const resp = await api("POST", `/api/searches/${state.jobId}/summaries.pdf`, body, { raw: true });
+  let resp;
+  try {
+    resp = await api("POST", `/api/searches/${state.jobId}/summaries.pdf`, body, { raw: true });
+  } catch (e) { notice(`Could not build the PDF: ${e.message}`); return; }
+  if (resp.status === 401) return;          // api() has shown the sign-in page
   if (!resp.ok) {
     let detail = `${resp.status}`;
     try { detail = (await resp.json()).detail || detail; } catch (e) {}
@@ -1693,6 +1741,7 @@ async function downloadRefPdfs(selectedOnly) {
     const paperId = (item.paper || item).paper_id;
     try {
       const resp = await api("GET", `/api/references/${state.activeListId}/pdf/${paperId}`, undefined, { raw: true });
+      if (resp.status === 401) return;      // api() has shown the sign-in page
       if (resp.ok) {
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
@@ -1721,8 +1770,12 @@ async function exportRefSummariesPdf() {
   const lst = (state.refLists || []).find(x => x.id === state.activeListId) || {};
   $("ref-dl-status").textContent = "Building the summaries PDF…";
   $("ref-dl-status").classList.remove("hidden");
-  const resp = await api("GET", `/api/references/${state.activeListId}/summaries.pdf`,
-                         undefined, { raw: true });
+  let resp;
+  try {
+    resp = await api("GET", `/api/references/${state.activeListId}/summaries.pdf`,
+                     undefined, { raw: true });
+  } catch (e) { $("ref-dl-status").textContent = `Export failed: ${e.message}`; return; }
+  if (resp.status === 401) return;          // api() has shown the sign-in page
   if (!resp.ok) {
     let detail = `${resp.status}`;
     try { detail = (await resp.json()).detail || detail; } catch (e) {}
@@ -1741,7 +1794,11 @@ async function exportRefSummariesPdf() {
 
 async function exportRefCsv() {
   if (!state.activeListId) return;
-  const resp = await api("GET", `/api/references/${state.activeListId}/export.csv`, undefined, { raw: true });
+  let resp;
+  try {
+    resp = await api("GET", `/api/references/${state.activeListId}/export.csv`, undefined, { raw: true });
+  } catch (e) { notice(`Export failed: ${e.message}`); return; }
+  if (resp.status === 401) return;          // api() has shown the sign-in page
   if (!resp.ok) { notice(`Export failed: ${resp.status}`); return; }
   const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
@@ -1856,7 +1913,12 @@ async function boot() {
     state.me = await api("GET", "/api/me");
     showApp();
   } catch (e) {
-    await showGate(e.status === 401 ? e.message : "");
+    let carried = "";
+    try {
+      carried = sessionStorage.getItem(SS_GATE_MESSAGE) || "";
+      sessionStorage.removeItem(SS_GATE_MESSAGE);
+    } catch (err) { /* ignore */ }
+    await showGate(carried || (e.status === 401 ? e.message : ""));
   }
 }
 

@@ -41,13 +41,18 @@ logger = logging.getLogger(__name__)
 CODE_MIN_CHARS = 10
 _KNOWN_KEYS = {"code", "for", "created", "expires", "account", "disabled"}
 _TRUE = {"true", "yes", "y", "on", "1"}
-_FALSE = {"false", "no", "n", "off", "0", ""}
+_FALSE = {"false", "no", "n", "off", "0"}
 DEFAULT_DAYS = 180
 _ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"      # no 0/O/1/I; 12 chars = 60 bits
 
 EXPIRED_MESSAGE = "Your access code has expired. Ask the owner to renew it."
 DISABLED_MESSAGE = "Your access code has been turned off. Ask the owner."
 BAD_CODE_OR_PIN = "That code or PIN is not right."
+# The file itself is broken or gone: say so, rather than telling each person
+# their own code was turned off (csdp review 2026-09-18). Still refuses.
+UNAVAILABLE_MESSAGE = ("Sign-in is unavailable: the server's access-code file has a "
+                       "problem. Please tell the owner.")
+_FILE_PROBLEM = "access codes file"
 
 _HEADER = """\
 # Personal access codes — one per person.
@@ -123,9 +128,12 @@ def _as_date(value) -> Optional[date]:
         return value.date()
     if isinstance(value, date):
         return value
-    if isinstance(value, str) and value.strip():
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, str):
         return date.fromisoformat(value.strip())
-    return None
+    # e.g. `expires: 20270101` loads as a number: refuse, do not fall back.
+    raise ValueError(f"{value!r} is not a date")
 
 
 def parse_codes(text: str, days: Optional[int] = None) -> Tuple[Dict[str, CodeEntry], List[str]]:
@@ -141,9 +149,11 @@ def parse_codes(text: str, days: Optional[int] = None) -> Tuple[Dict[str, CodeEn
         return {}, [f"access codes file cannot be read, so no codes work: {e}"]
     if data is None:
         return {}, []
-    raw = data.get("codes") if isinstance(data, dict) else None
-    if raw is None:
+    if not isinstance(data, dict) or "codes" not in data:
         return {}, ["access codes file has no 'codes:' list, so no codes work"]
+    raw = data["codes"]
+    if raw is None:                       # `codes:` with nothing under it
+        return {}, []
     if not isinstance(raw, list):
         return {}, ["access codes file: 'codes:' must be a list of entries"]
 
@@ -183,10 +193,10 @@ def parse_codes(text: str, days: Optional[int] = None) -> Tuple[Dict[str, CodeEn
         if unknown:
             warnings.append(f"{where}: unknown setting(s) {', '.join(unknown)} — ignored")
         raw_disabled = item.get("disabled", False)
-        flag = str(raw_disabled).strip().lower() if raw_disabled is not None else ""
+        flag = str(raw_disabled).strip().lower()
         if raw_disabled is True or flag in _TRUE:
             disabled = True
-        elif raw_disabled is False or flag in _FALSE:
+        elif raw_disabled is False or (raw_disabled is not None and flag in _FALSE):
             disabled = False
         else:
             # An off switch must fail closed: an unreadable value turns it off.
@@ -212,6 +222,15 @@ class CodeStore:
         self._entries: Dict[str, CodeEntry] = {}
         self.warnings: List[str] = []
         self.missing = False
+        self.broken = False        # the whole file failed to load
+        self._seen = False         # the file has existed while this server ran
+
+    def unavailable(self) -> bool:
+        """True when no code can be trusted because the file is gone or broken."""
+        self._refresh()
+        # A file that was never created is just "no codes yet"; one that
+        # existed and went away is a problem to report.
+        return (self.missing and self._seen) or self.broken
 
     def _refresh(self) -> None:
         try:
@@ -228,13 +247,13 @@ class CodeStore:
                                    "until it is back", self.path)
                 elif not self._loaded:
                     logger.warning("No access codes file at %s", self.path)
-                self._entries, self.warnings, self.missing = {}, [], True
+                self._entries, self.warnings, self.missing, self.broken = {}, [], True, False
             else:
-                self.missing = False
+                self.missing, self._seen = False, True
                 try:
                     text = self.path.read_text(encoding="utf-8")
                 except UnicodeDecodeError as e:
-                    self._entries = {}
+                    self._entries, self.broken = {}, True
                     self.warnings = [f"access codes file is not UTF-8 text, so no codes work: {e}"]
                     logger.warning("%s", self.warnings[0])
                     self._stamp, self._loaded = stamp, True
@@ -246,6 +265,8 @@ class CodeStore:
                                    self.path, e)
                     return
                 self._entries, self.warnings = parse_codes(text)
+                self.broken = (not self._entries and
+                               any(w.startswith(_FILE_PROBLEM) for w in self.warnings))
                 for w in self.warnings:
                     logger.warning("%s", w)
                 logger.info("Loaded %d access code(s) from %s", len(self._entries), self.path)
@@ -328,7 +349,11 @@ def session_refusal(db, store: CodeStore, user_id: str, shared_code_set: bool,
     if login_name:
         mine += [e for e in store.entries() if e.account.lower() == login_name]
     if not keys and not any(mine):
+        if store.unavailable() and not shared_code_set:
+            return UNAVAILABLE_MESSAGE
         return None if shared_code_set else "Sign in with your personal access code."
+    if keys and store.unavailable():
+        return UNAVAILABLE_MESSAGE
     live = [e for e in mine if e is not None]
     if any(e.refusal(today) is None for e in live):
         return None
@@ -458,7 +483,9 @@ def renew_entry(path: str, for_name: str, today: Optional[date] = None) -> date:
             break
     else:
         last = end
-        while last > start + 1 and not lines[last - 1].strip():
+        # Step back over blank lines and comments, which belong to the next entry.
+        while last > start + 1 and (not lines[last - 1].strip()
+                                    or lines[last - 1].lstrip().startswith("#")):
             last -= 1
         lines.insert(last, f"{key_indent}expires: {new_expiry.isoformat()}")
     new_text = "\n".join(lines) + "\n"
@@ -489,8 +516,10 @@ def reset_pin(db, store: CodeStore, for_name: str) -> str:
     if len(users) > 1:
         raise LookupError(f"{for_name!r} has codes for more than one account; edit by hand.")
     user_id = users.pop()
-    db.conn.execute("UPDATE users SET pin_hash = NULL, failed_logins = 0, locked_until = NULL "
-                    "WHERE user_id = ?", (user_id,))
+    # Also end open sessions: a reset usually means someone else may know the PIN.
+    db.conn.execute("UPDATE users SET pin_hash = NULL, failed_logins = 0, locked_until = NULL, "
+                    "session_epoch = COALESCE(session_epoch, 0) + 1 WHERE user_id = ?",
+                    (user_id,))
     db.conn.commit()
     return user_id
 
@@ -530,6 +559,13 @@ def _main(argv=None) -> int:
     print(f"Codes file: {path}")
 
     if args.cmd == "add":
+        if args.account:
+            from .db import Database
+            adb = Database(args.db) if args.db else Database()
+            if adb.conn.execute("SELECT 1 FROM users WHERE login_name IS NOT NULL AND "
+                                "lower(login_name) = lower(?)", (args.account,)).fetchone() is None:
+                print(f"No account signs in as {args.account!r} in {adb.db_path}. Nothing added.")
+                return 1
         if args.user_id:
             from .db import Database
             db = Database(args.db) if args.db else Database()

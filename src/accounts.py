@@ -45,6 +45,10 @@ class NameTaken(AccountError):
     pass
 
 
+class AccountCutOff(AccountError):
+    """The person's access code is expired, disabled or gone."""
+
+
 class AccountLocked(AccountError):
     def __init__(self, minutes_left: int):
         super().__init__(f"Too many wrong attempts. Try again in {minutes_left} minute(s).")
@@ -150,16 +154,42 @@ def _check_lock(row, now: datetime) -> None:
             raise AccountLocked(left)
 
 
-def _record_failure(db, row, now: datetime) -> None:
-    failures = (row["failed_logins"] or 0) + 1
-    locked = None
-    if failures >= max_failures():
-        locked = (now + timedelta(minutes=lock_minutes())).isoformat()
-        failures = 0
-        logger.warning("Account locked after repeated failures: %s", row["user_id"])
-    db.conn.execute("UPDATE users SET failed_logins = ?, locked_until = ? WHERE user_id = ?",
-                    (failures, locked, row["user_id"]))
+def _lock(db, user_id: str, now: datetime) -> None:
+    until = (now + timedelta(minutes=lock_minutes())).astimezone(timezone.utc).isoformat()
+    db.conn.execute("UPDATE users SET failed_logins = 0, locked_until = ? WHERE user_id = ?",
+                    (until, user_id))
     db.conn.commit()
+    logger.warning("Account locked after repeated failures: %s", user_id)
+
+
+def _claim_attempt(db, row, now: datetime) -> int:
+    """Count this attempt BEFORE checking the secret, in one statement.
+
+    Reading the count, running scrypt, then writing count+1 let parallel
+    guesses all read the same count: the security review sent 200 wrong PINs
+    at once and 187 were checked before the lock (limit 5). The conditional
+    UPDATE ... RETURNING makes each attempt take its own slot, so at most
+    LOGIN_MAX_FAILURES secrets are checked per lock window.
+    """
+    _check_lock(row, now)
+    cur = db.conn.execute(
+        "UPDATE users SET failed_logins = COALESCE(failed_logins, 0) + 1 "
+        "WHERE user_id = ? AND (locked_until IS NULL OR locked_until <= ?) "
+        "RETURNING failed_logins",
+        (row["user_id"], now.astimezone(timezone.utc).isoformat()))
+    got = cur.fetchone()
+    db.conn.commit()
+    if got is None:                       # another request locked it just now
+        raise AccountLocked(lock_minutes())
+    if got[0] > max_failures():           # the slots for this window are used up
+        _lock(db, row["user_id"], now)
+        raise AccountLocked(lock_minutes())
+    return got[0]
+
+
+def _failed(db, user_id: str, attempt: int, now: datetime) -> None:
+    if attempt >= max_failures():
+        _lock(db, user_id, now)
 
 
 def _record_success(db, user_id: str) -> None:
@@ -194,9 +224,9 @@ def sign_in(db, name: str, pin: str, now: Optional[datetime] = None) -> str:
     if row is None:
         verify_secret(pin, None)
         raise BadCredentials("That name or PIN is not right.")
-    _check_lock(row, now)
+    attempt = _claim_attempt(db, row, now)
     if not verify_secret(pin, row["pin_hash"]):
-        _record_failure(db, row, now)
+        _failed(db, row["user_id"], attempt, now)
         raise BadCredentials("That name or PIN is not right.")
     _record_success(db, row["user_id"])
     return resolve_user_id(db, row["user_id"]) or row["user_id"]
@@ -237,8 +267,9 @@ def sign_in_user(db, user_id: str, pin: str, now: Optional[datetime] = None) -> 
         if cur.rowcount != 1:
             return sign_in_user(db, user_id, pin, now)
         return resolve_user_id(db, user_id) or user_id
+    attempt = _claim_attempt(db, row, now)
     if not verify_secret(pin, row["pin_hash"]):
-        _record_failure(db, row, now)
+        _failed(db, user_id, attempt, now)
         raise BadCredentials("That code or PIN is not right.")
     _record_success(db, user_id)
     return resolve_user_id(db, user_id) or user_id
@@ -267,9 +298,21 @@ def create_code_account(db, display_name: str, pin: str, code_key: str,
     return user_id
 
 
+def bump_session_epoch(db, user_id: str) -> None:
+    """End every session issued so far for this user (web/auth.py checks it)."""
+    db.conn.execute("UPDATE users SET session_epoch = COALESCE(session_epoch, 0) + 1 "
+                    "WHERE user_id = ?", (user_id,))
+    db.conn.commit()
+
+
 def recover(db, name: str, code: str, new_pin: str,
-            now: Optional[datetime] = None) -> Tuple[str, str]:
-    """Set a new PIN with the recovery code. (user_id, new recovery code)."""
+            now: Optional[datetime] = None,
+            refusal: Optional[Callable[[str], Optional[str]]] = None) -> Tuple[str, str]:
+    """Set a new PIN with the recovery code. (user_id, new recovery code).
+
+    refusal(user_id) -> reason is checked after the code is verified and before
+    anything changes, so a person whose access code was turned off cannot use
+    recovery to change their PIN (csdp review 2026-09-18)."""
     now = now or _now()
     if len(new_pin or "") < pin_min_length():
         raise AccountError(f"Choose a PIN of at least {pin_min_length()} characters.")
@@ -277,14 +320,17 @@ def recover(db, name: str, code: str, new_pin: str,
     if row is None:
         verify_secret(code, None)
         raise BadCredentials("That name or recovery code is not right.")
-    _check_lock(row, now)
+    attempt = _claim_attempt(db, row, now)
     if not verify_secret(_normalise_code(code), row["recovery_hash"]):
-        _record_failure(db, row, now)
+        _failed(db, row["user_id"], attempt, now)
         raise BadCredentials("That name or recovery code is not right.")
+    reason = refusal(resolve_user_id(db, row["user_id"]) or row["user_id"]) if refusal else None
+    if reason:
+        raise AccountCutOff(reason)
     fresh = new_recovery_code()
     db.conn.execute(
-        "UPDATE users SET pin_hash = ?, recovery_hash = ?, failed_logins = 0, locked_until = NULL "
-        "WHERE user_id = ?",
+        "UPDATE users SET pin_hash = ?, recovery_hash = ?, failed_logins = 0, locked_until = NULL, "
+        "session_epoch = COALESCE(session_epoch, 0) + 1 WHERE user_id = ?",
         (hash_secret(new_pin), hash_secret(_normalise_code(fresh)), row["user_id"]),
     )
     db.conn.commit()
@@ -296,9 +342,19 @@ def merge_users(db, source_id: str, target_id: str) -> dict:
     the source row stays, marked merged_into, so its cookie resolves to the target."""
     if source_id == target_id:
         raise AccountError("Cannot merge a user into itself.")
+    rows = {}
     for uid in (source_id, target_id):
-        if db.conn.execute("SELECT 1 FROM users WHERE user_id = ?", (uid,)).fetchone() is None:
+        rows[uid] = db.conn.execute("SELECT merged_into FROM users WHERE user_id = ?",
+                                    (uid,)).fetchone()
+        if rows[uid] is None:
             raise AccountError(f"No such user: {uid}")
+    # Data moved into an account that is itself merged would be unreachable,
+    # and a merge back the other way makes a loop (csdp review 2026-09-18).
+    if rows[target_id]["merged_into"]:
+        raise AccountError(f"{target_id} is already merged into "
+                           f"{rows[target_id]['merged_into']}; merge into that one instead.")
+    if rows[source_id]["merged_into"]:
+        raise AccountError(f"{source_id} is already merged into {rows[source_id]['merged_into']}.")
     moved = {"filters": 0, "filters_renamed": 0, "filters_identical_left": 0,
              "lists": 0, "lists_renamed": 0}
     conn = db.conn

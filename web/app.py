@@ -34,6 +34,14 @@ logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
 
 
+# Scripts and styles come only from /static; inline style="" attributes are
+# used in index.html, so styles allow 'unsafe-inline' (scripts do not).
+CONTENT_SECURITY_POLICY = ("default-src 'self'; script-src 'self'; "
+                           "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                           "object-src 'none'; base-uri 'none'; form-action 'self'; "
+                           "frame-ancestors 'none'")
+
+
 def create_app(ctx: AppContext = None) -> FastAPI:
     """Build the app. Tests pass a context bound to a temporary database."""
     @asynccontextmanager
@@ -58,6 +66,19 @@ def create_app(ctx: AppContext = None) -> FastAPI:
         redoc_url=None,
     )
     application.state.ctx = ctx if ctx is not None else build_context()
+
+    @application.middleware("http")
+    async def _security_headers(request, call_next):
+        # csdp security review 2026-09-18: the page could be framed, and the
+        # PDF proxy serves other hosts' bytes from this origin.
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        if response.headers.get("content-type", "").startswith("text/html"):
+            # Only the page: a CSP on a PDF response can break the browser's viewer.
+            response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        return response
 
     application.include_router(routes_session.router)
     application.include_router(routes_filters.router)
