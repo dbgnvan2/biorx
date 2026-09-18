@@ -74,6 +74,9 @@ last push. All findings fixed, each with a test:
   once per incident.
 - Last: recovery on a broken (hand-edited) merge chain is refused before the
   PIN or recovery code changes.
+- Account ids are random and 1 in 64 starts with `-`, which the command line
+  read as an option (`--user-id -abc` failed; this was the flaky test). Docs,
+  help text and tests now use `--user-id=ID`, `--from=ID`, `--into=ID`.
 
 
 ## 2026-09-18 (late) — personal access codes

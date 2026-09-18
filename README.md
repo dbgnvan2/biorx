@@ -139,12 +139,13 @@ forgets theirs, look it up and tell them. The file is git-ignored; see
 `python -m src.access_codes add --for "Dave" --account dave` — it keeps its PIN
 and data. An account that never had a name (reached only by its browser
 cookie) is tied by id instead: find it with `python -m src.accounts list --db
-PATH`, then `add --for "Dave" --user-id ID`; they choose a PIN on first sign-in. While `ACCESS_CODE` is set, those accounts can still sign in the old
+PATH`, then `add --for "Dave" --user-id=ID` (with the `=`: ids can start with `-`); they choose a PIN on first sign-in. While `ACCESS_CODE` is set, those accounts can still sign in the old
 way ("Sign in with name (old way)"), but it no longer creates accounts. Remove
 `ACCESS_CODE` from `.env` once everyone has a code.
 
 To combine two accounts: `python -m src.accounts list --db PATH`, then
-`python -m src.accounts merge --db PATH --from ID --into ID`. Nothing is
+`python -m src.accounts merge --db PATH --from=ID --into=ID` (with the `=`:
+ids can start with `-`). Nothing is
 deleted; the old account's cookie leads to the merged one.
 
 ### LLM backends and keys

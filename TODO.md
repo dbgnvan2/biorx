@@ -18,10 +18,6 @@
 - Frontend wiring tests check the source text of app.js, so they cannot catch
   behaviour bugs (reload loops, stuck busy state). A browser test (Playwright)
   would.
-- **An unidentified flaky test:** the full suite failed once in about 20 runs
-  (twice in ~40, 2026-09-18) and passed on rerun; the failing test name was not
-  captured (the runs that failed were not run with `-rf`). Run with `-rf` in a
-  loop to name it. The new access-code tests passed 15/15 when run alone.
 - **First Railway deploy is the first `docker build`** of this image, and
   `railway ssh` has not been tried against it (which user the shell runs as
   decides whether the app can read a codes file made from it).

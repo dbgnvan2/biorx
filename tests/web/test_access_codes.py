@@ -426,9 +426,11 @@ def test_pc7_a_code_can_be_tied_to_an_account_with_no_name(tmp_path):
     env = dict(os.environ, ACCESS_CODES_FILE=str(f), BIORX_DB_PATH=str(dbp))
     run = lambda *a: subprocess.run([sys.executable, "-m", "src.access_codes", *a], cwd=ROOT,
                                     env=env, capture_output=True, text=True, timeout=60)
-    bad = run("add", "--for", "Dave", "--user-id", "no-such-id")
+    bad = run("add", "--for", "Dave", "--user-id=no-such-id")
     assert bad.returncode == 1 and not f.exists()
-    out = run("add", "--for", "Dave", "--user-id", uid)
+    # "=" form, as documented: ids are random and 1 in 64 starts with "-",
+    # which "--user-id ID" would read as an option (this test was flaky).
+    out = run("add", "--for", "Dave", f"--user-id={uid}")
     assert out.returncode == 0, out.stderr
     code = out.stdout.strip().splitlines()[-1].split(": ")[1].split()[0]
     assert access_codes.bound_user_by_key(db, access_codes.code_key(code)) == uid
@@ -1019,3 +1021,17 @@ def test_pc2_a_bad_grace_setting_is_warned_once_per_incident(ctx, monkeypatch, c
         assert len(bad) == 1
     finally:
         _codes_file().chmod(0o600)
+
+
+def test_pc11_ids_starting_with_a_dash_work_in_the_documented_form(tmp_path):
+    from src.db import Database
+    dbp = tmp_path / "dash.db"
+    db = Database(str(dbp))
+    db.conn.execute("INSERT INTO users (user_id, display_name) VALUES ('-dashy', 'x')")
+    db.conn.commit()
+    db.close()
+    env = dict(os.environ, ACCESS_CODES_FILE=str(tmp_path / "c.yaml"), BIORX_DB_PATH=str(dbp))
+    out = subprocess.run([sys.executable, "-m", "src.access_codes", "add", "--for", "X",
+                          "--user-id=-dashy"], cwd=ROOT, env=env,
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stdout + out.stderr

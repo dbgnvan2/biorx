@@ -11,7 +11,9 @@ recovery codes are stored as scrypt hashes, compared in constant time, and
 repeated failures lock the account for a while — the access code is shared, so
 without a lockout anyone holding it could guess PINs.
 
-One-off merge:  python -m src.accounts merge --db PATH --from USER_ID --into USER_ID
+One-off merge:  python -m src.accounts merge --db PATH --from=USER_ID --into=USER_ID
+(write ids with "=": a random id can start with "-", which argparse would
+otherwise read as an option)
 """
 
 from __future__ import annotations
@@ -494,8 +496,8 @@ def _main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     m = sub.add_parser("merge", help="move one user's data into another")
     m.add_argument("--db", required=True)
-    m.add_argument("--from", dest="source", required=True)
-    m.add_argument("--into", dest="target", required=True)
+    m.add_argument("--from", dest="source", required=True, help="user id; write --from=ID")
+    m.add_argument("--into", dest="target", required=True, help="user id; write --into=ID")
     sub.add_parser("list", help="list users").add_argument("--db", required=True)
     args = ap.parse_args(argv)
     from .db import Database

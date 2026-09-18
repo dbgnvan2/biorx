@@ -13,7 +13,8 @@ the owner tells them again from the file. The PIN is the secret.
 Commands (run with the same environment as the server, e.g.
 `set -a && source .env && set +a` first, so DATA_DIR points at the same place):
 
-    python -m src.access_codes add --for "Alice" [--account dave | --user-id ID]
+    python -m src.access_codes add --for "Alice" [--account dave | --user-id=ID]
+    (write the id with "=": a random id can start with "-")
     python -m src.access_codes renew --for "Alice"
     python -m src.access_codes reset-pin --for "Alice"
     python -m src.access_codes list
@@ -679,7 +680,7 @@ def _main(argv=None) -> int:
     a = sub.add_parser("add", help="make a code for someone")
     a.add_argument("--for", dest="for_name", required=True)
     a.add_argument("--account", default="", help="existing account sign-in name to tie it to")
-    a.add_argument("--user-id", default="", help="existing account id to tie it to (for "
+    a.add_argument("--user-id", default="", help="existing account id to tie it to, written --user-id=ID (for "
                    "accounts with no sign-in name; see python -m src.accounts list)")
     sub.add_parser("renew", help="push a code's expiry out; same code").add_argument(
         "--for", dest="for_name", required=True)
