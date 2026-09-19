@@ -1,7 +1,7 @@
 # Implementation plan — running a saved filter (web app)
 
 **Request:** chat, 2026-09-18 (four items, quoted below).
-**Status:** DRAFT — awaiting approval. No code changed yet.
+**Status:** IMPLEMENTED 2026-09-18 (6dc5120, e734ef4, babb276, dae973f). Verified in the real web UI the same day.
 **Surface:** the web app (`web/`), Search tab → saved filters → **Run**. The desktop GUI is
 touched only where the fix is shared code.
 
