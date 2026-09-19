@@ -107,10 +107,15 @@ def build_context(db_path: Optional[str] = None,
         # deployment cannot lose the flag by omission.
         cookie_secure = os.environ.get("SESSION_COOKIE_INSECURE", "") != "1"
 
+    llm_config = load_llm_config()
+    from src.llm_config import default_provider, default_provider_source
+    logger.info("Default LLM provider: %s (from %s)",
+                default_provider(llm_config), default_provider_source(llm_config))
+
     return AppContext(
         db=Database(db_path) if db_path else Database(),
         jobs=JobRegistry(),
-        llm_config=load_llm_config(),
+        llm_config=llm_config,
         sources_config=load_sources_config(),
         access_code=code,
         session_secret=secret,

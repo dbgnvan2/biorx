@@ -31,7 +31,24 @@ def load_project_env(path: Optional[Union[str, Path]] = None) -> bool:
     if not env_path.is_file():
         logger.info("No .env at %s — using the environment as it is", env_path)
         return False
-    from dotenv import load_dotenv
-    load_dotenv(env_path, override=False)
-    logger.info("Loaded settings from %s", env_path)
+    import os
+    from dotenv import dotenv_values
+    values = dotenv_values(env_path)
+    applied, kept = [], []
+    for name, value in values.items():
+        if value is None:
+            continue
+        if name in os.environ:
+            kept.append(name)
+        else:
+            os.environ[name] = value
+            applied.append(name)
+    # Names only, never values: enough to see where a setting came from.
+    logger.info("Loaded from %s: %s", env_path, ", ".join(sorted(applied)) or "nothing")
+    blank = sorted(n for n, v in values.items() if v is not None and not v.strip())
+    if blank:
+        logger.warning("Set but empty in %s: %s", env_path, ", ".join(blank))
+    if kept:
+        logger.info("Already set in the environment, so not taken from %s: %s",
+                    env_path, ", ".join(sorted(kept)))
     return True

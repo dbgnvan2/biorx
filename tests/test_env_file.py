@@ -78,3 +78,39 @@ def test_r3_web_app_with_a_given_context_does_not_read_env(monkeypatch):
     monkeypatch.setattr(env_file, "load_project_env", lambda *a, **k: called.append(1))
     web_app.create_app(MagicMock())
     assert called == []
+
+
+def test_r3_env_load_logs_names_never_values(tmp_path, monkeypatch, caplog):
+    """The start-up log says which names came from .env and which the
+    environment already had — and never prints a value."""
+    import logging
+    monkeypatch.delenv("BIORX_A", raising=False)
+    monkeypatch.setenv("BIORX_B", "shell")
+    f = tmp_path / ".env"
+    f.write_text("BIORX_A=secret-a\nBIORX_B=secret-b\n")
+    with caplog.at_level(logging.INFO, logger="src.env_file"):
+        load_project_env(f)
+    text = caplog.text
+    assert "BIORX_A" in text and "BIORX_B" in text
+    assert "secret-a" not in text and "secret-b" not in text
+    assert os.environ["BIORX_B"] == "shell"
+    monkeypatch.delenv("BIORX_A")
+
+
+def test_r3_provider_source_names_the_override(monkeypatch):
+    from src.llm_config import default_provider_source
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    assert "LLM_PROVIDER environment variable" in default_provider_source({})
+    monkeypatch.delenv("LLM_PROVIDER")
+    assert "llm_config.yaml" in default_provider_source({})
+
+
+def test_r3_blank_values_are_named(tmp_path, monkeypatch, caplog):
+    import logging
+    monkeypatch.delenv("BIORX_EMPTY", raising=False)
+    f = tmp_path / ".env"
+    f.write_text("BIORX_EMPTY=\n")
+    with caplog.at_level(logging.WARNING, logger="src.env_file"):
+        load_project_env(f)
+    assert "Set but empty" in caplog.text and "BIORX_EMPTY" in caplog.text
+    monkeypatch.delenv("BIORX_EMPTY", raising=False)

@@ -66,6 +66,12 @@ def create_app(ctx: AppContext = None) -> FastAPI:
         redoc_url=None,
     )
     if ctx is None:
+        # The app's own INFO lines (start-up configuration, job progress) were
+        # discarded: nothing configured logging, so only WARNING+ reached the
+        # console. Configure it for a real run unless the host already has.
+        if not logging.getLogger().handlers:
+            logging.basicConfig(level=logging.INFO,
+                                format="%(levelname)s:     %(name)s: %(message)s")
         # Read .env before the context reads the environment, so a local run
         # gets the owner's DEEPSEEK_API_KEY (the default provider for everyone
         # without their own key). Never overrides the host's variables, and a

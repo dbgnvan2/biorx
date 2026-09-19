@@ -134,7 +134,8 @@ def default_provider(config: Dict[str, Any]) -> str:
     worth a loud log rather than a silent fallback to something cheaper or
     more expensive than the operator intended.
     """
-    name = (os.environ.get("LLM_PROVIDER") or config.get("default_provider") or "").strip()
+    env_name = (os.environ.get("LLM_PROVIDER") or "").strip()
+    name = env_name or (config.get("default_provider") or "").strip()
     if name and name not in config.get("providers", {}):
         logger.error(
             "LLM provider %r is not defined in the config (known: %s) — "
@@ -144,6 +145,15 @@ def default_provider(config: Dict[str, Any]) -> str:
         )
         return _FALLBACK["default_provider"]
     return name or _FALLBACK["default_provider"]
+
+
+def default_provider_source(config: Dict[str, Any]) -> str:
+    """Where the default provider comes from, for the start-up log: the
+    LLM_PROVIDER variable silently outranks llm_config.yaml, which made a
+    stray LLM_PROVIDER=anthropic in .env hard to find (2026-09-18)."""
+    if (os.environ.get("LLM_PROVIDER") or "").strip():
+        return "the LLM_PROVIDER environment variable (overrides llm_config.yaml)"
+    return "default_provider in llm_config.yaml"
 
 
 def provider_config(config: Dict[str, Any], name: str) -> Optional[ProviderConfig]:
