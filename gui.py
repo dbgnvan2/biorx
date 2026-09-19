@@ -118,6 +118,9 @@ class SearchWorker(QObject):
     progress    = pyqtSignal(int, int)  # (fetched so far, total)
     status      = pyqtSignal(str)       # terminal status (Done / Stopped)
     phase       = pyqtSignal(str)       # live phase text (per-source / enriching)
+    # [(paper_key of the streamed row, enriched dict)] once enrichment has run.
+    # Keyed, not by identity: a list signal hands the GUI copies of the dicts.
+    refreshed   = pyqtSignal(object)
     finished    = pyqtSignal(list)      # all matched papers
     error       = pyqtSignal(str)
 
@@ -142,10 +145,11 @@ class SearchWorker(QObject):
             self._all_matched = []
             source_selection  = f.get("source_selection", {"all": True, "selected": []})
             # Records that passed the filter; only these are enriched
-            # (plan 2026-09-18 C2). Rows below are still streamed as they
-            # arrive, so they do not show enriched fields — see the plan's
-            # "Adjacent issues".
+            # (plan 2026-09-18 C2). Rows are streamed as pages arrive, before
+            # enrichment; each streamed dict is paired with its record so the
+            # rows can be refreshed once enrichment has run (issue 4).
             matched_ids: set = set()
+            pairs: List[Any] = []     # (record, streamed dict)
 
             def on_batch(records):
                 if self._stop_event.is_set():
@@ -153,7 +157,10 @@ class SearchWorker(QObject):
                 papers  = [r.to_dict() for r in records]
                 matched = _filter_papers(papers, f)
                 kept = {id(p) for p in matched}
-                matched_ids.update(id(r) for r, p in zip(records, papers) if id(p) in kept)
+                for r, p in zip(records, papers):
+                    if id(p) in kept:
+                        matched_ids.add(id(r))
+                        pairs.append((r, p))
                 if matched:
                     self._all_matched.extend(matched)
                     self.batch_ready.emit(matched)
@@ -177,6 +184,13 @@ class SearchWorker(QObject):
                 max_results=self.MAX_PAPERS,
                 enrich_only=lambda r: id(r) in matched_ids,
             )
+
+            # What enrichment added (PDF links, licence, filled abstracts)
+            # reaches the table and the saved rows (issue 4; learnings P36).
+            updates = [(paper_key(streamed), record.to_dict()) for record, streamed in pairs]
+            self._all_matched = [fresh for _, fresh in updates]
+            if updates:
+                self.refreshed.emit(updates)
 
             if self._stop_event.is_set():
                 self.status.emit(f"Stopped — {len(self._all_matched):,} matched")
@@ -866,6 +880,7 @@ class SearchBrowseTab(QWidget):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.batch_ready.connect(self._append_batch)
+        worker.refreshed.connect(self._apply_enrichment)
         worker.progress.connect(self._update_progress)
         worker.phase.connect(self._on_phase)
         worker.status.connect(self.status_label.setText)
@@ -919,6 +934,22 @@ class SearchBrowseTab(QWidget):
         self.status_label.setText(self._search_status_text())
         self._update_matches_label()
         self._update_checked_count()
+
+    def _apply_enrichment(self, updates: list):
+        """Purpose: Refresh streamed rows with what enrichment added.
+        Spec:    docs/implementation_plan_2026-09-18_filter_run.md#I4
+        Tests:   tests/test_gui_filters.py::test_i4_gui_rows_get_enriched_fields
+
+        Runs on the GUI thread (a queued signal). Rows are matched by the
+        paper_key they were streamed with and updated in place, so
+        current_results and the selection model keep their references.
+        """
+        rows = {paper_key(p): p for p in self.current_results}
+        for key, fresh in updates:
+            row = rows.get(key)
+            if row is not None:
+                row.update(fresh)
+        self.display_page()
 
     def _update_matches_label(self):
         total  = self._results.total_matches

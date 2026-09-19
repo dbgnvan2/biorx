@@ -90,3 +90,57 @@ def test_fr2_5_gui_search_enriches_only_matched_papers():
     worker.run()
 
     assert [c.args[0] for c in orch._crossref.enrich.call_args_list] == [keep]
+
+
+def test_i4_gui_rows_get_enriched_fields():
+    """Issue 4: the desktop worker streamed rows before enrichment and saved
+    those copies. After the search it now emits (streamed, enriched) pairs,
+    and what it saves carries the enriched fields."""
+    from unittest.mock import MagicMock
+    from tests.test_orchestrator import _make_record
+    from src.sources.orchestrator import SourceOrchestrator
+
+    rec = _make_record(doi="10.1/keep", title="Generative agents")
+    orch = SourceOrchestrator.__new__(SourceOrchestrator)
+    orch.config = {}
+    adapter = MagicMock()
+    adapter.search.return_value = [{}]
+    adapter.normalize.side_effect = [rec]
+    adapter.last_page_size = 1
+    adapter.last_total = 1
+    orch._search_adapters = {"europepmc": adapter}
+    orch._crossref = None
+
+    def unpaywall_enrich(record):
+        record.pdf_url = "https://oa.example/keep.pdf"
+        return True
+    orch._unpaywall = MagicMock()
+    orch._unpaywall.enrich.side_effect = unpaywall_enrich
+
+    db = MagicMock()
+    worker = gui.SearchWorker(orch, {"text_groups": [{"both": "generative"}]},
+                              save_to_db=True, db=db)
+    streamed, refreshed = [], []
+    worker.batch_ready.connect(streamed.extend)
+    worker.refreshed.connect(refreshed.extend)
+    worker.run()
+
+    assert streamed and streamed[0]["pdf_url"] == ""          # streamed before enrichment
+    (key, fresh), = refreshed
+    assert key == gui.paper_key(streamed[0]) and fresh["pdf_url"] == "https://oa.example/keep.pdf"
+    assert db.insert_paper.call_args.args[0]["pdf_url"] == "https://oa.example/keep.pdf"
+
+
+def test_i4_apply_enrichment_updates_rows_in_place():
+    """The GUI-thread slot finds each row by its paper key and updates the dict
+    the table and selection hold; a row not in the table is left alone."""
+    from unittest.mock import MagicMock
+    row = {"title": "T", "doi": "10.1/a", "canonical_id": "doi:10.1/a", "pdf_url": ""}
+    other = {"title": "U", "doi": "10.1/b", "canonical_id": "doi:10.1/b", "pdf_url": ""}
+    tab = MagicMock()
+    tab.current_results = [row, other]
+    gui.SearchBrowseTab._apply_enrichment(
+        tab, [(gui.paper_key(dict(row)), {**row, "pdf_url": "u"}),
+              ("doi:10.1/zzz", {"pdf_url": "stray"})])
+    assert row["pdf_url"] == "u" and other["pdf_url"] == ""
+    tab.display_page.assert_called_once()
