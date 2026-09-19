@@ -465,6 +465,18 @@ function restoreActiveTab() {
 }
 
 /* "Could not reach" with each source's display name and why (D2). Pure. */
+/* Issue 3: an enrichment service that failed leaves results complete but
+   missing PDF links or metadata — say so. "" when nothing failed. Pure, for
+   the node-run test. */
+function enrichProblemsText(job) {
+  const problems = job.enrich_problems || {};
+  const parts = Object.keys(problems).map(
+    (name) => `${name} could not be reached for ${problems[name][0]} of ${problems[name][1]} papers`);
+  return parts.length
+    ? `${parts.join("; ")} — some PDF links or details may be missing.`
+    : "";
+}
+
 function failedSourcesText(job) {
   const problems = job.source_problems || {};
   const names = Object.keys(problems);
@@ -678,6 +690,7 @@ async function startSearch(payload) {
   $("select-all-results").indeterminate = false;
   $("results-card").classList.add("hidden");
   $("sources-failed").classList.add("hidden");
+  $("enrich-problems").classList.add("hidden");
   $("progress-wrap").classList.remove("hidden");
   $("progress").value = 0;
   $("phase").textContent = "Starting…";
@@ -743,6 +756,11 @@ async function pollSearch() {
   if (job.sources_failed && job.sources_failed.length) {
     $("sources-failed").textContent = failedSourcesText(job);
     $("sources-failed").classList.remove("hidden");
+  }
+  const enrichNote = enrichProblemsText(job);
+  if (enrichNote) {
+    $("enrich-problems").textContent = enrichNote;
+    $("enrich-problems").classList.remove("hidden");
   }
   if (["done", "error", "cancelled"].includes(job.status)) {
     // An earlier poll still in flight when this one finished the job.
@@ -1558,7 +1576,9 @@ async function pollFilterTest() {
         return;
       }
       renderFilterTestResults(page.results || []);
-      $("filter-test-status").textContent = `${page.total} papers matched.${failed}`;
+      const enrichNote = enrichProblemsText(job);
+      $("filter-test-status").textContent =
+        `${page.total} papers matched.${failed}${enrichNote ? " " + enrichNote : ""}`;
     } else {
       $("filter-test-status").textContent = (job.error || job.status) + failed;
     }

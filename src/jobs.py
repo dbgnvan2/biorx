@@ -85,6 +85,9 @@ class Job:
     # survives the enrichment phase (plan 2026-09-18 FR3).
     enriched: int = 0
     enrich_total: int = 0
+    # Enrichment services whose lookups failed: label -> [failed, attempted].
+    # Results are complete, but PDF links / filled-in metadata may be missing.
+    enrich_problems: Dict[str, List[int]] = field(default_factory=dict)
     error: str = ""
     result: Any = None
     # Sources that failed mid-run. The orchestrator swallows these per source;
@@ -121,6 +124,7 @@ class Job:
             "matched": self.matched,
             "enriched": self.enriched,
             "enrich_total": self.enrich_total,
+            "enrich_problems": {k: list(v) for k, v in self.enrich_problems.items()},
             "error": self.error,
             "sources_failed": list(self.sources_failed),
             "source_problems": dict(self.source_problems),

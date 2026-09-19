@@ -149,6 +149,9 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
             job.enriched = done
             job.enrich_total = total
 
+        def on_enrich_problem(label: str, failed: int, attempted: int):
+            job.enrich_problems[label] = [failed, attempted]
+
         def on_status(message: str):
             job.phase = message
             record_failure(job, message, ctx.sources_config)
@@ -165,6 +168,7 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
                 # Only papers that passed the filter are worth two HTTP calls.
                 enrich_only=lambda r: id(r) in matched_ids,
                 on_enrich_progress=on_enrich_progress,
+                on_enrich_problem=on_enrich_problem,
             )
         finally:
             # This job ran on a pool thread that took a database connection.

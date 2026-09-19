@@ -409,3 +409,14 @@ def test_i1_saved_filter_sources_reach_the_orchestrator(ctx, signed_in):
     job_id = signed_in.post("/api/searches", json={"filter_id": created["id"]}).json()["job_id"]
     _await_status(signed_in, job_id)
     assert ctx.orchestrator.search.call_args.kwargs["source_selection"] == own
+
+
+def test_i3_enrichment_outage_reaches_the_poll(ctx, signed_in):
+    """Issue 3: a Crossref outage during a search is in the poll payload, so
+    the page can say why PDF links or details may be missing."""
+    orch = _real_orchestrator([_doi_record("Generative Agents", "10.1/a")])
+    orch._crossref.enrich.return_value = False
+    ctx.orchestrator = orch
+    job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
+    body = _await_status(signed_in, job_id)
+    assert body["enrich_problems"] == {"Crossref": [1, 1]}

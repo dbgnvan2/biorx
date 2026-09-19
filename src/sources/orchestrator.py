@@ -159,6 +159,7 @@ class SourceOrchestrator:
         max_results: int = 2000,
         enrich_only: Optional[Callable[[CanonicalRecord], bool]] = None,
         on_enrich_progress: Optional[Callable[[int, int], None]] = None,
+        on_enrich_problem: Optional[Callable[[str, int, int], None]] = None,
     ) -> List[CanonicalRecord]:
         """
         Execute a multi-source search and return deduplicated CanonicalRecords.
@@ -178,6 +179,9 @@ class SourceOrchestrator:
                               paper it is about to discard. None = enrich all.
             on_enrich_progress: Callback with (enriched_so_far, to_enrich). If
                               absent, enrichment reports through on_progress.
+            on_enrich_problem: Callback with (service label, failed, attempted)
+                              for each enrichment service whose lookups failed,
+                              so an outage is shown rather than only logged.
 
         Returns:
             List of deduplicated, ranked CanonicalRecords.
@@ -255,7 +259,8 @@ class SourceOrchestrator:
         records = dedup.results()
         self._enrich(records, on_status=on_status,
                      on_progress=on_enrich_progress or on_progress,
-                     should_stop=should_stop, enrich_only=enrich_only)
+                     should_stop=should_stop, enrich_only=enrich_only,
+                     on_problem=on_enrich_problem)
 
         return self._rank(records)
 
@@ -406,6 +411,7 @@ class SourceOrchestrator:
         on_progress: Optional[Callable[[int, int], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None,
         enrich_only: Optional[Callable[[CanonicalRecord], bool]] = None,
+        on_problem: Optional[Callable[[str, int, int], None]] = None,
     ) -> None:
         """Run Crossref and Unpaywall enrichment on records that have DOIs.
 
@@ -413,7 +419,12 @@ class SourceOrchestrator:
         makes up to two synchronous HTTP calls per DOI (spec E2.3).
 
         Spec:  docs/implementation_plan_2026-09-18_filter_run.md#C2
-        Tests: tests/test_orchestrator.py::test_fr2_1_enrich_only_limits_enrichment
+        Tests: tests/test_orchestrator.py::test_fr2_1_enrich_only_limits_enrichment,
+               tests/test_orchestrator.py::test_i3_enrichment_outage_is_reported
+
+        A lookup that failed (adapter returned False, or raised) is counted per
+        service and reported once at the end — as a WARNING, an on_status line
+        and on_problem — so missing PDF links are not silent (P2).
         """
         if not (self._crossref or self._unpaywall):
             return  # nothing to enrich against
@@ -430,24 +441,36 @@ class SourceOrchestrator:
         if on_progress:
             on_progress(0, total)
 
+        failed = {"Crossref": 0, "Unpaywall": 0}
+        attempted = 0
         for i, record in enumerate(targets, start=1):
             if should_stop and should_stop():
                 break
-            try:
-                if self._crossref:
-                    self._crossref.enrich(record)
-            except Exception as e:
-                logger.debug("Crossref error for %s: %s", record.doi, e)
-            try:
-                if self._unpaywall:
-                    self._unpaywall.enrich(record)
-            except Exception as e:
-                logger.debug("Unpaywall error for %s: %s", record.doi, e)
+            attempted = i
+            for label, adapter in (("Crossref", self._crossref), ("Unpaywall", self._unpaywall)):
+                if not adapter:
+                    continue
+                try:
+                    if adapter.enrich(record) is False:
+                        failed[label] += 1
+                except Exception as e:
+                    failed[label] += 1
+                    logger.debug("%s error for %s: %s", label, record.doi, e)
             # Update every 25 records (and on the final one) to limit UI churn.
             if on_progress and (i % 25 == 0 or i == total):
                 on_progress(i, total)
             if on_status and (i % 25 == 0 or i == total):
                 on_status(f"Enriching {i:,}/{total:,} papers…")
+
+        for label, count in failed.items():
+            if not count:
+                continue
+            logger.warning("%s lookups failed for %d of %d papers — their PDF links "
+                           "or metadata may be missing", label, count, attempted)
+            if on_status:
+                on_status(f"{label} failed for {count:,} of {attempted:,} papers")
+            if on_problem:
+                on_problem(label, count, attempted)
 
     # ── Ranking ────────────────────────────────────────────────────────────────
 

@@ -1045,6 +1045,7 @@ def _run_flow(body):
         _js_block(r"async function pollSearch\(\) \{.*?\n\}"),
         _js_block(r"async function loadResults\(\) \{.*?\n\}"),
         _js_block(r"function progressText\(job\) \{.*?\n\}"),
+        _js_block(r"function enrichProblemsText\(job\) \{.*?\n\}"),
         "(async () => { const out = {};\n" + body + "\nconsole.log(JSON.stringify(out)); })();",
     ]
     result = subprocess.run([node, "-e", "\n".join(parts)], capture_output=True, text=True, timeout=20)
@@ -1172,3 +1173,30 @@ def test_i1_saved_filter_runs_on_its_own_sources():
     """)
     assert "source_selection" not in out["saved"] and out["saved"]["filter_id"] == 7
     assert out["manual"]["source_selection"] == {"all": True}
+
+
+@pytest.mark.parametrize("problems,text", [
+    ({}, ""),
+    ({"Crossref": [12, 124]},
+     "Crossref could not be reached for 12 of 124 papers — some PDF links or details may be missing."),
+    ({"Crossref": [1, 2], "Unpaywall": [2, 2]},
+     "Crossref could not be reached for 1 of 2 papers; Unpaywall could not be reached for 2 of 2 "
+     "papers — some PDF links or details may be missing."),
+])
+def test_i3_enrich_problems_text(problems, text):
+    import json
+    got = _node_eval([_js_block(r"function enrichProblemsText\(job\) \{.*?\n\}")],
+                     f"enrichProblemsText({json.dumps({'enrich_problems': problems})})")
+    assert got == text
+
+
+def test_i3_search_page_shows_enrichment_outage():
+    """Issue 3: the real pollSearch puts the note on the page."""
+    out = _run_flow("""
+      await loadSearchFilters();
+      polls.push(Object.assign(job("done"), { enrich_problems: { Crossref: [3, 5] } }));
+      await $("search-filter-list").querySelectorAll()[0].onclick();
+      await new Promise(r => setTimeout(r, 0));
+      out.note = $("enrich-problems").textContent;
+    """)
+    assert out["note"].startswith("Crossref could not be reached for 3 of 5 papers")

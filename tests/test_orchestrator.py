@@ -349,6 +349,27 @@ def test_fr3_1_enrich_progress_has_its_own_channel():
     assert fetch_progress and fetch_progress[-1][0] == 2
 
 
+def test_i3_enrichment_outage_is_reported(caplog):
+    """Issue 3: a Crossref lookup that failed (enrich returned False) or raised
+    is counted and reported — WARNING log, status line, on_enrich_problem —
+    instead of a debug line nobody sees. A "not found" (True) is not a failure."""
+    import logging
+    orch, keep, drop = _two_record_orch()
+    orch._crossref.enrich.side_effect = [False, RuntimeError("boom")]
+    orch._unpaywall.enrich.return_value = True
+    problems, messages = [], []
+    with caplog.at_level(logging.WARNING, logger="src.sources.orchestrator"):
+        orch.search(
+            filter_dict={"days_back": 7, "text_groups": [{"both": "x"}]},
+            source_selection={"all": True, "selected": []},
+            on_status=messages.append,
+            on_enrich_problem=lambda *a: problems.append(a),
+        )
+    assert problems == [("Crossref", 2, 2)]
+    assert "Crossref failed for 2 of 2 papers" in messages
+    assert any("Crossref lookups failed for 2 of 2" in r.message for r in caplog.records)
+
+
 # ── Page-end detection must use the source's page size (review finding 2) ─────
 
 def _orch_for_pagination():

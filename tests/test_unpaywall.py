@@ -144,3 +144,14 @@ def test_enrich_does_not_overwrite_existing_oa_url():
     with patch.object(adapter.session, "get", return_value=mock_resp):
         adapter.enrich(record)
     assert record.best_oa_url == "https://existing-url.com/paper"
+
+
+def test_i3_enrich_reports_a_failed_lookup():
+    """Issue 3: enrich returns False when Unpaywall could not be asked, and
+    True for "not indexed" (422), which is normal."""
+    adapter = UnpaywallAdapter(email="test@example.com")
+    with patch.object(adapter.session, "get", return_value=MagicMock(ok=False, status_code=503)):
+        with patch("time.sleep"):
+            assert adapter.enrich(_make_record()) is False
+    with patch.object(adapter.session, "get", return_value=MagicMock(ok=False, status_code=422)):
+        assert adapter.enrich(_make_record()) is True

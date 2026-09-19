@@ -72,21 +72,24 @@ class CrossrefAdapter:
 
         return resp.json().get("message")
 
-    def enrich(self, record: CanonicalRecord) -> None:
+    def enrich(self, record: CanonicalRecord) -> bool:
         """
+        Returns False only when the lookup failed (unreachable or rate-limited),
+        so the caller can count an outage; True otherwise, including "not found".
+
         Enrich a CanonicalRecord in-place using Crossref metadata.
         Only fills fields that are missing in the canonical record.
         No-op if the record has no DOI or Crossref lookup fails.
         """
         if not record.doi:
-            return
+            return True
         try:
             msg = self.get_by_id(record.doi)
         except (SourceUnavailableError, RateLimitedError) as e:
             logger.warning("Crossref enrich failed for %s: %s", record.doi, e)
-            return
+            return False
         if not msg:
-            return
+            return True
 
         # Fill missing title
         if not record.title:
@@ -133,3 +136,4 @@ class CrossrefAdapter:
                     ))
 
         logger.debug("Crossref enriched: %s", record.doi)
+        return True

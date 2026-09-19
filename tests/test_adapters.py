@@ -265,3 +265,27 @@ def test_crossref_skips_when_no_doi():
         adapter.enrich(record)
 
     mock_get.assert_not_called()  # no DOI → no Crossref call
+
+
+def test_i3_crossref_enrich_reports_a_failed_lookup():
+    """Issue 3: enrich returns False when Crossref could not be asked, so the
+    orchestrator can count an outage; True for a DOI Crossref does not know."""
+    from src.sources.crossref import CrossrefAdapter
+    from src.sources.schema import CanonicalRecord, RecordFlags
+
+    def record():
+        return CanonicalRecord(
+            canonical_id="doi:10.1234/test", title="", abstract="",
+            authors=[], year=0, published_date="", document_type="article",
+            is_preprint=False, journal_or_server="", doi="10.1234/test",
+            pmid="", pmcid="", source_url="", best_oa_url="", pdf_url="",
+            license="", oa_status="", subjects=[], keywords=[],
+            source_hits=[], flags=RecordFlags(),
+        )
+
+    adapter = CrossrefAdapter()
+    with patch.object(adapter.session, "get", return_value=MagicMock(ok=False, status_code=503)), \
+         patch("time.sleep"):
+        assert adapter.enrich(record()) is False
+    with patch.object(adapter.session, "get", return_value=MagicMock(ok=False, status_code=404)):
+        assert adapter.enrich(record()) is True

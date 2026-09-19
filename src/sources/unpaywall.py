@@ -60,20 +60,23 @@ class UnpaywallAdapter:
 
         return resp.json()
 
-    def enrich(self, record: CanonicalRecord) -> None:
+    def enrich(self, record: CanonicalRecord) -> bool:
         """
+        Returns False only when the lookup failed (unreachable or rate-limited),
+        so the caller can count an outage; True otherwise, including "not found".
+
         Enrich a CanonicalRecord in-place with OA location data.
         No-op if the record has no DOI or Unpaywall lookup fails.
         """
         if not record.doi:
-            return
+            return True
         try:
             data = self.get_by_id(record.doi)
         except (SourceUnavailableError, RateLimitedError) as e:
             logger.warning("Unpaywall enrich failed for %s: %s", record.doi, e)
-            return
+            return False
         if not data:
-            return
+            return True
 
         oa_status = data.get("oa_status", "")
         record.oa_status = oa_status
@@ -102,3 +105,4 @@ class UnpaywallAdapter:
             record.flags.fulltext_reusable = True
 
         logger.debug("Unpaywall enriched: %s oa_status=%s", record.doi, oa_status)
+        return True
