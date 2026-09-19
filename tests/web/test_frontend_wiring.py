@@ -927,3 +927,155 @@ def test_sign_out_errors_are_shown_and_the_gate_message_is_used_once():
     assert "catch (e)" in out and "Could not sign out" in out
     boot = re.search(r"async function boot\(\) \{.*?\n\}", code, re.DOTALL).group(0)
     assert boot.index("sessionStorage.removeItem(SS_GATE_MESSAGE)") < boot.index('api("GET", "/api/me")')
+
+
+# ── Plan 2026-09-18: live counts and Run button states (FR3, FR4) ─────────────
+
+@pytest.mark.parametrize("job,text", [
+    ({"fetched": 150, "matched": 3, "phase": "Searching arXiv…"},
+     "Found 150 · Matched 3 — Searching arXiv…"),
+    ({"fetched": 150, "matched": 3, "enriched": 2, "enrich_total": 3, "phase": "Enriching 2/3 papers…"},
+     "Found 150 · Matched 3 · Enriched 2/3 — Enriching 2/3 papers…"),
+    ({"fetched": 0, "matched": 0, "enriched": 0, "enrich_total": 0, "status": "queued"},
+     "Found 0 · Matched 0 — queued"),
+    ({}, "Found 0 · Matched 0"),
+])
+def test_fr3_3_progress_text(job, text):
+    import json
+    got = _node_eval([_js_block(r"function progressText\(job\) \{.*?\n\}")],
+                     f"progressText({json.dumps(job)})")
+    assert got == text
+
+
+def test_fr3_4_both_pollers_show_counts():
+    code = _js_without_comments()
+    search = re.search(r"async function pollSearch\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    test = re.search(r"async function pollFilterTest\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert re.search(r'^\s*\$\("phase"\)\.textContent = progressText\(job\);$', search, re.M)
+    assert re.search(r'^\s*\$\("filter-test-status"\)\.textContent = progressText\(job\);$',
+                     test, re.M)
+
+
+@pytest.mark.parametrize("run,label", [
+    (None, "Run"),
+    ({"id": 7, "status": "running"}, "Running…"),
+    ({"id": 7, "status": "done"}, "Done"),
+    ({"id": 7, "status": "cancelled"}, "Stopped"),
+    ({"id": 7, "status": "error"}, "Failed"),
+    ({"id": 8, "status": "done"}, "Run"),       # another filter's run
+])
+def test_fr4_1_filter_run_label(run, label):
+    import json
+    got = _node_eval([_js_block(r"function filterRunLabel\(filterId, run\) \{.*?\n\}")],
+                     f'filterRunLabel("7", {json.dumps(run)})')
+    assert got == label
+
+
+_RUN_HARNESS = r"""
+const created = [];
+function mk(tag) {
+  const el = { tag, dataset: {}, textContent: "", value: "", disabled: false, checked: false,
+    indeterminate: false, className: "", children: [],
+    classList: { add() {}, remove() {}, toggle() {} },
+    append(...c) { this.children.push(...c); }, appendChild(c) { this.children.push(c); },
+    addEventListener(ev, fn) { this.onclick = fn; } };
+  created.push(el);
+  return el;
+}
+const document = { createElement: mk };
+const els = {};
+els["search-filter-list"] = Object.assign(mk("ul"), {
+  querySelectorAll: () => els["search-filter-list"].children
+    .flatMap(li => li.children || []).filter(c => c.tag === "button" && c.dataset.filterId !== undefined),
+});
+Object.defineProperty(els["search-filter-list"], "textContent", {
+  set(v) { this.children = []; }, get() { return ""; } });
+const $ = (id) => els[id] || (els[id] = mk("x"));
+let mode = "ok", seenAtPost = null;
+async function api(method, path) {
+  if (method === "GET" && path === "/api/filters") return { filters: [{ id: 7, name: "A" }, { id: 8, name: "B" }] };
+  if (method === "POST") {
+    seenAtPost = $("search-filter-list").querySelectorAll().map(b => [b.textContent, b.disabled]);
+    if (mode === "refuse") throw new Error("no search terms");
+    return { job_id: "j" };
+  }
+  return {};
+}
+function notice() {} function renderSummariesPanel() {} function pollSearch() {}
+function populateCategorySelect() {} function getSourceSelection() { return { all: true }; }
+const POLL_MS = 1000;
+globalThis.setInterval = () => 1; globalThis.clearInterval = () => {};
+const labels = () => $("search-filter-list").querySelectorAll().map(b => [b.textContent, b.disabled]);
+"""
+
+
+def _run_flow(body):
+    import json
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    parts = [
+        _js_block(r"const state = \{.*?\n\};"),
+        _RUN_HARNESS,
+        _js_block(r"async function loadSearchFilters\(\) \{.*?\n\}"),
+        _js_block(r"function filterRunLabel\(filterId, run\) \{.*?\n\}"),
+        _js_block(r"function renderFilterRunButtons\(\) \{.*?\n\}"),
+        _js_block(r"async function startSearch\(payload\) \{.*?\n\}"),
+        _js_block(r"function searchFinished\(status\) \{.*?\n\}"),
+        _js_block(r"function stopPolling\(\) \{.*?\n\}"),
+        "(async () => { const out = {};\n" + body + "\nconsole.log(JSON.stringify(out)); })();",
+    ]
+    result = subprocess.run([node, "-e", "\n".join(parts)], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip())
+
+
+def test_fr4_2_buttons_disabled_before_request():
+    """FR4.2: clicking Run disables every Run button and labels the clicked one
+    Running… before the POST leaves; finishing labels it Done and re-enables.
+    Clicking Done runs the filter again."""
+    out = _run_flow("""
+      await loadSearchFilters();
+      out.initial = labels();
+      const buttons = $("search-filter-list").querySelectorAll();
+      await buttons[0].onclick();
+      out.atPost = seenAtPost;
+      searchFinished("done");
+      out.done = labels();
+      await buttons[0].onclick();
+      out.againAtPost = seenAtPost;
+      searchFinished("cancelled");
+      out.stopped = labels();
+    """)
+    assert out["initial"] == [["Run", False], ["Run", False]]
+    assert out["atPost"] == [["Running…", True], ["Run", True]]
+    assert out["done"] == [["Done", False], ["Run", False]]
+    assert out["againAtPost"] == [["Running…", True], ["Run", True]]
+    assert out["stopped"] == [["Stopped", False], ["Run", False]]
+
+
+def test_fr4_2_refused_run_returns_to_run():
+    """An empty filter refused by the server never ran: back to Run, not Failed."""
+    out = _run_flow("""
+      await loadSearchFilters();
+      mode = "refuse";
+      await $("search-filter-list").querySelectorAll()[0].onclick();
+      out.after = labels();
+    """)
+    assert out["after"] == [["Run", False], ["Run", False]]
+
+
+def test_fr4_3_rerender_keeps_state():
+    """FR4.3: the list is rebuilt after a filter is saved; the label survives."""
+    out = _run_flow("""
+      await loadSearchFilters();
+      await $("search-filter-list").querySelectorAll()[1].onclick();
+      out.midRun = (await loadSearchFilters(), labels());
+      searchFinished("done");
+      await loadSearchFilters();
+      out.after = labels();
+    """)
+    assert out["midRun"] == [["Run", True], ["Running…", True]]
+    assert out["after"] == [["Run", False], ["Done", False]]

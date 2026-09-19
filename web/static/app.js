@@ -46,6 +46,8 @@ const state = {
   offset: 0,
   total: 0,
   fetched: 0,
+  searchRunning: false,       // a search job is in flight (any Run button)
+  filterRun: null,            // {id, status} of the last saved-filter run (FR4)
   results: [],
   checkedPapers: new Set(),   // canonical_ids of checked search results
   summarizing: new Set(),     // paperKey()s with a summary in progress
@@ -601,7 +603,6 @@ async function loadSearchFilters() {
     name.className = "name";
     name.textContent = filter.name;
     const run = document.createElement("button");
-    run.textContent = "Run";
     run.dataset.filterId = filter.id;
     run.addEventListener("click", () => {
       state.searchLabel = filter.name;
@@ -610,6 +611,35 @@ async function loadSearchFilters() {
     li.append(name, run);
     list.appendChild(li);
   }
+  renderFilterRunButtons();
+}
+
+/* FR4: the label a saved filter's Run button shows. "Done" only for a run that
+   finished; a stopped or failed run says so rather than claiming success.
+   Pure, for the node-run test. */
+function filterRunLabel(filterId, run) {
+  if (!run || String(run.id) !== String(filterId)) return "Run";
+  return { running: "Running…", done: "Done", cancelled: "Stopped", error: "Failed" }[run.status]
+    || "Run";
+}
+
+/* Apply state to every saved-filter Run button. Called on each state change
+   and after the list is rebuilt, so a re-render keeps the label (FR4.3). */
+function renderFilterRunButtons() {
+  for (const btn of $("search-filter-list").querySelectorAll("button[data-filter-id]")) {
+    btn.textContent = filterRunLabel(btn.dataset.filterId, state.filterRun);
+    btn.disabled = state.searchRunning;
+  }
+}
+
+/* FR3: the live line under the progress bar — found, matched, and enriched
+   once enrichment has started, then the current step. Pure, for the node-run
+   test. */
+function progressText(job) {
+  const parts = [`Found ${job.fetched || 0}`, `Matched ${job.matched || 0}`];
+  if (job.enrich_total > 0) parts.push(`Enriched ${job.enriched || 0}/${job.enrich_total}`);
+  const step = job.phase || job.status || "";
+  return parts.join(" · ") + (step ? ` — ${step}` : "");
 }
 
 function manualFilter() {
@@ -646,6 +676,10 @@ async function startSearch(payload) {
   $("progress-wrap").classList.remove("hidden");
   $("progress").value = 0;
   $("phase").textContent = "Starting…";
+  // Every Run button is disabled before the request leaves (FR4.2).
+  state.searchRunning = true;
+  state.filterRun = payload.filter_id != null ? { id: payload.filter_id, status: "running" } : null;
+  renderFilterRunButtons();
   $("run-search").disabled = true;
   $("cancel-search").disabled = false;
   $("btn-save-as-list").disabled = true;
@@ -661,7 +695,10 @@ async function startSearch(payload) {
     state.polling = setInterval(pollSearch, POLL_MS);
     pollSearch();
   } catch (e) {
+    // Refused before it started (e.g. an empty filter): nothing ran, so the
+    // button goes back to Run rather than claiming Failed.
     notice(e.message);
+    state.filterRun = null;
     searchFinished();
   }
 }
@@ -670,9 +707,9 @@ async function pollSearch() {
   if (!state.jobId) return;
   let job;
   try { job = await api("GET", `/api/searches/${state.jobId}`); }
-  catch (e) { notice(e.message); searchFinished(); return; }
+  catch (e) { notice(e.message); searchFinished("error"); return; }
 
-  $("phase").textContent = job.phase || job.status;
+  $("phase").textContent = progressText(job);
   if (job.total > 0) {
     $("progress").max = job.total;
     $("progress").value = job.fetched;
@@ -682,15 +719,24 @@ async function pollSearch() {
     $("sources-failed").classList.remove("hidden");
   }
   if (["done", "error", "cancelled"].includes(job.status)) {
+    // An earlier poll still in flight when this one finished the job.
+    if (!state.polling) return;
     if (job.status === "error") notice(job.error || "The search failed.");
     state.fetched = job.fetched;
-    await loadResults();
+    // Stop first: the interval must not re-enter while results load, and a
+    // failed load must still release the Run buttons.
+    stopPolling();
+    try { await loadResults(); }
+    catch (e) { notice(`Could not load the results: ${e.message}`); }
     searchFinished(job.status);
   }
 }
 
 function searchFinished(status) {
   stopPolling();
+  state.searchRunning = false;
+  if (state.filterRun) state.filterRun.status = status || "error";
+  renderFilterRunButtons();
   $("run-search").disabled = false;
   $("cancel-search").disabled = true;
   $("progress-wrap").classList.add("hidden");
@@ -1470,7 +1516,7 @@ async function pollFilterTest() {
     $("filter-test-status").textContent = e.message;
     return;
   }
-  $("filter-test-status").textContent = job.phase || job.status;
+  $("filter-test-status").textContent = progressText(job);
   if (["done", "error", "cancelled"].includes(job.status)) {
     clearInterval(state.filterTestPolling);
     state.filterTestPolling = null;
