@@ -59,3 +59,22 @@ def test_r3_summarization_cli_loads_env(monkeypatch):
         agent_cls.return_value.summarize_all_unsummarized.return_value = {"success": True}
         summarization_agent.main()
     assert called == [1]
+
+
+def test_r3_web_app_loads_env_before_building_its_context(monkeypatch):
+    """Owner keys in .env reach a locally run web app (the default provider
+    for every user without a key of their own)."""
+    from web import app as web_app
+    order = []
+    monkeypatch.setattr(env_file, "load_project_env", lambda *a, **k: order.append("env"))
+    monkeypatch.setattr(web_app, "build_context", lambda: order.append("ctx") or MagicMock())
+    web_app.create_app()
+    assert order == ["env", "ctx"]
+
+
+def test_r3_web_app_with_a_given_context_does_not_read_env(monkeypatch):
+    from web import app as web_app
+    called = []
+    monkeypatch.setattr(env_file, "load_project_env", lambda *a, **k: called.append(1))
+    web_app.create_app(MagicMock())
+    assert called == []

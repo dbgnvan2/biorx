@@ -65,7 +65,15 @@ def create_app(ctx: AppContext = None) -> FastAPI:
         docs_url=None,        # no interactive docs behind a shared access code
         redoc_url=None,
     )
-    application.state.ctx = ctx if ctx is not None else build_context()
+    if ctx is None:
+        # Read .env before the context reads the environment, so a local run
+        # gets the owner's DEEPSEEK_API_KEY (the default provider for everyone
+        # without their own key). Never overrides the host's variables, and a
+        # deploy has no .env, so Railway is unchanged.
+        from src.env_file import load_project_env
+        load_project_env()
+        ctx = build_context()
+    application.state.ctx = ctx
 
     @application.middleware("http")
     async def _security_headers(request, call_next):

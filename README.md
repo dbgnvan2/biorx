@@ -91,8 +91,8 @@ and adapters are unchanged.
 
 ```bash
 pip install -r requirements-web.txt
-cp .env.example .env          # then fill in SESSION_SECRET at minimum
-set -a && source .env && set +a
+cp .env.example .env          # then fill in SESSION_SECRET and DEEPSEEK_API_KEY
+set -a && source .env && set +a   # for the access_codes command; the app reads .env itself
 python -m src.access_codes add --for "Your Name"    # prints your access code
 SESSION_COOKIE_INSECURE=1 uvicorn web.app:app --reload --port 8000
 ```
