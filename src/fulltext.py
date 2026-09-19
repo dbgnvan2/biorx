@@ -222,6 +222,40 @@ def semantic_scholar_urls(paper: Dict[str, Any], by_title: bool,
     return urls
 
 
+# ── Downloading (shared by the web route and the desktop/CLI agent) ─────────
+
+def download_pdf_text(url: str) -> str:
+    """Fetch one PDF through the SSRF guard and extract its text.
+
+    The URL may come from the client's paper or from a finder's API reply, so
+    it is fetched through src/safe_fetch (public https hosts only, every
+    redirect checked) into a temporary file — never the shared PDF cache,
+    which is keyed by DOI and title and could be planted. Raises NoText with a
+    reason a user can read.
+    """
+    import tempfile
+
+    from . import safe_fetch
+    from .pdf_handler import PDFHandler
+
+    try:
+        data = safe_fetch.fetch_pdf(safe_fetch.https_candidate(url))
+    except safe_fetch.NotAPdf as e:
+        raise NoText("the link leads to a web page, not a PDF") from e
+    except safe_fetch.TooLarge as e:
+        raise NoText("the PDF is too large") from e
+    except (safe_fetch.FetchRefused, safe_fetch.FetchFailed) as e:
+        raise NoText(str(e) or type(e).__name__) from e
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = f"{tmp}/paper.pdf"
+            with open(path, "wb") as fh:
+                fh.write(data)
+            return PDFHandler(tmp).extract_text(path) or ""
+    except Exception as e:
+        raise NoText("the PDF could not be read") from e
+
+
 # ── The chain ────────────────────────────────────────────────────────────────
 
 def find_full_text(paper: Dict[str, Any], download: Download, *,

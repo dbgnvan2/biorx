@@ -173,3 +173,38 @@ def test_r7_cli_without_a_key_stops_before_running(monkeypatch, capsys):
         assert agent_module.main() == 1
     assert "Cannot summarize: no API key" in capsys.readouterr().err
     run.assert_not_called()
+
+
+def test_ft1_5_agent_uses_the_abstract_without_a_model_call(tmp_path, monkeypatch):
+    """FT1.5: no downloaded PDF and no free copy online — the model is not
+    called; the abstract is stored as the entry, marked source_text=abstract."""
+    from src.fulltext import FullText
+    fake = MagicMock()
+    monkeypatch.setattr(agent_module, "resolve_client",
+                        lambda **_: ResolvedLLM(fake, "deepseek", "deepseek-flash", "owner"))
+    agent = SummarizationAgent(db_path=str(tmp_path / "t.db"))
+    pid = agent.db.insert_paper({"title": "No PDF here", "doi": "10.1/np",
+                                 "abstract": "What the abstract says.", "canonical_id": "doi:10.1/np"})
+    with patch.object(agent, "_find_full_text", return_value=FullText(tried=["OpenAlex: no free copy"])):
+        assert agent.summarize_paper_by_id(pid) is True
+    fake.summarize_paper.assert_not_called()
+    stored = agent.db.get_summary(pid)
+    assert (stored["source_text"], stored["summary_text"], stored["model_version"]) == \
+        ("abstract", "What the abstract says.", "")
+
+
+def test_ft1_5_agent_summarizes_a_copy_found_online(tmp_path, monkeypatch):
+    from src.fulltext import FullText
+    fake = MagicMock()
+    fake.summarize_paper.return_value = {"key_findings": ["a"], "methodology": "m", "conclusions": "c"}
+    monkeypatch.setattr(agent_module, "resolve_client",
+                        lambda **_: ResolvedLLM(fake, "deepseek", "deepseek-flash", "owner"))
+    agent = SummarizationAgent(db_path=str(tmp_path / "t.db"))
+    pid = agent.db.insert_paper({"title": "Found online", "doi": "10.1/fo",
+                                 "abstract": "Abs.", "canonical_id": "doi:10.1/fo"})
+    with patch.object(agent, "_find_full_text",
+                      return_value=FullText(text="The paper's full text.", source="OpenAlex")):
+        assert agent.summarize_paper_by_id(pid) is True
+    assert fake.summarize_paper.call_args.args[1] == "The paper's full text."
+    stored = agent.db.get_summary(pid)
+    assert (stored["source_text"], stored["text_source"]) == ("full_text", "OpenAlex")

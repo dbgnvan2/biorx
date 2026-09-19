@@ -116,6 +116,13 @@ def create_app(ctx: AppContext = None) -> FastAPI:
                        "personal code — see the server log.")
         return out
 
+    def _full_text_finders(cfg):
+        from src.sources.config import get_unpaywall_email
+        finders = ["the paper's own link"]
+        if get_unpaywall_email(cfg):
+            finders.append("Unpaywall")
+        return finders + ["OpenAlex", "Semantic Scholar"]
+
     @application.get("/healthz")
     def healthz():
         """Liveness plus the effective configuration. Never reports a secret —
@@ -152,6 +159,11 @@ def create_app(ctx: AppContext = None) -> FastAPI:
             "codes_in_use": bool(c.codes and c.codes.entries()),
             "pin_min_length": accounts_pin_min_length(),
             "sources": sources_list,
+            # Where summaries look for free full text (plan 2026-09-19 C4).
+            # Unpaywall needs a contact email; without one it is not listed.
+            "full_text_finders": _full_text_finders(c.sources_config or {}),
+            "find_by_title_default": bool(((c.sources_config or {}).get("full_text") or {})
+                                          .get("find_by_title", True)),
         }
 
     if STATIC_DIR.exists():

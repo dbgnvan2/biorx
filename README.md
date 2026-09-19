@@ -148,6 +148,24 @@ To combine two accounts: `python -m src.accounts list --db PATH`, then
 ids can start with `-`). Nothing is
 deleted; the old account's cookie leads to the merged one.
 
+### Full text for summaries
+
+A summary is made from the paper's **full text**, never from the abstract alone.
+Before summarizing, BioRx looks for a free copy, in this order: the paper's own
+link, **Unpaywall** (by DOI — needs `BIORX_CONTACT_EMAIL`), **OpenAlex** and
+**Semantic Scholar** (by DOI, else by exact title). A title match must also share
+the first author or the year, so a similarly named paper is never summarized by
+mistake. Settings → "Also look for free copies by title" turns title searches off
+for your browser; `full_text` in `sources_config.yaml` sets the default and how many
+PDFs are tried per paper.
+
+With no full text found, **no model is called**: the abstract is kept and shown as
+"Abstract only — no full text found (not a model summary)", with a ✓ Abstract only
+badge. Summarize on it later searches again. `/healthz` lists the active finders.
+
+Google Scholar and ResearchGate are deliberately not used: neither offers a public
+API, both forbid automated access in their terms, and Scholar blocks scripts.
+
 ### LLM backends and keys
 
 Three backends, configured in `llm_config.yaml`: local **Ollama** for

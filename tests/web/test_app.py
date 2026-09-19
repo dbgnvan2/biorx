@@ -172,3 +172,15 @@ def test_h_app_js_reads_healthz_startup_warnings_on_boot():
         "after comment-stripping; deleting the render line while keeping the "
         "fetch would make this test red"
     )
+
+
+def test_c4_healthz_lists_full_text_finders(client, ctx, monkeypatch):
+    """C4: /healthz says where summaries look for full text; Unpaywall only
+    when a contact email is configured."""
+    ctx.sources_config = {"contact_email": "", "full_text": {"find_by_title": False}}
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    body = client.get("/healthz").json()
+    assert body["full_text_finders"] == ["the paper's own link", "OpenAlex", "Semantic Scholar"]
+    assert body["find_by_title_default"] is False
+    monkeypatch.setenv("BIORX_CONTACT_EMAIL", "me@example.org")
+    assert "Unpaywall" in client.get("/healthz").json()["full_text_finders"]

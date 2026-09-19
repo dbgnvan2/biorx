@@ -68,6 +68,24 @@ class SummarizationAgent:
             logger.info("Summaries will use %s (%s)", resolved.provider, resolved.model)
         return self.llm
 
+    def _find_full_text(self, paper: Dict[str, Any]):
+        """The same finder chain the web app uses: own link, Unpaywall,
+        OpenAlex, Semantic Scholar (src/fulltext.py)."""
+        from src.fulltext import download_pdf_text, find_full_text
+        from src.paper_meta import pdf_url
+        from src.sources.config import (get_unpaywall_email, load_sources_config,
+                                        polite_user_agent)
+        cfg = load_sources_config()
+        settings = cfg.get("full_text") or {}
+        own = pdf_url(paper)
+        return find_full_text(
+            paper, download_pdf_text, own_links=[own] if own else [],
+            by_title=bool(settings.get("find_by_title", True)),
+            email=get_unpaywall_email(cfg),
+            max_downloads=int(settings.get("max_downloads", 4)),
+            user_agent=polite_user_agent(cfg),
+        )
+
     def summarize_all_unsummarized(self, max_count: int = 10) -> Dict[str, Any]:
         """
         Summarize all papers that don't have summaries yet.
@@ -159,21 +177,31 @@ class SummarizationAgent:
         try:
             logger.info(f"Summarizing: {title}")
 
-            # Check if PDF exists
-            if not pdf_path or not Path(pdf_path).exists():
-                logger.warning(f"PDF not found for paper {paper_id}: {pdf_path}")
-                return False
-
-            # Extract text from PDF
-            logger.debug(f"Extracting text from {pdf_path}")
-            text = self.pdf_handler.extract_text(pdf_path, max_pages=10)
-
+            # Full text: the downloaded PDF if there is one, else a free copy
+            # found online (plan 2026-09-19 C2).
+            text, text_source = "", ""
+            if pdf_path and Path(pdf_path).exists():
+                logger.debug(f"Extracting text from {pdf_path}")
+                text = self.pdf_handler.extract_text(pdf_path, max_pages=10) or ""
+                text_source = "downloaded PDF" if text else ""
             if not text:
-                logger.warning(f"Failed to extract text from {pdf_path}")
-                return False
+                found = self._find_full_text(paper)
+                text, text_source = found.text, found.source
+                if not text:
+                    logger.info("Paper %s: no full text — %s", paper_id, found.explain())
 
-            # Prepare input for LLM
             abstract = paper.get("abstract", "")
+            if not text:
+                # No full text: keep the abstract as the entry and do not call
+                # the model (plan 2026-09-19 C1, FT1.5).
+                if not abstract.strip():
+                    logger.warning("Paper %s has neither full text nor an abstract", paper_id)
+                    return False
+                self.db.insert_summary(paper_id=paper_id, summary_text=abstract,
+                                       model_version="", source_text="abstract")
+                logger.info("Paper %s: no full text found — kept the abstract, no model used",
+                            paper_id)
+                return True
             # Same budget the web app uses (llm_config.yaml max_text_chars);
             # what is dropped is logged rather than cut silently (P9).
             budget = max_text_chars(load_llm_config())
@@ -212,6 +240,8 @@ class SummarizationAgent:
                 methodology=summary_data.get("methodology"),
                 conclusions=summary_data.get("conclusions"),
                 model_version=self.model,
+                source_text="full_text",
+                text_source=text_source,
             )
 
             logger.info(f"Summary saved for paper {paper_id}")
