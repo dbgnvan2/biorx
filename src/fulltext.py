@@ -55,6 +55,16 @@ class NoText(Exception):
     """This URL gave no usable text; the message says why, for the user."""
 
 
+class Skip(Exception):
+    """This finder cannot be asked for this paper (no DOI, no contact email).
+    Not a result: nothing was looked up (gate finding F3)."""
+
+
+class Refused(Exception):
+    """The service answered but refused the request (401/403): a settings
+    problem, not an outage — retrying later will not help (gate finding F2)."""
+
+
 @dataclass
 class FullText:
     text: str = ""
@@ -158,6 +168,8 @@ def default_get_json(user_agent: str) -> GetJson:
             return None
         if resp.status_code == 429:
             raise RateLimitedError(f"{url.split('/')[2]} is rate-limiting requests")
+        if resp.status_code in (401, 403):
+            raise Refused(f"refused the request (HTTP {resp.status_code})")
         if not resp.ok:
             raise SourceUnavailableError(f"{url.split('/')[2]} returned {resp.status_code}")
         try:
@@ -175,8 +187,10 @@ def _clean_doi(doi: str) -> str:
 
 def unpaywall_urls(paper: Dict[str, Any], email: str, get_json: GetJson) -> List[str]:
     doi = _clean_doi(paper.get("doi", ""))
-    if not doi or not email:
-        return []
+    if not email:
+        raise Skip("no contact email set")
+    if not doi:
+        raise Skip("the paper has no DOI")
     data = get_json(f"https://api.unpaywall.org/v2/{doi}", {"email": email})
     if not data:
         return []
@@ -298,20 +312,29 @@ def find_full_text(paper: Dict[str, Any], download: Download, *,
 
     finders = [
         ("the paper's own link", lambda: list(own_links)),
-        ("Unpaywall", lambda: unpaywall_urls(paper, email, get_json) if email else None),
+        ("Unpaywall", lambda: unpaywall_urls(paper, email, get_json)),
         ("OpenAlex", lambda: openalex_urls(paper, by_title, email, get_json)),
         ("Semantic Scholar", lambda: semantic_scholar_urls(paper, by_title, get_json)),
     ]
     for name, find in finders:
+        if downloads >= max_downloads:
+            # Asking further finders would only find URLs nobody may fetch
+            # (gate finding F4); say so instead of calling them.
+            result.tried.append(f"{name}: not asked (limit of {max_downloads} PDFs reached)")
+            continue
         try:
             urls = find()
+        except Skip as e:
+            result.tried.append(f"{name}: skipped ({e})")
+            continue
+        except Refused as e:
+            result.tried.append(f"{name}: {e} — check its settings")
+            logger.warning("Full-text finder %s %s", name, e)
+            continue
         except (SourceUnavailableError, RateLimitedError, requests.RequestException) as e:
             result.unreachable.append(name)
             result.tried.append(f"{name}: could not be reached")
             logger.info("Full-text finder %s unreachable: %s", name, e)
-            continue
-        if urls is None:
-            result.tried.append(f"{name}: skipped (no contact email set)")
             continue
         urls = [u for u in urls if u and u not in seen]
         if not urls:

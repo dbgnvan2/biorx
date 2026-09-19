@@ -1459,3 +1459,28 @@ def test_ft1_2_abstract_only_entry_is_retried():
         ["/api/summaries/lookup", None], ["/api/summaries", False]]
     assert _run_start_summary({"source_text": "full_text", "key_findings": ["F"]}) == [
         ["/api/summaries/lookup", None]]
+
+
+@pytest.mark.parametrize("stored,server_default,expected", [
+    (None, False, False),   # gate F1: the operator's config default now applies
+    (None, True, True),
+    ("on", False, True),    # this browser's own choice wins
+    ("off", True, False),
+])
+def test_f1_find_by_title_falls_back_to_the_server_default(stored, server_default, expected):
+    import json
+    setup = ("const LS_FIND_BY_TITLE = 'k'; const store = {}; "
+             + (f"store.k = {json.dumps(stored)}; " if stored else "")
+             + "const localStorage = { getItem: (k) => store[k] ?? null }; "
+             + f"const state = {{ findByTitleDefault: {json.dumps(server_default)} }};")
+    got = _node_eval([setup, _js_block(r"function findByTitle\(\) \{.*?\n\}")], "findByTitle()")
+    assert got is expected
+
+
+def test_f1_healthz_default_is_read_by_the_page():
+    """The page takes find_by_title_default from /healthz (the value is otherwise
+    computed and read by nothing — gate F1)."""
+    code = _js_without_comments()
+    body = re.search(r"async function loadSources\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert re.search(r"^\s*state\.findByTitleDefault = health\.find_by_title_default !== false;$",
+                     body, re.M)

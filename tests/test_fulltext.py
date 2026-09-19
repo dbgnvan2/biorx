@@ -194,3 +194,38 @@ def test_ft3_8_only_wrong_documents_means_not_found():
     r = find_full_text({**PAPER, "doi": "10.1/x"}, dl, own_links=[], get_json=get)
     assert not r.found
     assert "OpenAlex: a PDF that is a different document (its title is not in it)" in r.tried
+
+
+# ── Gate findings (docs/cycles/2026-09-19_full-text-qa-gate.md) ──────────────
+
+def test_f2_refusal_is_a_settings_problem_not_an_outage():
+    """401/403 is terminal: reported as refused, not as 'could not be reached'."""
+    from unittest.mock import MagicMock, patch
+    from src.fulltext import default_get_json, Refused
+    resp = MagicMock(status_code=403, ok=False)
+    with patch("src.fulltext.requests.get", return_value=resp):
+        with pytest.raises(Refused):
+            default_get_json("ua")("https://api.unpaywall.org/v2/10.1/x", {})
+    get = _json({"unpaywall.org": Refused("refused the request (HTTP 403)")})
+    r = find_full_text({**PAPER, "doi": "10.1/x"}, _download({}), own_links=[],
+                       email="me@x.org", get_json=get)
+    assert "Unpaywall: refused the request (HTTP 403) — check its settings" in r.tried
+    assert "Unpaywall" not in r.unreachable
+
+
+def test_f3_no_doi_is_skipped_not_no_copy():
+    r = find_full_text(PAPER, _download({}), own_links=[], email="me@x.org",
+                       by_title=False, get_json=_json({}))
+    assert "Unpaywall: skipped (the paper has no DOI)" in r.tried
+    assert "Unpaywall: no free copy" not in r.tried
+
+
+def test_f4_no_lookups_after_the_download_cap():
+    """Once the cap is reached, later finders are not asked at all."""
+    paper = {**PAPER, "doi": "10.1/x"}
+    get = _json({"unpaywall.org": {"oa_locations": [{"url_for_pdf": f"https://u/{i}.pdf"}
+                                                    for i in range(3)]}})
+    r = find_full_text(paper, _download({}), own_links=[], email="me@x.org",
+                       max_downloads=2, get_json=get)
+    assert [u for u, _ in get.calls if "openalex" in u or "semanticscholar" in u] == []
+    assert "OpenAlex: not asked (limit of 2 PDFs reached)" in r.tried

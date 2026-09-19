@@ -68,6 +68,7 @@ const state = {
   activeListId: null,
   refItems: [],
   refSummaries: [],           // stored summaries for the open list (RL1)
+  findByTitleDefault: true,   // server default for title search (/healthz)
   // Discover
   discoverJobId: null,
   discoverPolling: null,
@@ -305,9 +306,16 @@ const LS_TAB      = "biorx_active_tab";
 const LS_DEFAULT_SOURCES = "biorx_default_sources";
 const LS_FIND_BY_TITLE = "biorx_find_by_title";
 
-/* FT3: look for free copies by title as well as DOI. On unless turned off. */
+/* FT3: look for free copies by title as well as DOI. This browser's choice if
+   it made one, else the server's default (sources_config.yaml full_text.
+   find_by_title, via /healthz) — gate finding F1: the config was ignored.
+   Pure apart from reading storage, for the node-run test. */
 function findByTitle() {
-  try { return localStorage.getItem(LS_FIND_BY_TITLE) !== "off"; } catch (e) { return true; }
+  let choice = null;
+  try { choice = localStorage.getItem(LS_FIND_BY_TITLE); } catch (e) { choice = null; }
+  if (choice === "on") return true;
+  if (choice === "off") return false;
+  return state.findByTitleDefault !== false;
 }
 
 function localSettings() {
@@ -500,6 +508,8 @@ async function loadSources() {
   try {
     const health = await api("GET", "/healthz");
     state.sources = (health.sources || []).filter(s => s.enabled);
+    state.findByTitleDefault = health.find_by_title_default !== false;
+    $("find-by-title").checked = findByTitle();
     if (health.startup_warnings && health.startup_warnings.length) {
       notice("⚠ " + health.startup_warnings.join(" | "), "warn");
     }

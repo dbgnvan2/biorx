@@ -292,6 +292,32 @@ def test_migration_is_additive_on_a_populated_db(tmp_path):
     third.close()
 
 
+def test_f5_summaries_source_columns_migrate_an_existing_db(tmp_path):
+    """Gate F5 (P8): a database whose summaries table predates source_text /
+    text_source gains both on open, keeps its rows, and reads them as unknown
+    ('') — never as full text."""
+    import sqlite3 as _sq
+    path = str(tmp_path / "old.db")
+    first = Database(path)
+    pid = first.insert_paper({"doi": "10.1/old", "title": "Old", "authors": "A",
+                              "abstract": "x", "date": "2026-01-01"})
+    first.insert_summary(pid, summary_text="old summary", model_version="qwen:7b")
+    first.close()
+    # Make it look like a database from before these columns existed.
+    raw = _sq.connect(path)
+    raw.execute("ALTER TABLE summaries DROP COLUMN source_text")
+    raw.execute("ALTER TABLE summaries DROP COLUMN text_source")
+    raw.commit()
+    raw.close()
+
+    reopened = Database(path)
+    cols = {r[1] for r in reopened.conn.execute("PRAGMA table_info(summaries)")}
+    assert {"source_text", "text_source"} <= cols
+    old = reopened.get_summary(pid)
+    assert (old["summary_text"], old["source_text"], old["text_source"]) == ("old summary", "", "")
+    reopened.close()
+
+
 def test_add_column_if_missing_raises_on_a_real_failure(db):
     """
     A migration failure must not be swallowed as "column already exists" (P2).
