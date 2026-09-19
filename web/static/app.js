@@ -1946,11 +1946,14 @@ async function exportRefSummariesPdf() {
   // RL3: the ticked papers, or the whole list when none are ticked.
   const ticked = Array.from($("ref-papers-body").querySelectorAll("input:checked"))
     .map(cb => cb.dataset.itemId);
-  const query = ticked.length ? `?item_ids=${ticked.join(",")}` : "";
   let resp;
   try {
-    resp = await api("GET", `/api/references/${state.activeListId}/summaries.pdf${query}`,
-                     undefined, { raw: true });
+    // Each call written out in full so the route-inventory test can read it.
+    resp = ticked.length
+      ? await api("GET", `/api/references/${state.activeListId}/summaries.pdf?item_ids=${ticked.join(",")}`,
+                  undefined, { raw: true })
+      : await api("GET", `/api/references/${state.activeListId}/summaries.pdf`,
+                  undefined, { raw: true });
   } catch (e) { $("ref-dl-status").textContent = `Export failed: ${e.message}`; return; }
   if (resp.status === 401) return;          // api() has shown the sign-in page
   if (!resp.ok) {

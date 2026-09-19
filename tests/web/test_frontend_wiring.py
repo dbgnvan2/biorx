@@ -151,6 +151,7 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/references/{param}/items",
         "/api/references/{param}/items/{param}",
         "/api/references/{param}/export.csv",
+        "/api/references/{param}/summaries",
         "/api/references/{param}/summaries.pdf",
         "/api/references/{param}/pdf/{param}",
         "/api/discover-terms",
