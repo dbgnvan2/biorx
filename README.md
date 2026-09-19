@@ -1,8 +1,8 @@
 # BioRxiv Research Tool
 
 **Purpose:** Desktop GUI app + headless agents that search nine publication sources,
-deduplicate and enrich the results, download papers, and summarize them with a local
-Qwen 7B model.
+deduplicate and enrich the results, download papers, and summarize them with an LLM
+— DeepSeek by default, or Anthropic, or a local Ollama model (see `llm_config.yaml`).
 
 ## Quick Start for Claude Code
 
@@ -22,7 +22,7 @@ Qwen 7B model.
 - **Language:** Python 3.9+
 - **GUI:** PyQt6
 - **Database:** SQLite3
-- **LLM:** Qwen 7B (via Ollama)
+- **LLM:** DeepSeek `deepseek-flash` by default; Anthropic or local Ollama (`qwen3.5:4b`) via `llm_config.yaml`
 
 ## Sources
 
@@ -60,13 +60,13 @@ Records are emitted as one JSON object per line on stdout; progress goes to stde
 - Load/edit search clusters from key_terms.json
 - Run searches ad-hoc or on schedule
 - Download PDFs to `/preprints/`
-- Summarize papers with Qwen 7B (background threads)
+- Summarize papers with the configured LLM (DeepSeek by default)
 - View/manage summaries in SQLite
 - CLI headless modes for openclaw automation
 
 ## Key Design Decisions
 - ✅ **Categorized searches:** Organize key_terms into clusters (e.g., "Genetics & CRISPR")
-- ✅ **Local LLM:** Qwen 7B via Ollama (no cloud API, fully offline after model download)
+- ✅ **LLM choice in config:** DeepSeek by default (needs `DEEPSEEK_API_KEY` in `.env`); Ollama for fully offline use
 - ✅ **Single papers:** Summarize one at a time, not in batches
 - ✅ **Background threads:** Keep UI responsive during summarization
 - ✅ **Idempotent agents:** Safe to run multiple times without duplicates
@@ -152,7 +152,10 @@ deleted; the old account's cookie leads to the merged one.
 
 Three backends, configured in `llm_config.yaml`: local **Ollama** for
 development, **DeepSeek** over its OpenAI-compatible API, and **Anthropic** over
-the Messages API. `LLM_PROVIDER` picks the default.
+the Messages API. `default_provider` in `llm_config.yaml` is **deepseek**;
+`LLM_PROVIDER` overrides it. Keys go in `.env` (the desktop app and CLI agents
+read it at start-up) or the host environment — never in `llm_config.yaml`,
+which is committed to git.
 
 Each summary resolves a credential in this order:
 

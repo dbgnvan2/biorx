@@ -107,10 +107,18 @@ cd biorx
 pip install -r requirements.txt
 ```
 
-Pull the default summarization model:
+Summaries use DeepSeek by default (`llm_config.yaml`). Put the key in `.env`,
+which the app reads at start-up (never in `llm_config.yaml` — it is committed):
 
 ```bash
-ollama pull qwen:7b
+echo 'DEEPSEEK_API_KEY=your-key' >> .env
+```
+
+For fully offline summaries instead, set `default_provider: ollama` and pull the
+model it names:
+
+```bash
+ollama pull qwen3.5:4b
 ```
 
 Start the app:
@@ -200,4 +208,5 @@ In the web app, each user can paste their own Anthropic or DeepSeek key under **
 
 **Ollama not found (desktop app)**
 - Run `ollama serve` in a terminal, then restart the app.
-- Confirm the model is downloaded: `ollama list` should show `qwen:7b`.
+- Confirm the model is downloaded: `ollama list` should show `qwen3.5:4b`
+  (the model named in `llm_config.yaml`).

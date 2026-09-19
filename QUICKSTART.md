@@ -3,10 +3,10 @@
 ## Prerequisites
 
 1. **Python 3.9+**
-2. **Ollama** running with Qwen 7B model
-   - Install: https://ollama.ai/
-   - Pull model: `ollama pull qwen:7b`
-   - Start service: `ollama serve` (runs on localhost:11434)
+2. **An LLM for summaries** — DeepSeek is the default (`llm_config.yaml`):
+   - Put `DEEPSEEK_API_KEY=...` in `.env` (read at start-up; never in `llm_config.yaml`)
+   - Or, fully offline: set `default_provider: ollama`, install https://ollama.ai/,
+     `ollama pull qwen3.5:4b`, and `ollama serve` (localhost:11434)
 
 ## Installation
 
@@ -97,9 +97,13 @@ Edit `key_terms.json` to customize search clusters:
 
 ## Troubleshooting
 
-### "Ollama not available"
+### "no API key available for deepseek"
+- Add `DEEPSEEK_API_KEY=...` to `.env` and restart
+
+### "Ollama not available" / "model ... is not installed" (when using Ollama)
 - Make sure Ollama is running: `ollama serve`
-- Check model is installed: `ollama list` (should show qwen:7b)
+- Check the model named in `llm_config.yaml` is installed: `ollama list`
+  (should show `qwen3.5:4b`, or run `ollama pull qwen3.5:4b`)
 - Verify it's on localhost:11434
 
 ### "PDF extraction failed"
@@ -115,7 +119,7 @@ Edit `key_terms.json` to customize search clusters:
 1. Configure your search clusters in `key_terms.json`
 2. Run searches from the GUI or CLI
 3. Review downloaded papers
-4. Summarize papers with Qwen 7B
+4. Summarize papers (DeepSeek by default)
 5. (Optional) Schedule with openclaw for daily runs
 
 ## Files Overview

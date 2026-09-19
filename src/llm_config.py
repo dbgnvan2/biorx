@@ -21,12 +21,14 @@ logger = logging.getLogger(__name__)
 CONFIG_FILENAME = "llm_config.yaml"
 
 # Used only when llm_config.yaml is missing entirely, so the app still starts.
+# Ollama because it is the one provider that needs no key; the real default
+# (deepseek) lives in llm_config.yaml. Model = the one installed here.
 _FALLBACK: Dict[str, Any] = {
     "default_provider": "ollama",
     "providers": {
         "ollama": {
             "dialect": "ollama", "base_url": "http://localhost:11434",
-            "model": "qwen:7b", "timeout": 120,
+            "model": "qwen3.5:4b", "timeout": 120,
         },
     },
     "max_text_chars": 12000,

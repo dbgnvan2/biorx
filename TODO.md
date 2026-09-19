@@ -217,11 +217,12 @@ Consequences worth deciding on:
 
 ## Pre-existing, found while reading
 
-- `src/llm.py` — the summarization prompt f-string contains
-  `{full_text[:3000]}  # Limit to first 3000 chars…`; the `#` is inside the
-  string, so that comment is sent to the model on every call.
-- `src/llm.py` — that 3000-character truncation is silent (P9 / L7: announce it).
-- `src/llm.py` — `OLLAMA_MODEL = "qwen:7b"` is hardcoded in source (L1: model ids
-  belong in config).
-- `/opt/homebrew/bin/pytest` is Python 3.11 **without PyQt6**, so every GUI test
-  is permanently skipped under the documented test command.
+- ~~`src/llm.py` — prompt f-string sent a `# Limit to first 3000 chars` comment
+  to the model.~~ Fixed 2026-09-18 (220e724).
+- ~~`src/llm.py` — silent 3000-character truncation.~~ Fixed 2026-09-18: the
+  budget is `max_text_chars` from `llm_config.yaml`; the agent logs what it drops.
+- `src/llm.py` — `OLLAMA_MODEL` is still a model id in source, now `qwen3.5:4b`
+  and used only by a bare `OllamaClient()`; every real path passes the config
+  model. Remove when nothing constructs a bare client.
+- ~~`/opt/homebrew/bin/pytest` skipped every GUI test.~~ Fixed 2026-09-18
+  (dfc1d8b): `CLAUDE.md` names the venv; the run summary announces GUI skips.

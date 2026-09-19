@@ -16,7 +16,7 @@ Read the relevant file from `~/.claude/standards/` before starting work:
 
 
 ## Project Overview
-Desktop GUI application (PyQt6) + CLI agents for searching bioRxiv preprints, downloading papers, and summarizing them using a local Qwen 7B model via Ollama.
+Desktop GUI application (PyQt6) + CLI agents for searching bioRxiv preprints, downloading papers, and summarizing them with the LLM named in `llm_config.yaml` (DeepSeek by default; Anthropic or local Ollama `qwen3.5:4b` optional).
 
 **Data storage:** `/preprints/` directory with SQLite database, PDFs, and summaries.
 
@@ -34,8 +34,8 @@ Desktop GUI application (PyQt6) + CLI agents for searching bioRxiv preprints, do
 - **Background threading:** Keep UI responsive during long operations
 - **Idempotent agents:** Safe to run multiple times; check SQLite before inserting
 - **Categorized searches:** `key_terms.json` organized by search clusters
-- **Local LLM:** Qwen 7B via Ollama (localhost:11434), fully offline
-- **No external APIs:** Only bioRxiv API + local Ollama
+- **LLM:** DeepSeek by default (`DEEPSEEK_API_KEY` in `.env`); Ollama (localhost:11434, `qwen3.5:4b`) for offline use — set in `llm_config.yaml`
+- **External APIs:** publication sources, Crossref/Unpaywall enrichment, and the configured LLM provider
 
 ---
 
@@ -108,7 +108,7 @@ biorx/
 
 ### Agents
 - [ ] search_agent.py: Read key_terms, execute searches, store in SQLite
-- [ ] summarization_agent.py: Find unsummarized papers, run Qwen, store results
+- [ ] summarization_agent.py: Find unsummarized papers, run the configured LLM, store results
 - [ ] Both callable from GUI or CLI (python gui.py --run-search, --run-summarize)
 
 ### Core Utilities
