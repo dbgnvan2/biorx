@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-09-18 (filter runs, model default, saved lists)
+
+Gate: `docs/cycles/2026-09-18_filter-run-batch-qa-gate.md` — APPROVED.
+Plan: `docs/implementation_plan_2026-09-18_filter_run.md`.
+
+### Added
+- Saved reference lists: each paper has a **detail** view, a **✓ Summary**
+  badge and a **Summarize** button, as on the Search results. **Save summaries
+  (PDF)** exports the ticked papers, or the whole list when none are ticked.
+  New `GET /api/references/{id}/summaries`.
+- Live progress line: `Found · Matched · Enriched` while a search runs, on
+  the Search tab and the Filters-tab test.
+- Saved-filter Run buttons read Running… → Done / Stopped / Failed / Lost track;
+  all Run buttons are disabled while a search is in flight.
+- `DEFAULT_LLM_PROVIDER` names the default provider (old name `LLM_PROVIDER`,
+  still honoured; the start-up log flags it and says which one won).
+- The web app, desktop app and CLI agents read `.env` at start-up (never
+  overriding the environment). The web app logs which settings came from where
+  (names only) and now logs at INFO — before, every INFO line was discarded.
+
+### Changed
+- Default LLM is **DeepSeek** (`deepseek-flash`). Ollama's entry names the
+  installed `qwen3.5:4b`; `qwen:7b` was never installed.
+- Only papers the filter keeps are enriched (Crossref/Unpaywall), and what
+  enrichment finds (PDF links, licence, abstracts) now reaches the results —
+  web, desktop and saved rows. It used to run on every fetched paper and its
+  output was thrown away.
+- A saved filter runs on its own saved sources, not the Search panel's boxes.
+
+### Fixed
+- An empty filter (no terms, authors or institution) is refused everywhere
+  instead of scanning every source's whole date window.
+- "N were fetched" showed the enrichment count.
+- Crossref/Unpaywall outages are reported (warning line, status, `monitor.py`
+  exit 2) instead of logged at debug.
+- One failed status check no longer ends a search as Failed while it runs on.
+- The desktop summarizer used a hard-coded, uninstalled model and labelled every
+  summary "qwen:7b"; it now uses the config, records the real model, refuses
+  blank summaries, and the CLI names a paid model before running.
+- Ollama: checks its model is installed; honours the configured text budget and
+  timeout; its prompt no longer sends a Python comment to the model.
+- An unreachable abstract source is reported as unreachable, not "looked in".
+- Desktop: a later filter can no longer erase a PDF link an earlier one found;
+  a failed filter no longer leaves the run buttons disabled for good.
+- A top-level `keywords` string was split into letters.
+- `llm_config.yaml` no longer advises pasting API keys into a committed file.
+
 ## 2026-09-18 (review) — fixes from the pre-push review
 
 Three reviews (learning-qa, correctness, security) over everything since the

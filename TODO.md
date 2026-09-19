@@ -3,6 +3,27 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the filter-run batch gate (`docs/cycles/2026-09-18_filter-run-batch-qa-gate.md`) — APPROVED, deferred
+
+Carried to the next batch rather than fixed after approval (a post-approval fix
+would ship code the gate never read).
+- LOW — `normalise_filter` runs in `filter_papers` but not in the GUI/monitor
+  query-builder path (`gui.py`, `agents/monitor.py`, `src/sources/query_builder.py:118`),
+  so a hand-edited top-level `keywords` string still splits into letters in the
+  *query* sent to sources there. Fix: normalise once at every entry point.
+- LOW — `enrich_only` relies on record identity; the cross-source dedup-merge path
+  (a later source merging into a matched record) has no test.
+- INFO — `tests/conftest.py` clears `DEFAULT_LLM_PROVIDER` but not `LLM_PROVIDER`
+  from the developer's shell.
+- INFO — `_enrich`'s "failed for N of M" uses one denominator (records attempted)
+  for both Crossref and Unpaywall.
+
+Also open from this batch:
+- Railway: if the service sets `LLM_PROVIDER=anthropic`, it still wins over the
+  yaml default — set `DEFAULT_LLM_PROVIDER=deepseek` there (start-up log shows which won).
+- The desktop GUI was not driven live in this batch; its changes are covered by
+  unit tests under the venv only (CI has no PyQt6).
+
 ## From personal access codes (2026-09-18) — adjacent issues found, not fixed
 
 - **No per-IP rate limit** on `POST /api/session` or `POST /api/session/lookup`.
