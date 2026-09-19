@@ -460,3 +460,26 @@ def test_r5_unreachable_source_is_named_apart_from_empty_ones(ctx, signed_in, mo
         body = _await(signed_in, job_id)
     assert "(looked in: europepmc)" in body["error"]
     assert "Could not reach: crossref" in body["error"]
+
+
+def test_rl2_summary_made_from_a_saved_list_shows_on_that_list(ctx, signed_in, monkeypatch, no_pdf):
+    """RL2 end to end: the paper dict the References tab holds (from GET
+    /items) is summarized through the real route, and the list's summaries
+    then include it — the ✓ badge's source of truth."""
+    from src import user_store
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    paper = {"title": "Agents in a saved list", "abstract": "We simulate agents at scale.",
+             "doi": "10.9/rl2", "canonical_id": "doi:10.9/rl2", "source": "arxiv"}
+    list_id = signed_in.post("/api/references", json={"name": "Saved"}).json()["id"]
+    user_store.add_reference_item(ctx.db, list_id, ctx.db.insert_paper(paper))
+    held = signed_in.get(f"/api/references/{list_id}/items").json()["items"][0]["paper"]
+    assert signed_in.get(f"/api/references/{list_id}/summaries").json()["summaries"] == []
+
+    with patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
+        job_id = signed_in.post("/api/summaries", json={"paper": held}).json()["job_id"]
+        assert _await(signed_in, job_id)["status"] == "done"
+
+    listed = signed_in.get(f"/api/references/{list_id}/summaries").json()["summaries"]
+    assert [s["title"] for s in listed] == ["Agents in a saved list"]
+    assert listed[0]["key_findings"] == ["Agents cooperate"]

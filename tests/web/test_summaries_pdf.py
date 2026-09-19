@@ -257,3 +257,43 @@ def test_s3_pdf_counts_a_paper_once_when_two_results_are_it(signed_in, ctx):
     text = _text(r.content)
     assert "1 of 1 papers summarized" in text
     assert text.count("the finding") == 1
+
+
+# ── RL: a saved list shows and exports its summaries (2026-09-18) ────────────
+
+def test_rl1_list_summaries(signed_in, ctx):
+    """RL1: a saved list reports which of its papers are summarized, without
+    re-running the search that found them."""
+    list_id = _list_with_papers(signed_in, ctx)
+    body = signed_in.get(f"/api/references/{list_id}/summaries").json()
+    assert [s["title"] for s in body["summaries"]] == [SUMMARIZED["title"]]
+    s = body["summaries"][0]
+    assert s["canonical_id"] == SUMMARIZED["canonical_id"]
+    assert s["key_findings"] == ["Coffee intake was not associated with amyloid."]
+    assert s["model_version"] == "claude-sonnet-5" and s["item_id"]
+
+
+def test_rl1_list_summaries_is_private(signed_in, other_client, ctx):
+    from tests.web.conftest import ACCESS_CODE, account_body
+    list_id = _list_with_papers(signed_in, ctx)
+    other_client.post("/api/session", json=account_body(ACCESS_CODE))
+    assert other_client.get(f"/api/references/{list_id}/summaries").status_code == 404
+
+
+def test_rl3_export_only_the_ticked_papers(signed_in, ctx):
+    """RL3: Save summaries with papers ticked exports just those."""
+    list_id = _list_with_papers(signed_in, ctx)
+    items = signed_in.get(f"/api/references/{list_id}/items").json()["items"]
+    unsummarized = next(i for i in items if i["paper"]["title"] == UNSUMMARIZED["title"])
+    text = _text(signed_in.get(f"/api/references/{list_id}/summaries.pdf",
+                               params={"item_ids": str(unsummarized["item_id"])}).content)
+    assert "A paper nobody summarized" in text
+    assert "Coffee intake" not in text          # the unticked paper is left out
+
+
+def test_rl3_bad_or_foreign_item_ids_are_refused(signed_in, ctx):
+    list_id = _list_with_papers(signed_in, ctx)
+    assert signed_in.get(f"/api/references/{list_id}/summaries.pdf",
+                         params={"item_ids": "abc"}).status_code == 400
+    assert signed_in.get(f"/api/references/{list_id}/summaries.pdf",
+                         params={"item_ids": "999999"}).status_code == 400

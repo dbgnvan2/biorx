@@ -67,6 +67,7 @@ const state = {
   refLists: [],
   activeListId: null,
   refItems: [],
+  refSummaries: [],           // stored summaries for the open list (RL1)
   // Discover
   discoverJobId: null,
   discoverPolling: null,
@@ -1109,6 +1110,11 @@ async function startSummary(paper, button) {
         renderSummariesPanel();
         renderResults();
         refreshSearchSummaries();
+        // RL2: a summary made from a saved list shows there at once.
+        if (state.activeListId &&
+            state.refItems.some(i => paperKey(i.paper || i) === key)) {
+          refreshRefSummaries(state.activeListId);
+        }
         if (modalShows(paper)) renderSummary(job, s.result);
         else notice(`Summary ready for "${(paper.title || "").slice(0, 80)}" — click Summarize to view it.`, "ok");
       } else {
@@ -1185,9 +1191,9 @@ function mergeSummaries(existing, incoming) {
     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
 }
 
-function hasSummary(paper) {
+function hasSummary(paper, summaries = state.searchSummaries) {
   const key = summaryKey(paper);
-  return (state.searchSummaries || []).some(s => summaryKey(s) === key ||
+  return (summaries || []).some(s => summaryKey(s) === key ||
     (paper.doi && s.doi === paper.doi) || (paper.canonical_id && s.canonical_id === paper.canonical_id));
 }
 
@@ -1281,7 +1287,7 @@ async function openModal(paper, { lookup = true } = {}) {
   } catch (e) {
     if (modalShows(paper)) {
       $("modal-summary-meta").textContent =
-        e.status === 404 ? "Not summarized yet — use Summarize in the results list." : e.message;
+        e.status === 404 ? "Not summarized yet — use Summarize to create one." : e.message;
     }
   }
 }
@@ -1753,8 +1759,20 @@ async function selectRefList(listId) {
   try {
     const data = await api("GET", `/api/references/${listId}/items`);
     state.refItems = data.items || [];
+    state.refSummaries = [];
     renderRefItems();
-  } catch (e) { notice(e.message); }
+  } catch (e) { notice(e.message); return; }
+  await refreshRefSummaries(listId);
+}
+
+/* RL1: which papers in the open list already have a stored summary. */
+async function refreshRefSummaries(listId) {
+  let data;
+  try { data = await api("GET", `/api/references/${listId}/summaries`); }
+  catch (e) { return; }                 // the list still shows; badges just stay off
+  if (state.activeListId !== listId) return;    // another list was opened meanwhile
+  state.refSummaries = data.summaries || [];
+  renderRefItems();
 }
 
 function renderRefItems() {
@@ -1784,6 +1802,24 @@ function renderRefItems() {
     }
     link.textContent = p.title || "(untitled)";
     titleTd.appendChild(link);
+    // RL2: the same details view as the Search results — abstract, PDF link
+    // and the stored summary.
+    const detailBtn = document.createElement("span");
+    detailBtn.className = "tag small";
+    detailBtn.textContent = "detail";
+    detailBtn.style.cursor = "pointer";
+    detailBtn.style.marginLeft = "4px";
+    detailBtn.addEventListener("click", () => openModal(p));
+    titleTd.appendChild(detailBtn);
+    if (hasSummary(p, state.refSummaries)) {
+      const badge = document.createElement("span");
+      badge.className = "tag small has-summary";
+      badge.textContent = "✓ Summary";
+      badge.style.marginLeft = "4px";
+      badge.style.cursor = "pointer";
+      badge.addEventListener("click", () => openModal(p));
+      titleTd.appendChild(badge);
+    }
 
     const authTd = document.createElement("td");
     authTd.className = "small";
@@ -1799,7 +1835,17 @@ function renderRefItems() {
     tag.textContent = p.source || p.server || "";
     srcTd.appendChild(tag);
 
-    tr.append(checkTd, titleTd, authTd, dateTd, srcTd);
+    // RL2: generate a summary from the list, as from the Search results.
+    const actTd = document.createElement("td");
+    const summarize = document.createElement("button");
+    const busy = state.summarizing.has(paperKey(p));
+    summarize.textContent = busy ? "Summarizing…" : "Summarize";
+    summarize.disabled = busy;
+    summarize.dataset.paperKey = paperKey(p);
+    summarize.addEventListener("click", () => startSummary(p, summarize));
+    actTd.appendChild(summarize);
+
+    tr.append(checkTd, titleTd, authTd, dateTd, srcTd, actTd);
     body.appendChild(tr);
   }
   updateRefCheckedCount();
@@ -1897,9 +1943,13 @@ async function exportRefSummariesPdf() {
   const lst = (state.refLists || []).find(x => x.id === state.activeListId) || {};
   $("ref-dl-status").textContent = "Building the summaries PDF…";
   $("ref-dl-status").classList.remove("hidden");
+  // RL3: the ticked papers, or the whole list when none are ticked.
+  const ticked = Array.from($("ref-papers-body").querySelectorAll("input:checked"))
+    .map(cb => cb.dataset.itemId);
+  const query = ticked.length ? `?item_ids=${ticked.join(",")}` : "";
   let resp;
   try {
-    resp = await api("GET", `/api/references/${state.activeListId}/summaries.pdf`,
+    resp = await api("GET", `/api/references/${state.activeListId}/summaries.pdf${query}`,
                      undefined, { raw: true });
   } catch (e) { $("ref-dl-status").textContent = `Export failed: ${e.message}`; return; }
   if (resp.status === 401) return;          // api() has shown the sign-in page

@@ -9,9 +9,9 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
 from src import safe_fetch, user_store
@@ -148,19 +148,73 @@ def export_csv(list_id: int,
     )
 
 
+def _parse_item_ids(item_ids: Optional[str]) -> Optional[set]:
+    """"3,7,9" -> {3, 7, 9}; None/"" -> None (all items). 400 on garbage."""
+    if not item_ids:
+        return None
+    try:
+        return {int(x) for x in item_ids.split(",") if x.strip()}
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="item_ids must be comma-separated numbers.")
+
+
+@router.get("/api/references/{list_id}/summaries")
+def list_reference_summaries(list_id: int,
+                             ctx: AppContext = Depends(get_context),
+                             user_id: str = Depends(current_user)):
+    """Purpose: Stored summaries for the papers in a saved list, newest first.
+    Spec:    docs/implementation_plan_2026-09-18_filter_run.md#RL1
+    Tests:   tests/web/test_references_routes.py::test_rl1_list_summaries
+
+    Same shape as GET /api/searches/{id}/summaries, so a saved list shows which
+    papers are summarized without re-running the search that found them.
+    """
+    _get_list_or_404(ctx, user_id, list_id)
+    out: List[Dict[str, Any]] = []
+    for item in user_store.list_reference_items(ctx.db, list_id):
+        p = item["paper"]
+        s = ctx.db.get_summary(p["paper_id"])
+        if not s:
+            continue
+        out.append({
+            "canonical_id": p.get("canonical_id") or "",
+            "doi": p.get("doi") or "",
+            "title": p.get("title") or "",
+            "paper_id": p["paper_id"],
+            "item_id": item["item_id"],
+            "key_findings": s.get("key_findings") or [],
+            "methodology": s.get("methodology") or "",
+            "conclusions": s.get("conclusions") or "",
+            "model_version": s.get("model_version") or "",
+            "created_at": str(s.get("created_at") or ""),
+        })
+    out.sort(key=lambda r: r["created_at"], reverse=True)
+    return {"summaries": out}
+
+
 @router.get("/api/references/{list_id}/summaries.pdf")
 def export_summaries_pdf(list_id: int,
+                         item_ids: Optional[str] = Query(default=None),
                          ctx: AppContext = Depends(get_context),
                          user_id: str = Depends(current_user)):
     """One PDF of this list's papers and their stored summaries.
 
-    Spec: docs/implementation_plan_2026-09-18_ui_fixes_summary_pdf.md#SP1
+    Spec: docs/implementation_plan_2026-09-18_ui_fixes_summary_pdf.md#SP1,
+          docs/implementation_plan_2026-09-18_filter_run.md#RL3 (item_ids)
     Papers without a summary are listed as "Not summarized" (SP3).
+    item_ids ("3,7") limits it to the ticked papers; absent means all.
     """
     from src.summary_pdf import build_summaries_pdf
 
     ref_list = _get_list_or_404(ctx, user_id, list_id)
     items = user_store.list_reference_items(ctx.db, list_id)
+    wanted = _parse_item_ids(item_ids)
+    if wanted is not None:
+        items = [i for i in items if i["item_id"] in wanted]
+        if not items:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="None of the ticked papers are in this list.")
     summaries: Dict[int, Dict[str, Any]] = {}
     for item in items:
         pid = item["paper"]["paper_id"]

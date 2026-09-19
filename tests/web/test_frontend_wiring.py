@@ -1270,3 +1270,120 @@ def test_i5_filter_test_gives_up_on_expired():
       out.polling = state.filterTestPolling;
     """)
     assert out["after"] == "Lost track of the test: HTTP 410" and out["polling"] is None
+
+
+# ── RL: saved reference lists — details, summaries, save (2026-09-18) ─────────
+
+_REF_HARNESS = r"""
+function mk(tag) {
+  const el = { tag, dataset: {}, textContent: "", className: "", checked: false, disabled: false,
+    style: {}, children: [], href: "", click() {},
+    classList: { add() {}, remove() {}, toggle() {} },
+    append(...c) { this.children.push(...c); }, appendChild(c) { this.children.push(c); },
+    addEventListener(ev, fn) { this["on" + ev] = fn; },
+    querySelectorAll(sel) {
+      const all = []; const walk = (n) => { for (const c of n.children || []) { all.push(c); walk(c); } };
+      walk(this);
+      if (sel === "input:checked") return all.filter(c => c.tag === "input" && c.checked);
+      return all;
+    } };
+  return el;
+}
+const document = { createElement: mk };
+const els = {};
+const $ = (id) => els[id] || (els[id] = mk("x"));
+Object.defineProperty($("ref-papers-body"), "textContent", { set() { this.children = []; }, get() { return ""; } });
+const opened = [], summarized = [], calls = [];
+function openModal(p) { opened.push(p.title); }
+function startSummary(p, btn) { summarized.push([p.title, btn.dataset.paperKey]); }
+function notice() {} function updateRefCheckedCount() {}
+function safeUrl(u) { return u || ""; }
+let summariesReply = { summaries: [] };
+async function api(method, path, body, opts) {
+  calls.push(path);
+  if (path.endsWith("/summaries")) return summariesReply;
+  if (path.endsWith("/items")) return { items: state.refItems };
+  return { status: 200, ok: true, blob: async () => ({}) };
+}
+const URL = { createObjectURL() { return "blob:x"; }, revokeObjectURL() {} };
+globalThis.setTimeout = (fn) => 0;
+function rows() {
+  return $("ref-papers-body").children.map(tr => {
+    const title = tr.children[1];
+    const tags = title.children.slice(1).map(t => t.textContent);
+    const btn = tr.children[5].children[0];
+    return { tags, button: btn.textContent, key: btn.dataset.paperKey };
+  });
+}
+"""
+
+
+def _run_ref(body):
+    import json
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    parts = [
+        _js_block(r"const state = \{.*?\n\};"),
+        _REF_HARNESS,
+        _js_block(r"function paperKey\(paper\) \{.*?\n\}"),
+        _js_block(r"function summaryKey\(item\) \{.*?\n\}"),
+        _js_block(r"function hasSummary\(paper, summaries = state\.searchSummaries\) \{.*?\n\}"),
+        _js_block(r"async function refreshRefSummaries\(listId\) \{.*?\n\}"),
+        _js_block(r"function renderRefItems\(\) \{.*?\n\}"),
+        _js_block(r"async function exportRefSummariesPdf\(\) \{.*?\n\}"),
+        """state.refItems = [
+          { item_id: 11, paper: { title: "Summarized one", canonical_id: "doi:1", doi: "1" } },
+          { item_id: 12, paper: { title: "Not yet", canonical_id: "doi:2", doi: "2" } }];
+        state.activeListId = 5; state.refLists = [{ id: 5, name: "L" }];""",
+        "(async () => { const out = {};\n" + body + "\nconsole.log(JSON.stringify(out)); })();",
+    ]
+    result = subprocess.run([node, "-e", "\n".join(parts)], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip())
+
+
+def test_rl2_list_rows_offer_details_badge_and_summarize():
+    out = _run_ref("""
+      summariesReply = { summaries: [{ canonical_id: "doi:1", title: "Summarized one" }] };
+      await refreshRefSummaries(5);
+      out.rows = rows();
+      const first = $("ref-papers-body").children[0];
+      first.children[1].children[1].onclick();          // detail
+      first.children[5].children[0].onclick();          // Summarize
+      $("ref-papers-body").children[1].children[5].children[0].onclick();
+      out.opened = opened; out.summarized = summarized;
+    """)
+    assert out["rows"] == [
+        {"tags": ["detail", "✓ Summary"], "button": "Summarize", "key": "doi:1"},
+        {"tags": ["detail"], "button": "Summarize", "key": "doi:2"},
+    ]
+    assert out["opened"] == ["Summarized one"]
+    assert out["summarized"] == [["Summarized one", "doi:1"], ["Not yet", "doi:2"]]
+
+
+def test_rl1_stale_list_reply_is_ignored():
+    """A summaries reply for a list the user has already left must not paint badges."""
+    out = _run_ref("""
+      summariesReply = { summaries: [{ canonical_id: "doi:2" }] };
+      state.activeListId = 6;
+      await refreshRefSummaries(5);
+      out.summaries = state.refSummaries;
+    """)
+    assert out["summaries"] == []
+
+
+def test_rl3_save_summaries_sends_the_ticked_items():
+    out = _run_ref("""
+      renderRefItems();
+      $("ref-papers-body").children[1].children[0].children[0].checked = true;
+      await exportRefSummariesPdf();
+      out.ticked = calls.filter(c => c.includes("summaries.pdf"));
+      $("ref-papers-body").children[1].children[0].children[0].checked = false;
+      await exportRefSummariesPdf();
+      out.all = calls.filter(c => c.includes("summaries.pdf"));
+    """)
+    assert out["ticked"] == ["/api/references/5/summaries.pdf?item_ids=12"]
+    assert out["all"][-1] == "/api/references/5/summaries.pdf"
