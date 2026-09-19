@@ -131,6 +131,31 @@ def test_an_unknown_saved_filter_is_404(signed_in):
     assert signed_in.post("/api/searches", json={"filter_id": 99999}).status_code == 404
 
 
+EMPTY_FILTER = {"days_back": 14, "category": "neuroscience",
+                "text_groups": [{"title": "", "abstract": " ", "both": ""}],
+                "authors": [], "institution": ""}
+
+
+def test_fr1_1_empty_saved_filter_is_refused(ctx, signed_in):
+    """FR1.1: an empty saved filter is refused before any job is queued."""
+    ctx.orchestrator = _fake_orchestrator()
+    created = signed_in.post("/api/filters",
+                             json={"name": "Empty", "filter": EMPTY_FILTER}).json()
+    start = signed_in.post("/api/searches", json={"filter_id": created["id"]})
+    assert start.status_code == 400
+    assert "no search terms" in start.json()["detail"]
+    assert "job_id" not in start.json()
+    ctx.orchestrator.search.assert_not_called()
+
+
+def test_fr1_2_empty_inline_filter_is_refused(ctx, signed_in):
+    """FR1.2: the manual search form cannot start an empty search either."""
+    ctx.orchestrator = _fake_orchestrator()
+    start = signed_in.post("/api/searches", json={"filter": EMPTY_FILTER})
+    assert start.status_code == 400
+    ctx.orchestrator.search.assert_not_called()
+
+
 # ── P2: a source that failed must not look like a quiet week ──────────────────
 
 def test_a_failed_source_is_reported_not_silently_zero(ctx, signed_in):

@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.sources.orchestrator import SourceOrchestrator, FAILURE_STATUS_MARKER, _SOURCE_LABELS
 from src.sources.config import load_sources_config
 from src.filtering import filter_papers
+from src.filters_store import EMPTY_FILTER_MESSAGE, filter_has_text
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,13 @@ def run_search(
 
     Returns:
         List of paper dicts (CanonicalRecord.to_dict()) that match the filter.
+        An empty filter is skipped with a message and returns [] without
+        searching (docs/implementation_plan_2026-09-18_filter_run.md#FR1).
     """
+    if not filter_has_text(filter_dict):
+        print(f"[{filter_name}] Skipped: {EMPTY_FILTER_MESSAGE}", file=sys.stderr)
+        return []
+
     source_selection = filter_dict.get("source_selection", {"all": True})
 
     print(f"[{filter_name}] Searching...", file=sys.stderr)

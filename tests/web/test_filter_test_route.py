@@ -55,6 +55,20 @@ def test_filter_test_nonexistent_filter_is_404(signed_in):
     assert signed_in.post("/api/filters/9999/test").status_code == 404
 
 
+def test_fr1_3_empty_filter_test_is_refused(ctx, signed_in):
+    """FR1.3: the Filters tab's Test run refuses an empty filter too."""
+    from unittest.mock import MagicMock
+    ctx.orchestrator = MagicMock()
+    r = signed_in.post("/api/filters", json={
+        "name": "Empty", "enabled": True,
+        "filter": {"text_groups": [{"title": "", "abstract": "", "both": ""}]},
+    })
+    resp = signed_in.post(f"/api/filters/{r.json()['id']}/test")
+    assert resp.status_code == 400
+    assert "no search terms" in resp.json()["detail"]
+    ctx.orchestrator.search.assert_not_called()
+
+
 # ── Save as list ──────────────────────────────────────────────────────────────
 
 def test_save_completed_search_as_list(signed_in, ctx):
@@ -109,7 +123,8 @@ def _search_job(signed_in, ctx, search_fn):
     orch.search = search_fn
     with patch.object(ctx, "get_orchestrator", return_value=orch):
         r = signed_in.post("/api/searches", json={
-            "filter": {"text_groups": []},
+            # A term is required: an empty filter is refused (FR1).
+            "filter": {"text_groups": [{"title": "alpha, identifiers"}]},
             "source_selection": {"all": True, "selected": []},
         })
     assert r.status_code == 202

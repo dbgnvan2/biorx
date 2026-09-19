@@ -206,7 +206,7 @@ def test_d_monitor_exit_code_reflects_failed_sources(tmp_path, capsys):
     filters_json = tmp_path / "filters.json"
     filters_json.write_text(
         '{"filters": [{"name": "Test", "enabled": true, "days_back": 7, '
-        '"text_groups": [], "authors": [], "source_selection": {"all": true, "selected": []}}]}'
+        '"text_groups": [{"both": "stress"}], "authors": [], "source_selection": {"all": true, "selected": []}}]}'
     )
 
     from src.sources.orchestrator import FAILURE_STATUS_MARKER as _FM
@@ -225,7 +225,7 @@ def test_d_monitor_exit_code_reflects_failed_sources(tmp_path, capsys):
          patch.object(monitor, "SourceOrchestrator", return_value=orch), \
          patch.object(monitor, "load_filters", return_value=[
              {"name": "Test", "enabled": True, "days_back": 7,
-              "text_groups": [], "authors": [],
+              "text_groups": [{"both": "stress"}], "authors": [],
               "source_selection": {"all": True, "selected": []}}
          ]):
         exit_code = monitor.main(["--all", "--filters-path", str(filters_json)])
@@ -255,7 +255,7 @@ def test_d_monitor_run_search_resolves_internal_source_name():
     sources_failed: list = []
     monitor.run_search(
         orch,
-        {"days_back": 7, "text_groups": [], "authors": []},
+        {"days_back": 7, "text_groups": [{"both": "stress"}], "authors": []},
         "Test",
         sources_failed=sources_failed,
     )
@@ -273,7 +273,7 @@ def test_d_monitor_exits_0_when_all_sources_succeed(tmp_path):
          patch.object(monitor, "SourceOrchestrator", return_value=orch), \
          patch.object(monitor, "load_filters", return_value=[
              {"name": "Test", "enabled": True, "days_back": 7,
-              "text_groups": [], "authors": [],
+              "text_groups": [{"both": "stress"}], "authors": [],
               "source_selection": {"all": True, "selected": []}}
          ]):
         exit_code = monitor.main(["--all"])

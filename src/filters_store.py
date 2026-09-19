@@ -45,12 +45,38 @@ def filter_is_enabled(f: Dict[str, Any]) -> bool:
     return f.get("enabled", True)
 
 
+# Shown wherever a run is refused because the filter has nothing to search for.
+EMPTY_FILTER_MESSAGE = (
+    "This filter has no search terms, authors or institution — "
+    "add at least one before running it."
+)
+
+
 def filter_has_text(f: Dict[str, Any]) -> bool:
-    """Return True if the filter has at least one non-empty text search term."""
-    groups = f.get("text_groups", [])
-    for g in groups:
-        if any(g.get(k, "").strip() for k in TEXT_FIELDS):
+    """Purpose: Say whether a filter has anything to search for.
+    Spec:    docs/implementation_plan_2026-09-18_filter_run.md#FR1
+    Tests:   tests/test_filters_store.py::test_filter_has_text,
+             tests/test_filters_store.py::test_fr1_4_legacy_keywords_group_has_criteria,
+             tests/test_filters_store.py::test_fr1_5_blank_values_are_empty
+
+    True when the filter has a non-blank text term, author or institution.
+    Without one, every source returns its whole date window unfiltered, so
+    every entry point (GUI, web routes, monitor) refuses to run it. Read after
+    normalise_filter so a legacy web-saved {"keywords": ...} group counts, as
+    does a top-level "keywords" field, which filter_papers still honours.
+    """
+    from src.filtering import normalise_filter, normalize_authors
+
+    f = normalise_filter(f)
+    for g in f.get("text_groups") or []:
+        if any(str(g.get(k) or "").strip() for k in TEXT_FIELDS):
             return True
-    if any(f.get(k) for k in ("authors", "institution")):
+    # Top-level "keywords" (list or string): filter_papers still reads it.
+    kw = f.get("keywords")
+    if isinstance(kw, str) and kw.strip():
         return True
-    return False
+    if isinstance(kw, (list, tuple)) and any(str(k).strip() for k in kw):
+        return True
+    if normalize_authors(f.get("authors")):
+        return True
+    return bool(str(f.get("institution") or "").strip())

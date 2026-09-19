@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from src import user_store
 from src.filtering import filter_papers, normalise_filter
+from src.filters_store import EMPTY_FILTER_MESSAGE, filter_has_text
 from src.jobs import Job, JobLookup
 
 from .auth import current_user, get_context
@@ -84,6 +85,19 @@ MAX_RESULTS_CEILING = 2000
 DEFAULT_MAX_RESULTS = 200
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
+
+
+def refuse_empty_filter(filter_dict: Dict[str, Any]) -> None:
+    """Purpose: Refuse to queue a run for a filter with nothing to search for.
+    Spec:    docs/implementation_plan_2026-09-18_filter_run.md#FR1
+    Tests:   tests/web/test_searches_routes.py::test_fr1_1_empty_saved_filter_is_refused,
+             tests/web/test_filter_test_route.py::test_fr1_3_empty_filter_test_is_refused
+
+    Called by every route that starts a search job, before the job is queued.
+    """
+    if not filter_has_text(filter_dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=EMPTY_FILTER_MESSAGE)
 
 
 class SearchRequest(BaseModel):
@@ -154,6 +168,7 @@ def start_search(body: SearchRequest,
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Provide either filter_id or filter.")
+    refuse_empty_filter(filter_dict)
 
     selection = body.source_selection or filter_dict.get(
         "source_selection", {"all": True, "selected": []}

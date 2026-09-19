@@ -68,3 +68,29 @@ def test_gui_uses_the_shared_store():
     assert gui.save_filters is save_filters_file
     assert gui.filter_is_enabled is filter_is_enabled
     assert gui._filter_has_text is filter_has_text
+
+
+def test_fr1_4_legacy_keywords_group_has_criteria():
+    """FR1.4: an earlier web build saved groups as {"keywords": ...}. That looks
+    empty to a check that reads only title/abstract/both, but it has a term."""
+    assert filter_has_text({"text_groups": [{"keywords": "inflammation"}]}) is True
+    assert filter_has_text({"keywords": "biology"}) is True
+    assert filter_has_text({"keywords": ["biology"]}) is True
+
+
+@pytest.mark.parametrize("f", [
+    {"text_groups": [{"title": " ", "abstract": "\t", "both": ""}]},
+    {"text_groups": [], "authors": [""]},
+    {"text_groups": [], "authors": ["  ", ","]},
+    {"text_groups": [], "institution": "   "},
+    {"text_groups": [], "institution": []},
+    {"text_groups": [{"keywords": ""}]},
+    {"keywords": "  "},
+    {"keywords": ["", " "]},
+    {"text_groups": [{"title": None, "abstract": None, "both": None}]},
+    {"category": "neuroscience", "days_back": 7, "text_groups": []},
+])
+def test_fr1_5_blank_values_are_empty(f):
+    """FR1.5: blank strings, blank author entries and category/date alone are
+    not something to search for."""
+    assert filter_has_text(f) is False

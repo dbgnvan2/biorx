@@ -61,7 +61,7 @@ def test_run_search_applies_the_filter_to_source_results():
 def test_run_search_returns_plain_dicts_ready_for_json():
     orch = MagicMock()
     orch.search.return_value = [_record("Generative Agents", "x")]
-    out = monitor.run_search(orch, {"text_groups": [], "authors": []}, "test")
+    out = monitor.run_search(orch, {"text_groups": [], "authors": ["Park"]}, "test")
 
     assert out and isinstance(out[0], dict)
     assert out[0]["title"] == "Generative Agents"
@@ -102,3 +102,14 @@ def test_cli_and_gui_agree_on_the_same_filter_and_records():
     gui_out = filter_papers([r.to_dict() for r in records], filter_dict)
 
     assert [p["canonical_id"] for p in cli_out] == [p["canonical_id"] for p in gui_out]
+
+
+def test_fr1_6_empty_filter_is_skipped(capsys):
+    """FR1.6: a scheduled run of an empty filter searches nothing and says so."""
+    orch = MagicMock()
+    orch.search.return_value = [_record("Generative Agents", "x")]
+    out = monitor.run_search(orch, {"text_groups": [{"both": "  "}], "authors": []}, "empty")
+
+    assert out == []
+    orch.search.assert_not_called()
+    assert "[empty] Skipped: This filter has no search terms" in capsys.readouterr().err

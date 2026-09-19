@@ -148,8 +148,9 @@ def _finished_search(signed_in, ctx, papers):
         on_batch([SimpleNamespace(to_dict=lambda p=p: dict(p)) for p in papers])
     orch.search = search
     with patch.object(ctx, "get_orchestrator", return_value=orch):
+        # Terms matching every fixture title: an empty filter is refused (FR1).
         job_id = signed_in.post("/api/searches", json={
-            "filter": {"text_groups": []},
+            "filter": {"text_groups": [{"title": "cohort, nobody, third"}]},
             "source_selection": {"all": True, "selected": []}}).json()["job_id"]
     for _ in range(100):
         if signed_in.get(f"/api/searches/{job_id}").json()["status"] == "done":
@@ -222,7 +223,7 @@ def test_s3_unfinished_search_is_409(signed_in, ctx):
     orch = MagicMock()
     orch.search = lambda **_: release.wait(5)
     with patch.object(ctx, "get_orchestrator", return_value=orch):
-        job_id = signed_in.post("/api/searches", json={"filter": {"text_groups": []}}).json()["job_id"]
+        job_id = signed_in.post("/api/searches", json={"filter": {"text_groups": [{"both": "x"}]}}).json()["job_id"]
     try:
         assert signed_in.get(f"/api/searches/{job_id}/summaries").status_code == 409
         assert signed_in.post(f"/api/searches/{job_id}/summaries.pdf", json={}).status_code == 409

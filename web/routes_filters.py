@@ -19,7 +19,8 @@ from src import user_store
 
 from .auth import current_user, get_context
 from .deps import AppContext
-from .routes_searches import FILTER_TEST_JOB_KIND, SearchRequest, _run_search
+from .routes_searches import (FILTER_TEST_JOB_KIND, SearchRequest, _run_search,
+                              refuse_empty_filter)
 
 router = APIRouter()
 
@@ -83,6 +84,7 @@ def test_filter(filter_id: int,
     if filter_dict is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No such filter.")
+    refuse_empty_filter(filter_dict)
     selection = filter_dict.get("source_selection", {"all": True, "selected": []})
     from .routes_searches import DEFAULT_MAX_RESULTS
     job = ctx.jobs.submit(
