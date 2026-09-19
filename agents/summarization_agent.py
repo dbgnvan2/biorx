@@ -1,5 +1,6 @@
 """
-Summarization agent: Find unsummarized papers, extract text, generate summaries with Qwen.
+Summarization agent: Find unsummarized papers, extract text, generate summaries
+with the provider llm_config.yaml names as default (default_provider).
 Callable from GUI or CLI (python agents/summarization_agent.py).
 """
 
@@ -14,7 +15,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.db import Database
 from src.pdf_handler import PDFHandler
-from src.llm import OllamaClient, MockOllamaClient
+from src.llm import MockOllamaClient
+from src.llm_config import load_llm_config, max_text_chars
+from src.llm_providers import LLMError, resolve_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class SummarizationAgent:
-    """Agent for summarizing papers using Qwen."""
+    """Agent for summarizing papers with the configured default provider."""
 
     def __init__(
         self,
@@ -40,12 +43,27 @@ class SummarizationAgent:
         """
         self.db = Database(db_path)
         self.pdf_handler = PDFHandler()
-
+        self.use_mock = use_mock
+        # Resolved on first use, not here: the GUI builds this agent at start-up
+        # and a missing API key must not stop the app from opening.
+        self.llm = MockOllamaClient() if use_mock else None
+        self.model = "mock" if use_mock else ""
         if use_mock:
-            self.llm = MockOllamaClient()
             logger.info("Using mock LLM client")
-        else:
-            self.llm = OllamaClient()
+
+    def _client(self):
+        """Purpose: The client for the configured default provider, and its model.
+        Spec:    docs/implementation_plan_2026-09-18_filter_run.md#M1
+        Tests:   tests/test_summarization_agent.py::test_m1_agent_uses_the_configured_default,
+                 tests/test_summarization_agent.py::test_m1_summary_records_the_model_that_ran
+
+        Raises LLMError (e.g. no API key) with a message for the user.
+        """
+        if self.llm is None:
+            resolved = resolve_client(config=load_llm_config())
+            self.llm, self.model = resolved.client, resolved.model
+            logger.info("Summaries will use %s (%s)", resolved.provider, resolved.model)
+        return self.llm
 
     def summarize_all_unsummarized(self, max_count: int = 10) -> Dict[str, Any]:
         """
@@ -67,14 +85,17 @@ class SummarizationAgent:
                 "failed_count": 0,
             }
 
-        # Check if Ollama is available
-        if not self.llm.is_available():
-            logger.error(
-                "Ollama not available. Ensure it's running: ollama serve"
-            )
+        try:
+            llm = self._client()
+            available = llm.is_available()
+            problem = "" if available else f"{self.model} is not available"
+        except LLMError as e:
+            problem = str(e)
+        if problem:
+            logger.error("Summaries cannot run: %s", problem)
             return {
                 "success": False,
-                "error": "Ollama not available",
+                "error": problem,
                 "summarized_count": 0,
                 "failed_count": len(papers),
             }
@@ -150,11 +171,17 @@ class SummarizationAgent:
 
             # Prepare input for LLM
             abstract = paper.get("abstract", "")
-            full_text = text[:5000]  # Limit to first 5000 chars
+            # Same budget the web app uses (llm_config.yaml max_text_chars);
+            # what is dropped is logged rather than cut silently (P9).
+            budget = max_text_chars(load_llm_config())
+            if len(text) > budget:
+                logger.info("Paper %s: sending %d of %d extracted characters",
+                            paper_id, budget, len(text))
+            full_text = text[:budget]
 
-            # Generate summary
-            logger.debug(f"Generating summary with Qwen for paper {paper_id}")
-            summary_data = self.llm.summarize_paper(abstract, full_text)
+            llm = self._client()
+            logger.debug(f"Generating summary with {self.model} for paper {paper_id}")
+            summary_data = llm.summarize_paper(abstract, full_text)
 
             if not summary_data:
                 logger.warning(f"Failed to generate summary for paper {paper_id}")
@@ -175,6 +202,7 @@ class SummarizationAgent:
                 key_findings=key_findings,
                 methodology=summary_data.get("methodology"),
                 conclusions=summary_data.get("conclusions"),
+                model_version=self.model,
             )
 
             logger.info(f"Summary saved for paper {paper_id}")
@@ -189,7 +217,8 @@ def main():
     """CLI entry point."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Summarize papers using Qwen")
+    parser = argparse.ArgumentParser(
+        description="Summarize papers with the default provider in llm_config.yaml")
     parser.add_argument(
         "--max-count",
         type=int,

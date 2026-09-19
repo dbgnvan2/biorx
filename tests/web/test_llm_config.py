@@ -94,9 +94,10 @@ def test_a_partial_config_does_not_delete_known_providers(tmp_path):
 
 def test_env_overrides_the_default_provider(monkeypatch):
     cfg = load_llm_config()
-    assert default_provider(cfg) == "ollama"
-    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
     assert default_provider(cfg) == "deepseek"
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    assert default_provider(cfg) == "ollama"
 
 
 def test_env_overrides_a_model_id(monkeypatch):

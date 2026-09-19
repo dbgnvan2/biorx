@@ -59,7 +59,7 @@ class ProviderConfig:
         """The server owner's key for this provider.
 
         Precedence: env var (set at launch) → api_key field in the config file
-        (desktop convenience — the file is local and not committed to git).
+        (legacy; llm_config.yaml is committed to git, so prefer the env var).
         """
         if self.api_key_env:
             env_val = os.environ.get(self.api_key_env, "").strip()

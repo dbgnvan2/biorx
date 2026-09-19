@@ -257,7 +257,7 @@ class Database:
                 methodology TEXT,
                 conclusions TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                model_version TEXT DEFAULT 'qwen:7b',
+                model_version TEXT DEFAULT '',
                 FOREIGN KEY (paper_id) REFERENCES papers(id)
             )
         """
@@ -651,7 +651,7 @@ class Database:
         key_findings: Optional[List[str]] = None,
         methodology: Optional[str] = None,
         conclusions: Optional[str] = None,
-        model_version: str = "qwen:7b",
+        model_version: str = "",
         created_by_user_id: Optional[str] = None,
     ) -> Optional[int]:
         """
@@ -663,7 +663,9 @@ class Database:
             key_findings: List of key findings
             methodology: Methodology summary
             conclusions: Conclusions summary
-            model_version: LLM model version used
+            model_version: LLM model that produced the summary. No default
+                model is assumed: a row claiming "qwen:7b" for a summary some
+                other model wrote is a false record.
             created_by_user_id: Web-app user whose run produced this summary
 
         Returns:

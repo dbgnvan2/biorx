@@ -9,20 +9,22 @@
 #   openai    → Authorization: Bearer, /chat/completions (DeepSeek, OpenAI, …)
 #   ollama    → local /api/generate, no key
 #
-# Desktop usage — setting your API key:
-#   Option A (recommended): add  api_key: sk-ant-...  directly to the provider
-#             block below (this file is local and not committed to git).
-#   Option B: set the env var before launching:  export ANTHROPIC_API_KEY=sk-ant-...
+# Setting your API key: use the environment variable named by api_key_env
+# (DEEPSEEK_API_KEY, ANTHROPIC_API_KEY), e.g. in .env. Do NOT put a key in this
+# file: llm_config.yaml is committed to git, so a key here would be published.
 #
 # To switch provider: change default_provider to anthropic, deepseek, or ollama.
 
-default_provider: ollama          # change to anthropic or deepseek if you have a key
+# DeepSeek: works on this Mac and on the Railway deploy, where there is no
+# Ollama. Needs DEEPSEEK_API_KEY in the environment (.env).
+default_provider: deepseek        # or anthropic, or ollama (local only)
 
 providers:
   ollama:
     dialect: ollama
     base_url: http://localhost:11434
-    model: qwen:7b
+    # The model installed on this Mac (`ollama list`); qwen:7b never was.
+    model: qwen3.5:4b
     timeout: 120
     # No api_key_env: a local Ollama needs no credential.
 
@@ -48,7 +50,6 @@ providers:
     model: claude-sonnet-5             # change to claude-haiku-4-5 for faster/cheaper
     model_env: ANTHROPIC_MODEL
     api_key_env: ANTHROPIC_API_KEY
-    # api_key: sk-ant-...              # uncomment and paste your key here (desktop use)
     timeout: 120
 
 # How much of a paper's extracted text is sent to the model. A budget, named and
