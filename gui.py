@@ -714,6 +714,9 @@ class SearchBrowseTab(QWidget):
         quick_btn = QPushButton("Search")
         quick_btn.clicked.connect(self.quick_search)
         ll.addWidget(quick_btn)
+        # Disabled while a run is in flight like the other run buttons: a quick
+        # search mid-run reset the results under a still-connected worker.
+        self.quick_btn = quick_btn
 
         ll.addStretch()
         left.setLayout(ll)
@@ -824,6 +827,7 @@ class SearchBrowseTab(QWidget):
     def _run_filters(self, filters: List[Dict], save_to_db: bool = False):
         self.run_selected_btn.setEnabled(False)
         self.run_all_btn.setEnabled(False)
+        self.quick_btn.setEnabled(False)
         self._results.reset()    # clears current_results in place + match counts
         self._selection.clear()  # a new search starts with nothing selected (F1)
         self.matches_label.setText("")
@@ -837,6 +841,7 @@ class SearchBrowseTab(QWidget):
         self._current_filter_matched = 0
         self._current_phase          = ""
         self._enrich_notes: List[str] = []   # outages shown in the final status
+        self._run_errors: List[str] = []     # filters whose search raised
         self._progress_format        = "Fetched %v / %m papers"
         self._current_worker: Optional[SearchWorker] = None
         # Indeterminate bar while we don't know total yet
@@ -889,7 +894,9 @@ class SearchBrowseTab(QWidget):
         worker.progress.connect(self._update_progress)
         worker.phase.connect(self._on_phase)
         worker.status.connect(self.status_label.setText)
-        worker.error.connect(lambda e: self.status_label.setText(f"⚠  {e}"))
+        # An error ends this filter, not the run: record it and move on, or the
+        # queue stalls and every run button stays disabled.
+        worker.error.connect(lambda e, n=name: self._on_filter_error(n, e))
         worker.finished.connect(lambda _: self._run_next_filter())
         thread.start()
         self._threads.append((thread, worker))
@@ -940,6 +947,11 @@ class SearchBrowseTab(QWidget):
         self._update_matches_label()
         self._update_checked_count()
 
+    def _on_filter_error(self, name: str, message: str):
+        """A filter's search raised: note it for the final status and continue."""
+        self._run_errors.append(f"'{name}' failed: {message}")
+        self._run_next_filter()
+
     def _apply_enrichment(self, updates: list):
         """Purpose: Refresh streamed rows with what enrichment added.
         Spec:    docs/implementation_plan_2026-09-18_filter_run.md#I4
@@ -952,8 +964,13 @@ class SearchBrowseTab(QWidget):
         rows = {paper_key(p): p for p in self.current_results}
         for key, fresh in updates:
             row = rows.get(key)
-            if row is not None:
-                row.update(fresh)
+            if row is None:
+                continue
+            # Add, never erase: a later filter in the queue can match the same
+            # paper with a poorer record (its enrichment failed, a different
+            # source) — an empty value must not wipe a PDF link an earlier
+            # run found (review finding 2).
+            row.update({k: v for k, v in fresh.items() if v not in ("", None, [], {})})
         self.display_page()
 
     def _update_matches_label(self):
@@ -981,10 +998,13 @@ class SearchBrowseTab(QWidget):
             # (review finding 1: this used to be a passing phase line).
             text += ("  ⚠  " + "; ".join(dict.fromkeys(self._enrich_notes))
                      + " — some PDF links or details may be missing")
+        if self._run_errors:
+            text += "  ⚠  " + "; ".join(self._run_errors)
         self.status_label.setText(text)
         self._update_matches_label()
         self.run_selected_btn.setEnabled(True)
         self.run_all_btn.setEnabled(True)
+        self.quick_btn.setEnabled(True)
 
     def quick_search(self):
         category = self.cat_combo.currentText()

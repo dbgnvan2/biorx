@@ -169,8 +169,34 @@ def test_r1_final_status_keeps_the_outage_note():
     from unittest.mock import MagicMock
     tab = MagicMock()
     tab._enrich_notes = ["Crossref failed for 3 of 40 papers"]
+    tab._run_errors = ["'Welch' failed: boom"]
     tab._results.unique_count = 12
     tab.progress_bar.maximum.return_value = 0
     gui.SearchBrowseTab._on_all_filters_done(tab)
     text = tab.status_label.setText.call_args.args[0]
     assert "12 unique papers found" in text and "Crossref failed for 3 of 40 papers" in text
+    assert "'Welch' failed: boom" in text
+
+
+def test_r2_later_poorer_record_does_not_erase_a_found_link():
+    """Review finding 2: a later filter matching the same paper with a failed
+    enrichment must not overwrite a PDF link with ''."""
+    from unittest.mock import MagicMock
+    row = {"title": "T", "doi": "10.1/a", "canonical_id": "doi:10.1/a",
+           "pdf_url": "https://oa.example/a.pdf", "abstract": ""}
+    tab = MagicMock()
+    tab.current_results = [row]
+    gui.SearchBrowseTab._apply_enrichment(
+        tab, [(gui.paper_key(dict(row)), {**row, "pdf_url": "", "abstract": "Filled in."})])
+    assert row["pdf_url"] == "https://oa.example/a.pdf"
+    assert row["abstract"] == "Filled in."
+
+
+def test_r2_a_failed_filter_does_not_stall_the_run():
+    """An error in one filter's search moves on to the next, and is reported."""
+    from unittest.mock import MagicMock
+    tab = MagicMock()
+    tab._run_errors = []
+    gui.SearchBrowseTab._on_filter_error(tab, "Inflammation", "boom")
+    assert tab._run_errors == ["'Inflammation' failed: boom"]
+    tab._run_next_filter.assert_called_once()
