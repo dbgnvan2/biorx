@@ -175,3 +175,34 @@ def test_k2_problem_reaches_healthz(ctx, client, monkeypatch):
     warnings = client.get("/healthz").json()["startup_warnings"]
     assert any("pasted twice" in w for w in warnings)
     assert not any(key[:12] in w for w in warnings)
+
+
+def test_d1_default_llm_provider_wins(monkeypatch):
+    """DEFAULT_LLM_PROVIDER is the setting; it outranks the old LLM_PROVIDER
+    (the 2026-09-18 case: .env had both, the old one said anthropic) and the yaml."""
+    from src.llm_config import default_provider_source, provider_setting_problems
+    cfg = load_llm_config()
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("DEFAULT_LLM_PROVIDER", "deepseek")
+    assert default_provider(cfg) == "deepseek"
+    assert default_provider_source(cfg) == "the DEFAULT_LLM_PROVIDER setting"
+    assert provider_setting_problems(cfg) == [
+        "LLM_PROVIDER=anthropic is ignored because DEFAULT_LLM_PROVIDER=deepseek is set "
+        "— remove LLM_PROVIDER."]
+
+
+def test_d1_legacy_name_still_works_and_is_flagged(monkeypatch):
+    from src.llm_config import provider_setting_problems
+    cfg = load_llm_config()
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    assert default_provider(cfg) == "ollama"
+    assert "old name" in provider_setting_problems(cfg)[0]
+
+
+def test_d1_yaml_applies_when_neither_is_set(monkeypatch):
+    from src.llm_config import default_provider_source, provider_setting_problems
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    cfg = load_llm_config()
+    assert default_provider(cfg) == "deepseek"
+    assert default_provider_source(cfg) == "default_provider in llm_config.yaml"
+    assert provider_setting_problems(cfg) == []

@@ -100,7 +100,7 @@ def test_r3_env_load_logs_names_never_values(tmp_path, monkeypatch, caplog):
 def test_r3_provider_source_names_the_override(monkeypatch):
     from src.llm_config import default_provider_source
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
-    assert "LLM_PROVIDER environment variable" in default_provider_source({})
+    assert default_provider_source({}) == "the LLM_PROVIDER setting"
     monkeypatch.delenv("LLM_PROVIDER")
     assert "llm_config.yaml" in default_provider_source({})
 

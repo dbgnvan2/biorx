@@ -127,15 +127,32 @@ def load_llm_config(path: Optional[str] = None) -> Dict[str, Any]:
     return merged
 
 
-def default_provider(config: Dict[str, Any]) -> str:
-    """The provider to use when a user has expressed no preference.
+# The one setting that names the default provider. LLM_PROVIDER is its old
+# name, still honoured when it is the only one set (a deploy may use it).
+DEFAULT_PROVIDER_ENV = "DEFAULT_LLM_PROVIDER"
+LEGACY_PROVIDER_ENV = "LLM_PROVIDER"
 
-    LLM_PROVIDER wins over the file. An unknown name is a configuration error
-    worth a loud log rather than a silent fallback to something cheaper or
-    more expensive than the operator intended.
+
+def _provider_setting(config: Dict[str, Any]):
+    """(name, source) of the configured default provider, before validation."""
+    for var in (DEFAULT_PROVIDER_ENV, LEGACY_PROVIDER_ENV):
+        value = (os.environ.get(var) or "").strip()
+        if value:
+            return value, var
+    return (config.get("default_provider") or "").strip(), "llm_config.yaml"
+
+
+def default_provider(config: Dict[str, Any]) -> str:
+    """Purpose: The provider for anyone who has not chosen one of their own.
+    Spec:    docs/implementation_plan_2026-09-18_filter_run.md#D1
+    Tests:   tests/web/test_llm_config.py::test_d1_default_llm_provider_wins
+
+    DEFAULT_LLM_PROVIDER, else the legacy LLM_PROVIDER, else default_provider
+    in llm_config.yaml. An unknown name is a configuration error worth a loud
+    log rather than a silent fallback to something cheaper or more expensive
+    than the operator intended.
     """
-    env_name = (os.environ.get("LLM_PROVIDER") or "").strip()
-    name = env_name or (config.get("default_provider") or "").strip()
+    name, _ = _provider_setting(config)
     if name and name not in config.get("providers", {}):
         logger.error(
             "LLM provider %r is not defined in the config (known: %s) — "
@@ -148,12 +165,26 @@ def default_provider(config: Dict[str, Any]) -> str:
 
 
 def default_provider_source(config: Dict[str, Any]) -> str:
-    """Where the default provider comes from, for the start-up log: the
-    LLM_PROVIDER variable silently outranks llm_config.yaml, which made a
-    stray LLM_PROVIDER=anthropic in .env hard to find (2026-09-18)."""
-    if (os.environ.get("LLM_PROVIDER") or "").strip():
-        return "the LLM_PROVIDER environment variable (overrides llm_config.yaml)"
-    return "default_provider in llm_config.yaml"
+    """Where the default provider comes from, for the start-up log. A stray
+    LLM_PROVIDER=anthropic in .env silently outranked the yaml (2026-09-18)."""
+    _, source = _provider_setting(config)
+    if source == "llm_config.yaml":
+        return "default_provider in llm_config.yaml"
+    return f"the {source} setting"
+
+
+def provider_setting_problems(config: Dict[str, Any]) -> List[str]:
+    """Warnings about the provider settings themselves: the legacy name in use,
+    or both names set to different providers (one of them is being ignored)."""
+    new = (os.environ.get(DEFAULT_PROVIDER_ENV) or "").strip()
+    old = (os.environ.get(LEGACY_PROVIDER_ENV) or "").strip()
+    if new and old and new != old:
+        return [f"{LEGACY_PROVIDER_ENV}={old} is ignored because "
+                f"{DEFAULT_PROVIDER_ENV}={new} is set — remove {LEGACY_PROVIDER_ENV}."]
+    if old and not new:
+        return [f"{LEGACY_PROVIDER_ENV} is the old name for {DEFAULT_PROVIDER_ENV}; "
+                f"rename it."]
+    return []
 
 
 def provider_config(config: Dict[str, Any], name: str) -> Optional[ProviderConfig]:

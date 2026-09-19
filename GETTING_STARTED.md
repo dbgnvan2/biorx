@@ -43,7 +43,7 @@ Open `.env` and set at minimum:
 |---|---|
 | `ACCESS_CODE` | Any passphrase — this is what you type to sign in |
 | `SESSION_SECRET` | A random string: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
-| `LLM_PROVIDER` | `anthropic`, `deepseek`, or `ollama` |
+| `DEFAULT_LLM_PROVIDER` | `deepseek` (default), `anthropic`, or `ollama` — old name `LLM_PROVIDER` |
 | `ANTHROPIC_API_KEY` or `DEEPSEEK_API_KEY` | Your key for whichever provider you chose |
 | `BIORX_CONTACT_EMAIL` | Your email (sent in API request headers for polite-pool access) |
 
@@ -72,7 +72,7 @@ Railway hosts the app in a container with persistent storage. The free tier is e
    ACCESS_CODE=your-shared-passphrase
    SESSION_SECRET=<random string>
    KEY_ENC_SECRET=<random string — required for colleagues to save their own API keys>
-   LLM_PROVIDER=anthropic
+   DEFAULT_LLM_PROVIDER=deepseek
    ANTHROPIC_API_KEY=sk-ant-...
    BIORX_CONTACT_EMAIL=you@example.com
    DATA_DIR=/data
@@ -174,7 +174,7 @@ contact_email: you@example.com
 
 | Provider | Cost | Notes |
 |---|---|---|
-| **Anthropic** (Claude Sonnet 5) | ~$0.003 per summary | Best quality; default when `LLM_PROVIDER=anthropic` |
+| **Anthropic** (Claude Sonnet 5) | ~$0.003 per summary | Best quality; default when `DEFAULT_LLM_PROVIDER=anthropic` |
 | **DeepSeek** (deepseek-chat) | ~$0.0003 per summary | Good quality, very low cost |
 | **Ollama** (Qwen 7B, local) | Free | Requires Ollama running; not reachable from a cloud deployment |
 

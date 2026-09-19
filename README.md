@@ -153,7 +153,8 @@ deleted; the old account's cookie leads to the merged one.
 Three backends, configured in `llm_config.yaml`: local **Ollama** for
 development, **DeepSeek** over its OpenAI-compatible API, and **Anthropic** over
 the Messages API. `default_provider` in `llm_config.yaml` is **deepseek**;
-`LLM_PROVIDER` overrides it. Keys go in `.env` (the desktop app and CLI agents
+`DEFAULT_LLM_PROVIDER` overrides it (old name `LLM_PROVIDER`; the start-up log
+says which setting chose the provider). Keys go in `.env` (the desktop app and CLI agents
 read it at start-up) or the host environment — never in `llm_config.yaml`,
 which is committed to git.
 
@@ -195,7 +196,7 @@ desktop GUI into a headless container.
    `KEY_ENC_SECRET` (each a long random string —
    `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`; keep a copy
    of `KEY_ENC_SECRET`, changing it makes stored API keys unreadable),
-   `LLM_PROVIDER` (e.g. `deepseek`) and the matching provider key. Leave
+   `DEFAULT_LLM_PROVIDER` (e.g. `deepseek`) and the matching provider key. Leave
    `ACCESS_CODE` and `SESSION_COOKIE_INSECURE` unset.
 4. Settings → Networking → **Generate Domain** for the public HTTPS address.
 5. Make access codes inside the running service (they go to

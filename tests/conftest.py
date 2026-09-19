@@ -265,3 +265,6 @@ def _never_load_the_real_env_file(tmp_path, monkeypatch):
         # file) has no src package — and so no entry point to guard.
         return
     monkeypatch.setattr(env_file, "PROJECT_ENV", tmp_path / "no-such.env")
+    # Tests choose a provider with LLM_PROVIDER; a DEFAULT_LLM_PROVIDER from the
+    # developer's shell would silently outrank them.
+    monkeypatch.delenv("DEFAULT_LLM_PROVIDER", raising=False)
