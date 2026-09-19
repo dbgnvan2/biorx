@@ -690,9 +690,12 @@ async function startSearch(payload) {
   $("cancel-search").disabled = false;
   $("btn-save-as-list").disabled = true;
 
+  // The Search panel's source boxes belong to the manual search. A saved
+  // filter runs on the sources saved with it, so none are sent and the server
+  // uses the filter's own (issue 1, 2026-09-18).
   const body = Object.assign(
-    { max_results: Number($("q-max").value) || 200,
-      source_selection: getSourceSelection($("search-sources")) },
+    { max_results: Number($("q-max").value) || 200 },
+    payload.filter ? { source_selection: getSourceSelection($("search-sources")) } : {},
     payload,
   );
   try {

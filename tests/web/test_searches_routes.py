@@ -397,3 +397,15 @@ def test_d2_job_records_label_and_reason_once():
     assert list(job.source_problems) == [label]
     assert "did not respond properly" in job.source_problems[label]
     assert "source_problems" in job.to_dict()
+
+
+def test_i1_saved_filter_sources_reach_the_orchestrator(ctx, signed_in):
+    """Issue 1 (server half): with no source_selection in the request, a saved
+    filter searches the sources saved with it."""
+    ctx.orchestrator = _fake_orchestrator()
+    own = {"all": False, "selected": ["arxiv"]}
+    created = signed_in.post("/api/filters", json={
+        "name": "Own sources", "filter": {**FILTER, "source_selection": own}}).json()
+    job_id = signed_in.post("/api/searches", json={"filter_id": created["id"]}).json()["job_id"]
+    _await_status(signed_in, job_id)
+    assert ctx.orchestrator.search.call_args.kwargs["source_selection"] == own

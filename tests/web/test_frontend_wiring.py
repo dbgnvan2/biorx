@@ -995,7 +995,9 @@ let mode = "ok", seenAtPost = null, resultsFail = false;
 // Each poll of the job takes the next entry: a job object, or an error to throw.
 const polls = [];
 function httpError(status) { const e = new Error(`HTTP ${status}`); e.status = status; return e; }
-async function api(method, path) {
+let postBody = null;
+async function api(method, path, body) {
+  if (method === "POST") postBody = body;
   if (method === "GET" && path === "/api/filters") return { filters: [{ id: 7, name: "A" }, { id: 8, name: "B" }] };
   if (method === "POST") {
     seenAtPost = $("search-filter-list").querySelectorAll().map(b => [b.textContent, b.disabled]);
@@ -1152,3 +1154,21 @@ def test_fr4_4_failed_results_load_still_releases_buttons():
       out.after = labels();
     """)
     assert out["after"] == [["Done", False], ["Run", False]]
+
+
+def test_i1_saved_filter_runs_on_its_own_sources():
+    """Issue 1: running a saved filter must not send the Search panel's source
+    boxes (the server then uses the filter's saved sources); the manual search
+    still sends them."""
+    out = _run_flow("""
+      await loadSearchFilters();
+      polls.push(job("done"));
+      await $("search-filter-list").querySelectorAll()[0].onclick();
+      out.saved = postBody;
+      await new Promise(r => setTimeout(r, 0));
+      polls.push(job("done"));
+      await startSearch({ filter: { text_groups: [{ both: "x" }] } });
+      out.manual = postBody;
+    """)
+    assert "source_selection" not in out["saved"] and out["saved"]["filter_id"] == 7
+    assert out["manual"]["source_selection"] == {"all": True}
