@@ -209,10 +209,14 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
                             f"This looks like a {notice.rstrip(':')} notice rather "
                             "than an article, and it has no abstract to summarize."
                         )
-                    tried = ", ".join(dict.fromkeys(recovered.tried)) or "nothing to look up"
+                    failed = list(dict.fromkeys(getattr(recovered, "failed", [])))
+                    asked = [n for n in dict.fromkeys(recovered.tried) if n not in failed]
+                    tried = ", ".join(asked) or "nothing to look up"
+                    unreachable = (f" Could not reach: {', '.join(failed)} — try again later."
+                                   if failed else "")
                     raise ProviderResponseError(
                         "No abstract or downloadable text for this paper "
-                        f"(looked in: {tried})."
+                        f"(looked in: {tried}).{unreachable}"
                     )
 
             job.phase = f"Summarizing with {resolved.provider}"

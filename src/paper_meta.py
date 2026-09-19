@@ -239,6 +239,9 @@ class AbstractRecovery:
     text: str = ""
     source: Optional[str] = None
     tried: List[str] = field(default_factory=list)
+    # Sources that could not be asked (outage, timeout) — distinct from ones
+    # that were asked and had nothing (review finding 5, 2026-09-18).
+    failed: List[str] = field(default_factory=list)
 
     @property
     def found(self) -> bool:
@@ -284,7 +287,10 @@ def _crossref_abstract(doi: str) -> str:
         pmid="", pmcid="", source_url="", best_oa_url="", pdf_url="", license="",
         oa_status="", subjects=[], keywords=[], source_hits=[], flags=RecordFlags(),
     )
-    CrossrefAdapter(user_agent=get_crossref_user_agent(cfg)).enrich(record)
+    if CrossrefAdapter(user_agent=get_crossref_user_agent(cfg)).enrich(record) is False:
+        # enrich() reports an outage by returning False; raise so attempt()
+        # records "could not reach" rather than "had nothing".
+        raise RuntimeError("Crossref could not be reached")
     return record.abstract or ""
 
 
@@ -327,6 +333,7 @@ def recover_abstract(paper: Dict[str, Any], fetch_html=None) -> AbstractRecovery
             return False
         except Exception as e:
             logger.info("Abstract recovery: %s failed: %s", name, e)
+            result.failed.append(name)
             return False
         if text and len(text) < MIN_ABSTRACT_CHARS:
             # A few words from a structured source are an error string or a

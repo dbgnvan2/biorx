@@ -444,3 +444,19 @@ def test_n2_an_unrecoverable_article_still_says_what_was_tried(ctx, signed_in, m
         body = _await(signed_in, job_id)
     assert body["status"] == "error"
     assert "europepmc" in body["error"] and "openalex" in body["error"]
+
+
+def test_r5_unreachable_source_is_named_apart_from_empty_ones(ctx, signed_in, monkeypatch, no_pdf):
+    """Review finding 5: an outage is 'could not reach', not 'looked in'."""
+    from src.paper_meta import AbstractRecovery
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    with patch("web.routes_summaries.recover_abstract",
+               return_value=AbstractRecovery("", None, ["europepmc", "crossref"], ["crossref"])), \
+         patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
+        job_id = signed_in.post("/api/summaries",
+                                json={"paper": {**FLAMING, "title": "An ordinary article"}}).json()["job_id"]
+        body = _await(signed_in, job_id)
+    assert "(looked in: europepmc)" in body["error"]
+    assert "Could not reach: crossref" in body["error"]

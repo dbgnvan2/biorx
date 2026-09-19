@@ -296,3 +296,23 @@ def test_n2_a_network_failure_in_a_source_stays_quiet(no_network, caplog):
     with caplog.at_level("INFO"):
         recover_abstract({"doi": "10.1/x"})
     assert not [r for r in caplog.records if r.levelname == "ERROR"]
+
+
+
+def test_r5_crossref_outage_raises():
+    """Review finding 5: Crossref enrich() returns False on an outage, and the
+    helper must raise rather than return "" (which reads as 'no abstract')."""
+    from src import paper_meta
+    with patch("src.sources.config.load_sources_config", return_value={}), \
+         patch("src.sources.crossref.CrossrefAdapter.enrich", return_value=False):
+        with pytest.raises(RuntimeError, match="could not be reached"):
+            paper_meta._crossref_abstract("10.1/x")
+
+
+def test_r5_unreachable_source_is_recorded_as_failed(no_network):
+    """A source that raised is listed in `failed`, apart from ones that had nothing."""
+    with patch("src.paper_meta._crossref_abstract",
+               side_effect=RuntimeError("Crossref could not be reached")):
+        result = recover_abstract({"doi": "10.1/x"})
+    assert result.failed == ["crossref"]
+    assert "europepmc" in result.tried and "europepmc" not in result.failed
