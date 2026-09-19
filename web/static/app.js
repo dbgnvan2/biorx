@@ -7,6 +7,9 @@
 
 const PAGE_SIZE = 25;
 const POLL_MS   = 1500;
+// Consecutive failed status checks before a search is given up as lost
+// (~12 s at POLL_MS). A single blip must not end a search that is still running.
+const POLL_GIVE_UP = 8;
 
 const BIORXIV_CATEGORIES = [
   "(any)","animal behavior and cognition","biochemistry","bioengineering",
@@ -47,6 +50,7 @@ const state = {
   total: 0,
   fetched: 0,
   searchRunning: false,       // a search job is in flight (any Run button)
+  pollFailures: 0,            // consecutive failed status checks this run
   filterRun: null,            // {id, status} of the last saved-filter run (FR4)
   results: [],
   checkedPapers: new Set(),   // canonical_ids of checked search results
@@ -619,7 +623,8 @@ async function loadSearchFilters() {
    Pure, for the node-run test. */
 function filterRunLabel(filterId, run) {
   if (!run || String(run.id) !== String(filterId)) return "Run";
-  return { running: "Running…", done: "Done", cancelled: "Stopped", error: "Failed" }[run.status]
+  return { running: "Running…", done: "Done", cancelled: "Stopped", error: "Failed",
+           lost: "Lost track" }[run.status]
     || "Run";
 }
 
@@ -678,6 +683,7 @@ async function startSearch(payload) {
   $("phase").textContent = "Starting…";
   // Every Run button is disabled before the request leaves (FR4.2).
   state.searchRunning = true;
+  state.pollFailures = 0;
   state.filterRun = payload.filter_id != null ? { id: payload.filter_id, status: "running" } : null;
   renderFilterRunButtons();
   $("run-search").disabled = true;
@@ -707,7 +713,24 @@ async function pollSearch() {
   if (!state.jobId) return;
   let job;
   try { job = await api("GET", `/api/searches/${state.jobId}`); }
-  catch (e) { notice(e.message); searchFinished("error"); return; }
+  catch (e) {
+    if (!state.polling) return;
+    // One failed check is not a failed search: the job is still running on
+    // the server (P1). Give up only on a definite answer (gone, expired,
+    // signed out) or after repeated failures — and say "lost track", not
+    // "failed", because the search itself may well have finished.
+    state.pollFailures += 1;
+    const definite = [401, 404, 410].includes(e.status);
+    if (!definite && state.pollFailures < POLL_GIVE_UP) {
+      $("phase").textContent =
+        `Lost contact with the server — retrying (${state.pollFailures}/${POLL_GIVE_UP})…`;
+      return;
+    }
+    notice(e.message);
+    searchFinished("lost");
+    return;
+  }
+  state.pollFailures = 0;
 
   $("phase").textContent = progressText(job);
   if (job.total > 0) {

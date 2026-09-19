@@ -25,6 +25,7 @@ def normalise_filter(f: Dict[str, Any]) -> Dict[str, Any]:
       * text groups as {"keywords": ...}  -> "both" (else the group matched all)
       * date_from / date_to               -> start_date / end_date (else ignored)
       * institution as a list             -> a string (else .strip() crashed)
+      * keywords as a string              -> a list (else split into letters)
     Applied wherever a stored or submitted filter is read or run, so the fix
     does not depend on the filter being re-saved from the editor (P19).
     """
@@ -44,6 +45,12 @@ def normalise_filter(f: Dict[str, Any]) -> Dict[str, Any]:
             value = out.pop(old)
             if value and not out.get(new):
                 out[new] = value
+    # A top-level keywords string was joined character by character by every
+    # reader (", ".join("stress") -> "s, t, r, e, s, s"). Read it as the
+    # comma-separated list it was meant to be.
+    kw = out.get("keywords")
+    if isinstance(kw, str):
+        out["keywords"] = [k.strip() for k in kw.split(",") if k.strip()]
     inst = out.get("institution")
     if isinstance(inst, (list, tuple)):
         out["institution"] = ", ".join(str(i).strip() for i in inst if str(i).strip())

@@ -89,8 +89,20 @@ def test_fr1_4_legacy_keywords_group_has_criteria():
     {"keywords": ["", " "]},
     {"text_groups": [{"title": None, "abstract": None, "both": None}]},
     {"category": "neuroscience", "days_back": 7, "text_groups": []},
+    # Adversarial: keywords present but ignored by every reader, because
+    # text_groups is non-empty. Looks like a term; searches nothing.
+    {"text_groups": [{"both": ""}], "keywords": ["stress"]},
 ])
 def test_fr1_5_blank_values_are_empty(f):
     """FR1.5: blank strings, blank author entries and category/date alone are
     not something to search for."""
     assert filter_has_text(f) is False
+
+
+def test_fr1_7_keyword_string_is_a_term_list_not_letters():
+    """FR1 review finding: a string keywords field was split into letters by
+    filter_papers, so "stress" matched any paper containing an "s"."""
+    from src.filtering import filter_papers, normalise_filter
+    assert normalise_filter({"keywords": "stress, cortisol"})["keywords"] == ["stress", "cortisol"]
+    papers = [{"title": "Soil carbon"}, {"title": "Stress in rats"}]
+    assert [p["title"] for p in filter_papers(papers, {"keywords": "stress"})] == ["Stress in rats"]

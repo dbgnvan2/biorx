@@ -63,7 +63,8 @@ def filter_has_text(f: Dict[str, Any]) -> bool:
     Without one, every source returns its whole date window unfiltered, so
     every entry point (GUI, web routes, monitor) refuses to run it. Read after
     normalise_filter so a legacy web-saved {"keywords": ...} group counts, as
-    does a top-level "keywords" field, which filter_papers still honours.
+    does a top-level "keywords" field — but only when text_groups is empty,
+    the one case where filter_papers and the query builders read it.
     """
     from src.filtering import normalise_filter, normalize_authors
 
@@ -71,12 +72,12 @@ def filter_has_text(f: Dict[str, Any]) -> bool:
     for g in f.get("text_groups") or []:
         if any(str(g.get(k) or "").strip() for k in TEXT_FIELDS):
             return True
-    # Top-level "keywords" (list or string): filter_papers still reads it.
-    kw = f.get("keywords")
-    if isinstance(kw, str) and kw.strip():
-        return True
-    if isinstance(kw, (list, tuple)) and any(str(k).strip() for k in kw):
-        return True
+    # Top-level "keywords" counts only where its readers use it: filter_papers
+    # and the query builders fall back to it only when text_groups is empty.
+    if not f.get("text_groups"):
+        kw = f.get("keywords")
+        if isinstance(kw, (list, tuple)) and any(str(k).strip() for k in kw):
+            return True
     if normalize_authors(f.get("authors")):
         return True
     return bool(str(f.get("institution") or "").strip())

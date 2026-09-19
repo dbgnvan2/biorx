@@ -991,7 +991,10 @@ els["search-filter-list"] = Object.assign(mk("ul"), {
 Object.defineProperty(els["search-filter-list"], "textContent", {
   set(v) { this.children = []; }, get() { return ""; } });
 const $ = (id) => els[id] || (els[id] = mk("x"));
-let mode = "ok", seenAtPost = null;
+let mode = "ok", seenAtPost = null, resultsFail = false;
+// Each poll of the job takes the next entry: a job object, or an error to throw.
+const polls = [];
+function httpError(status) { const e = new Error(`HTTP ${status}`); e.status = status; return e; }
 async function api(method, path) {
   if (method === "GET" && path === "/api/filters") return { filters: [{ id: 7, name: "A" }, { id: 8, name: "B" }] };
   if (method === "POST") {
@@ -999,11 +1002,23 @@ async function api(method, path) {
     if (mode === "refuse") throw new Error("no search terms");
     return { job_id: "j" };
   }
+  if (method === "GET" && path === "/api/searches/j") {
+    const next = polls.shift();
+    if (next instanceof Error) throw next;
+    return next;
+  }
+  if (method === "GET" && path.startsWith("/api/searches/j/results")) {
+    if (resultsFail) throw httpError(500);
+    return { total: 0, results: [], status: "done" };
+  }
   return {};
 }
-function notice() {} function renderSummariesPanel() {} function pollSearch() {}
+const job = (status) => ({ status, fetched: 3, matched: 0, phase: "", sources_failed: [] });
+function notice() {} function renderSummariesPanel() {} function renderResults() {}
+function refreshSearchSummaries() {} function failedSourcesText() { return ""; }
 function populateCategorySelect() {} function getSourceSelection() { return { all: true }; }
 const POLL_MS = 1000;
+const POLL_GIVE_UP = 8;
 globalThis.setInterval = () => 1; globalThis.clearInterval = () => {};
 const labels = () => $("search-filter-list").querySelectorAll().map(b => [b.textContent, b.disabled]);
 """
@@ -1025,6 +1040,9 @@ def _run_flow(body):
         _js_block(r"async function startSearch\(payload\) \{.*?\n\}"),
         _js_block(r"function searchFinished\(status\) \{.*?\n\}"),
         _js_block(r"function stopPolling\(\) \{.*?\n\}"),
+        _js_block(r"async function pollSearch\(\) \{.*?\n\}"),
+        _js_block(r"async function loadResults\(\) \{.*?\n\}"),
+        _js_block(r"function progressText\(job\) \{.*?\n\}"),
         "(async () => { const out = {};\n" + body + "\nconsole.log(JSON.stringify(out)); })();",
     ]
     result = subprocess.run([node, "-e", "\n".join(parts)], capture_output=True, text=True, timeout=20)
@@ -1034,19 +1052,21 @@ def _run_flow(body):
 
 def test_fr4_2_buttons_disabled_before_request():
     """FR4.2: clicking Run disables every Run button and labels the clicked one
-    Running… before the POST leaves; finishing labels it Done and re-enables.
-    Clicking Done runs the filter again."""
+    Running… before the POST leaves; the job finishing (through the real
+    pollSearch) labels it Done and re-enables. Clicking Done runs it again."""
     out = _run_flow("""
       await loadSearchFilters();
       out.initial = labels();
       const buttons = $("search-filter-list").querySelectorAll();
+      polls.push(job("done"));
       await buttons[0].onclick();
       out.atPost = seenAtPost;
-      searchFinished("done");
+      await new Promise(r => setTimeout(r, 0));
       out.done = labels();
+      polls.push(job("cancelled"));
       await buttons[0].onclick();
       out.againAtPost = seenAtPost;
-      searchFinished("cancelled");
+      await new Promise(r => setTimeout(r, 0));
       out.stopped = labels();
     """)
     assert out["initial"] == [["Run", False], ["Run", False]]
@@ -1071,11 +1091,64 @@ def test_fr4_3_rerender_keeps_state():
     """FR4.3: the list is rebuilt after a filter is saved; the label survives."""
     out = _run_flow("""
       await loadSearchFilters();
+      polls.push(job("running"));
       await $("search-filter-list").querySelectorAll()[1].onclick();
       out.midRun = (await loadSearchFilters(), labels());
-      searchFinished("done");
+      polls.push(job("done"));
+      await pollSearch();
       await loadSearchFilters();
       out.after = labels();
     """)
     assert out["midRun"] == [["Run", True], ["Running…", True]]
     assert out["after"] == [["Run", False], ["Done", False]]
+
+
+def test_fr4_4_one_failed_check_does_not_end_the_search():
+    """Review finding 1 (P1): a failed status check is a blip, not a failed
+    search. The button stays Running… and disabled, and a later check that
+    finds the job done still ends in Done."""
+    out = _run_flow("""
+      await loadSearchFilters();
+      polls.push(httpError(0));
+      await $("search-filter-list").querySelectorAll()[0].onclick();
+      await new Promise(r => setTimeout(r, 0));
+      out.afterBlip = labels();
+      polls.push(httpError(502), job("done"));
+      await pollSearch(); out.afterSecond = labels();
+      await pollSearch(); out.after = labels();
+    """)
+    assert out["afterBlip"] == [["Running…", True], ["Run", True]]
+    assert out["afterSecond"] == [["Running…", True], ["Run", True]]
+    assert out["after"] == [["Done", False], ["Run", False]]
+
+
+@pytest.mark.parametrize("errors", [
+    ["httpError(0)"] * 8,     # gave up after repeated failures
+    ["httpError(410)"],       # expired: a definite answer, no retrying
+])
+def test_fr4_4_giving_up_says_lost_track_not_failed(errors):
+    """When the page stops tracking, the search may well have finished on the
+    server — so the label is Lost track, never Failed or Done."""
+    out = _run_flow(f"""
+      await loadSearchFilters();
+      polls.push({", ".join(errors)});
+      await $("search-filter-list").querySelectorAll()[0].onclick();
+      await new Promise(r => setTimeout(r, 0));
+      for (let i = 1; i < {len(errors)}; i++) await pollSearch();
+      out.after = labels();
+    """)
+    assert out["after"] == [["Lost track", False], ["Run", False]]
+
+
+def test_fr4_4_failed_results_load_still_releases_buttons():
+    """The job finished but its results could not be loaded: the buttons must
+    not stay disabled."""
+    out = _run_flow("""
+      await loadSearchFilters();
+      resultsFail = true;
+      polls.push(job("done"));
+      await $("search-filter-list").querySelectorAll()[0].onclick();
+      await new Promise(r => setTimeout(r, 0));
+      out.after = labels();
+    """)
+    assert out["after"] == [["Done", False], ["Run", False]]
