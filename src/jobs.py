@@ -81,6 +81,10 @@ class Job:
     fetched: int = 0
     total: int = 0
     matched: int = 0
+    # Enrichment progress, kept apart from fetched/total so the fetched count
+    # survives the enrichment phase (plan 2026-09-18 FR3).
+    enriched: int = 0
+    enrich_total: int = 0
     error: str = ""
     result: Any = None
     # Sources that failed mid-run. The orchestrator swallows these per source;
@@ -115,6 +119,8 @@ class Job:
             "fetched": self.fetched,
             "total": self.total,
             "matched": self.matched,
+            "enriched": self.enriched,
+            "enrich_total": self.enrich_total,
             "error": self.error,
             "sources_failed": list(self.sources_failed),
             "source_problems": dict(self.source_problems),

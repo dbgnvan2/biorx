@@ -157,6 +157,8 @@ class SourceOrchestrator:
         on_status: Optional[Callable[[str], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None,
         max_results: int = 2000,
+        enrich_only: Optional[Callable[[CanonicalRecord], bool]] = None,
+        on_enrich_progress: Optional[Callable[[int, int], None]] = None,
     ) -> List[CanonicalRecord]:
         """
         Execute a multi-source search and return deduplicated CanonicalRecords.
@@ -170,6 +172,12 @@ class SourceOrchestrator:
                               (e.g. "Searching Europe PMC…", "Enriching 120 papers…").
             should_stop:      Callable returning True when search should abort.
             max_results:      Maximum total records to return.
+            enrich_only:      If given, only records it accepts are enriched.
+                              Callers that filter locally pass their match test
+                              so a run does not spend two HTTP calls on every
+                              paper it is about to discard. None = enrich all.
+            on_enrich_progress: Callback with (enriched_so_far, to_enrich). If
+                              absent, enrichment reports through on_progress.
 
         Returns:
             List of deduplicated, ranked CanonicalRecords.
@@ -245,8 +253,9 @@ class SourceOrchestrator:
 
         # Enrichment phase (only for records that have DOIs)
         records = dedup.results()
-        self._enrich(records, on_status=on_status, on_progress=on_progress,
-                     should_stop=should_stop)
+        self._enrich(records, on_status=on_status,
+                     on_progress=on_enrich_progress or on_progress,
+                     should_stop=should_stop, enrich_only=enrich_only)
 
         return self._rank(records)
 
@@ -396,16 +405,21 @@ class SourceOrchestrator:
         on_status: Optional[Callable[[str], None]] = None,
         on_progress: Optional[Callable[[int, int], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None,
+        enrich_only: Optional[Callable[[CanonicalRecord], bool]] = None,
     ) -> None:
         """Run Crossref and Unpaywall enrichment on records that have DOIs.
 
         Emits status/progress so the GUI is not silent during this phase, which
         makes up to two synchronous HTTP calls per DOI (spec E2.3).
+
+        Spec:  docs/implementation_plan_2026-09-18_filter_run.md#C2
+        Tests: tests/test_orchestrator.py::test_fr2_1_enrich_only_limits_enrichment
         """
         if not (self._crossref or self._unpaywall):
             return  # nothing to enrich against
 
-        targets = [r for r in records if r.doi]
+        targets = [r for r in records
+                   if r.doi and (enrich_only is None or enrich_only(r))]
         if not targets:
             return
 

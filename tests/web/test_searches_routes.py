@@ -156,6 +156,85 @@ def test_fr1_2_empty_inline_filter_is_refused(ctx, signed_in):
     ctx.orchestrator.search.assert_not_called()
 
 
+# ── FR2 / FR3: enrichment through the real orchestrator, network faked ────────
+
+def _real_orchestrator(records):
+    """The real SourceOrchestrator (dedup, page loop, enrichment order) with a
+    fake adapter and fake Crossref/Unpaywall. A fake orchestrator would skip the
+    very stage these tests are about (learnings P36 corollary)."""
+    from src.sources.orchestrator import SourceOrchestrator
+    orch = SourceOrchestrator.__new__(SourceOrchestrator)
+    orch.config = {}
+    orch.warnings = []
+    adapter = MagicMock()
+    adapter.search.return_value = [{} for _ in records]
+    adapter.normalize.side_effect = list(records)
+    adapter.last_page_size = len(records)
+    adapter.last_total = len(records)
+    orch._search_adapters = {"europepmc": adapter}
+    orch._crossref = MagicMock()
+
+    def unpaywall_enrich(record):
+        record.pdf_url = f"https://oa.example/{record.doi}.pdf"
+        record.best_oa_url = record.pdf_url
+    orch._unpaywall = MagicMock()
+    orch._unpaywall.enrich.side_effect = unpaywall_enrich
+    return orch
+
+
+def _doi_record(title, doi, abstract="generative agents in simulation"):
+    r = _record(title, abstract=abstract)
+    r.doi = doi
+    r.canonical_id = f"doi:{doi}"
+    return r
+
+
+def test_fr2_3_results_include_enriched_fields(ctx, signed_in):
+    """FR2.3: what enrichment finds reaches the results the user gets."""
+    ctx.orchestrator = _real_orchestrator([_doi_record("Generative Agents", "10.1/a")])
+    job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
+    _await_status(signed_in, job_id)
+    results = signed_in.get(f"/api/searches/{job_id}/results").json()["results"]
+    assert [r["pdf_url"] for r in results] == ["https://oa.example/10.1/a.pdf"]
+
+
+def test_fr2_4_no_match_means_no_enrichment(ctx, signed_in):
+    """FR2.4: papers the filter drops are never enriched; a run that matches
+    one of three makes calls for that one only, and one that matches none
+    makes none."""
+    orch = _real_orchestrator([
+        _doi_record("Generative Agents", "10.1/a"),
+        _doi_record("Protein Folding", "10.1/b", abstract="kinetics"),
+        _doi_record("Soil Carbon", "10.1/c", abstract="farming"),
+    ])
+    ctx.orchestrator = orch
+    job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
+    _await_status(signed_in, job_id)
+    assert [c.args[0].doi for c in orch._crossref.enrich.call_args_list] == ["10.1/a"]
+    assert [c.args[0].doi for c in orch._unpaywall.enrich.call_args_list] == ["10.1/a"]
+
+    orch = _real_orchestrator([_doi_record("Protein Folding", "10.1/b", abstract="kinetics")])
+    ctx.orchestrator = orch
+    job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
+    body = _await_status(signed_in, job_id)
+    assert body["matched"] == 0
+    orch._crossref.enrich.assert_not_called()
+    orch._unpaywall.enrich.assert_not_called()
+
+
+def test_fr3_1_fetched_survives_enrichment(ctx, signed_in):
+    """FR3.1: three fetched, one matched and enriched. The poll must still say
+    three fetched — enrichment used to overwrite it with its own count."""
+    ctx.orchestrator = _real_orchestrator([
+        _doi_record("Generative Agents", "10.1/a"),
+        _doi_record("Protein Folding", "10.1/b", abstract="kinetics"),
+        _doi_record("Soil Carbon", "10.1/c", abstract="farming"),
+    ])
+    job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
+    body = _await_status(signed_in, job_id)
+    assert (body["fetched"], body["matched"], body["enriched"], body["enrich_total"]) == (3, 1, 1, 1)
+
+
 # ── P2: a source that failed must not look like a quiet week ──────────────────
 
 def test_a_failed_source_is_reported_not_silently_zero(ctx, signed_in):

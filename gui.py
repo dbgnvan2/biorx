@@ -141,12 +141,19 @@ class SearchWorker(QObject):
             f = self.filter_dict
             self._all_matched = []
             source_selection  = f.get("source_selection", {"all": True, "selected": []})
+            # Records that passed the filter; only these are enriched
+            # (plan 2026-09-18 C2). Rows below are still streamed as they
+            # arrive, so they do not show enriched fields — see the plan's
+            # "Adjacent issues".
+            matched_ids: set = set()
 
             def on_batch(records):
                 if self._stop_event.is_set():
                     return
                 papers  = [r.to_dict() for r in records]
                 matched = _filter_papers(papers, f)
+                kept = {id(p) for p in matched}
+                matched_ids.update(id(r) for r, p in zip(records, papers) if id(p) in kept)
                 if matched:
                     self._all_matched.extend(matched)
                     self.batch_ready.emit(matched)
@@ -168,6 +175,7 @@ class SearchWorker(QObject):
                 on_status=on_status,
                 should_stop=self._stop_event.is_set,
                 max_results=self.MAX_PAPERS,
+                enrich_only=lambda r: id(r) in matched_ids,
             )
 
             if self._stop_event.is_set():

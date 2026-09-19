@@ -252,3 +252,11 @@ def test_shutdown_cancels_unfinished_jobs():
     r.shutdown(wait=False)
     assert job.cancelled
     block.set()
+
+
+def test_fr3_2_poll_payload_has_counts():
+    """FR3.2: the poll carries every count the progress line shows."""
+    job = Job(id="j", kind="search", owner="u", fetched=150, matched=3,
+              enriched=2, enrich_total=3)
+    d = job.to_dict()
+    assert (d["fetched"], d["matched"], d["enriched"], d["enrich_total"]) == (150, 3, 2, 3)

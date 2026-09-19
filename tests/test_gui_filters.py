@@ -62,3 +62,31 @@ def test_e1_2_run_all_enabled_uses_enabled_field():
     assert gui.filter_is_enabled({"name": "B", "enabled": False}) is False
     # Missing field defaults to enabled, preserving prior behaviour.
     assert gui.filter_is_enabled({"name": "C"}) is True
+
+
+def test_fr2_5_gui_search_enriches_only_matched_papers():
+    """FR2.5 (plan 2026-09-18 C2): the desktop SearchWorker passes enrich_only
+    through, so the real orchestrator skips papers the filter dropped."""
+    from unittest.mock import MagicMock
+    from tests.test_orchestrator import _make_record
+    from src.sources.orchestrator import SourceOrchestrator
+
+    keep = _make_record(doi="10.1/keep", title="Generative agents")
+    drop = _make_record(doi="10.1/drop", title="Protein folding")
+    orch = SourceOrchestrator.__new__(SourceOrchestrator)
+    orch.config = {}
+    adapter = MagicMock()
+    adapter.search.return_value = [{}, {}]
+    adapter.normalize.side_effect = [keep, drop]
+    adapter.last_page_size = 2
+    adapter.last_total = 2
+    orch._search_adapters = {"europepmc": adapter}
+    orch._crossref = MagicMock()
+    orch._unpaywall = None
+
+    worker = gui.SearchWorker(
+        orch, {"text_groups": [{"both": "generative"}], "authors": []}, save_to_db=False,
+    )
+    worker.run()
+
+    assert [c.args[0] for c in orch._crossref.enrich.call_args_list] == [keep]

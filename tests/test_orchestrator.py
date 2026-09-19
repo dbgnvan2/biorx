@@ -304,6 +304,51 @@ def test_e2_3_enrichment_emits_status():
     orch._crossref.enrich.assert_called()
 
 
+def _two_record_orch():
+    orch = SourceOrchestrator.__new__(SourceOrchestrator)
+    orch.config = _config(europepmc=True, psyarxiv=False)
+    orch._crossref = MagicMock()
+    orch._unpaywall = MagicMock()
+    keep = _make_record(doi="10.1234/keep", title="Kept")
+    drop = _make_record(doi="10.1234/drop", title="Dropped")
+    mock_epmc = MagicMock()
+    mock_epmc.search.return_value = [{}, {}]
+    mock_epmc.normalize.side_effect = [keep, drop]
+    mock_epmc.last_page_size = 2
+    mock_epmc.last_total = 2
+    orch._search_adapters = {"europepmc": mock_epmc}
+    return orch, keep, drop
+
+
+def test_fr2_1_enrich_only_limits_enrichment():
+    """FR2.1: with enrich_only, a record the caller will discard gets no
+    Crossref or Unpaywall call; the kept one gets both."""
+    orch, keep, drop = _two_record_orch()
+    orch.search(
+        filter_dict={"days_back": 7, "text_groups": [{"both": "kept"}]},
+        source_selection={"all": True, "selected": []},
+        enrich_only=lambda r: r is keep,
+    )
+    assert [c.args[0] for c in orch._crossref.enrich.call_args_list] == [keep]
+    assert [c.args[0] for c in orch._unpaywall.enrich.call_args_list] == [keep]
+
+
+def test_fr3_1_enrich_progress_has_its_own_channel():
+    """FR3.1 (orchestrator half): given on_enrich_progress, enrichment counts go
+    there and never through on_progress, which carries the fetched count."""
+    orch, keep, drop = _two_record_orch()
+    fetch_progress, enrich_progress = [], []
+    orch.search(
+        filter_dict={"days_back": 7, "text_groups": [{"both": "kept"}]},
+        source_selection={"all": True, "selected": []},
+        on_progress=lambda a, b: fetch_progress.append((a, b)),
+        on_enrich_progress=lambda a, b: enrich_progress.append((a, b)),
+        enrich_only=lambda r: r is keep,
+    )
+    assert enrich_progress == [(0, 1), (1, 1)]
+    assert fetch_progress and fetch_progress[-1][0] == 2
+
+
 # ── Page-end detection must use the source's page size (review finding 2) ─────
 
 def _orch_for_pagination():

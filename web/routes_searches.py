@@ -111,7 +111,13 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
                 source_selection: Dict[str, Any], max_results: int):
     """Build the callable the job runner executes.
 
-    Returns matched papers. Every failure the orchestrator swallows per source
+    Returns matched papers, built after enrichment so they include it.
+    Spec:  docs/implementation_plan_2026-09-18_filter_run.md#C2, #C3
+    Tests: tests/web/test_searches_routes.py::test_fr2_3_results_include_enriched_fields,
+           tests/web/test_searches_routes.py::test_fr2_4_no_match_means_no_enrichment,
+           tests/web/test_searches_routes.py::test_fr3_1_fetched_survives_enrichment
+
+    Every failure the orchestrator swallows per source
     is recorded on the job, so an empty result set is never mistaken for a quiet
     week when a source was simply unreachable (learnings P2).
     """
@@ -119,17 +125,29 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
     filter_dict = normalise_filter(filter_dict)
 
     def work(job: Job) -> List[Dict[str, Any]]:
-        matched: List[Dict[str, Any]] = []
+        # Matched records are kept as objects and turned into dicts only after
+        # the search returns, so the results carry what enrichment and later
+        # duplicate merges added. Snapshotting each page on arrival threw that
+        # away (plan 2026-09-18 D-b; learnings P36).
+        matched: List[Any] = []
+        matched_ids: set = set()
 
         def on_batch(records):
             papers = [r.to_dict() for r in records]
-            keep = filter_papers(papers, filter_dict)
-            matched.extend(keep)
+            kept = {id(p) for p in filter_papers(papers, filter_dict)}
+            for record, paper in zip(records, papers):
+                if id(paper) in kept:
+                    matched.append(record)
+                    matched_ids.add(id(record))
             job.matched = len(matched)
 
         def on_progress(fetched: int, total: int):
             job.fetched = fetched
             job.total = max(fetched, total)
+
+        def on_enrich_progress(done: int, total: int):
+            job.enriched = done
+            job.enrich_total = total
 
         def on_status(message: str):
             job.phase = message
@@ -144,11 +162,14 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
                 on_status=on_status,
                 should_stop=job.should_stop,
                 max_results=max_results,
+                # Only papers that passed the filter are worth two HTTP calls.
+                enrich_only=lambda r: id(r) in matched_ids,
+                on_enrich_progress=on_enrich_progress,
             )
         finally:
             # This job ran on a pool thread that took a database connection.
             ctx.db.release()
-        return matched
+        return [r.to_dict() for r in matched]
 
     return work
 
