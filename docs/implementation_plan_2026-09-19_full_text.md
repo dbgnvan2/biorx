@@ -1,7 +1,7 @@
 # Implementation plan — summaries from full text, and finding free copies
 
 **Request:** chat, 2026-09-19.
-**Status:** DRAFT — awaiting approval. No code changed.
+**Status:** APPROVED 2026-09-19 with C1 revised (abstract stands in; no button).
 
 ## 0. Spec IDs
 
@@ -27,15 +27,20 @@
 
 ## 2. Changes
 
-**C1 (FT1) — no silent abstract-only summaries.**
-- When no full text is found, stop before calling the model. The job ends with
-  status `needs_confirmation`, listing where it looked and why each failed.
-- The details view shows that, with a **Summarize from the abstract anyway** button
-  (sends `allow_abstract_only: true`). No model call, no cost, without the click.
-- Every stored summary records `source_text` = `full_text` | `abstract` (new column;
-  existing rows = `unknown`). Shown as "Based on: full text / abstract only" in the
-  details view, a distinct badge (**✓ Summary (abstract)**), and the summaries PDF.
-- Desktop/CLI summarizer: same rule; the CLI takes `--allow-abstract-only`.
+**C1 (FT1) — no model call without full text; the abstract stands in.**
+(Revised 2026-09-19 by the owner: no "summarize anyway" button.)
+- When no full text is found (after the C2 chain), the model is not called and no
+  owner-key usage is recorded. The abstract itself is stored as the entry, with
+  `source_text = abstract`, `model_version = ""`, and shown as
+  "Abstract — no full text found (not a model summary)".
+- A full-text summary stores `source_text = full_text` and `text_source` (where the
+  text came from). Existing rows have `source_text = ''` (unknown).
+- Badge: **✓ Summary** for full text, **✓ Abstract only** for the stand-in; the
+  details view and the summaries PDF say the same.
+- Summarize on a paper whose stored entry is abstract-only runs the full-text
+  search again (a copy may have appeared) rather than returning the stand-in.
+- No abstract and no full text: the existing recovery chain, then an error.
+- Desktop/CLI summarizer: same rule.
 
 **C2 (FT3) — find a free full-text copy before giving up.** A chain in
 `src/fulltext.py`, tried in order, stopping at the first PDF that downloads and
@@ -67,11 +72,11 @@ README. OpenAlex and Semantic Scholar (C2) cover the same need, keyless.
 
 | ID | Criterion | Test |
 |---|---|---|
-| FT1.1 | No full text → no model call; job ends `needs_confirmation` with reasons | `tests/web/test_summaries_routes.py::test_ft1_1_no_full_text_does_not_call_the_model` |
-| FT1.2 | `allow_abstract_only` → model called; stored `source_text=abstract` | `…::test_ft1_2_abstract_only_needs_consent_and_is_recorded` |
+| FT1.1 | No full text → no model call, no usage; abstract stored with `source_text=abstract` | `tests/web/test_summaries_routes.py::test_ft1_1_no_full_text_stores_the_abstract_without_a_model_call` |
+| FT1.2 | Summarize on an abstract-only entry searches again; a found copy replaces it | `…::test_ft1_2_abstract_only_entry_is_retried` |
 | FT1.3 | Full text found → stored `source_text=full_text` + where from | `…::test_ft1_3_full_text_source_is_recorded` |
 | FT1.4 | Badge, details view and summaries PDF say "abstract only" | `tests/web/test_frontend_wiring.py::test_ft1_4_abstract_only_is_labelled` (node), `tests/web/test_summaries_pdf.py::test_ft1_4_pdf_says_abstract_only` |
-| FT1.5 | Desktop/CLI refuse abstract-only without the flag | `tests/test_summarization_agent.py::test_ft1_5_agent_needs_consent_for_abstract_only` |
+| FT1.5 | Desktop/CLI: no model call without full text; abstract stored as stand-in | `tests/test_summarization_agent.py::test_ft1_5_agent_uses_the_abstract_without_a_model_call` |
 | FT3.1 | Chain order; stops at the first source with extractable text | `tests/test_fulltext.py::test_ft3_1_chain_order_and_stop` |
 | FT3.2 | Adversarial: similar title, different paper → rejected | `tests/test_fulltext.py::test_ft3_2_near_miss_title_is_rejected` |
 | FT3.3 | Same title, wrong author and year → rejected | `tests/test_fulltext.py::test_ft3_3_title_alone_is_not_enough` |
