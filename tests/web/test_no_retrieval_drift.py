@@ -69,8 +69,12 @@ ROOT = Path(__file__).parent.parent.parent
 #   enrich_only and on_enrich_progress. Enrichment ran on every fetched paper and
 #   its output never reached results; it is internal to search(), so it cannot be
 #   narrowed from outside. Defaults keep the old behaviour — W1.a required)
+# Updated from e734ef4 → 4694712 (issue 3, 2026-09-18: Crossref/Unpaywall enrich return
+#   False on a failed lookup; _enrich counts and reports failures via WARNING,
+#   on_status and on_enrich_problem. Silent debug-only failures hid outages (P2)
+#   — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "e734ef4"
+BASELINE = "4694712"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
