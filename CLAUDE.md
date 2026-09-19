@@ -139,10 +139,13 @@ When the user reports unexpected behaviour, read the log tail **first** as part 
 
 ## Testing & Iteration
 
-Run the test suite with:
+Run the test suite with the project venv, which has PyQt6:
 ```bash
-/opt/homebrew/bin/pytest tests/ -v
+venv/bin/python -m pytest tests/ -v
 ```
+Another Python without PyQt6 (e.g. `/opt/homebrew/bin/pytest`) skips every desktop
+GUI test; the run's summary then says how many were skipped and why. CI runs
+without PyQt6 on purpose (`requirements-web.txt`), so GUI tests run only here.
 
 Test files and what they cover:
 - `tests/test_query_builder.py` — Lucene query generation, species clauses, date ranges

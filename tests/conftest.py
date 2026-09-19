@@ -235,3 +235,19 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
     if report.when == "call":
         item._guard_call_report = report
+
+
+def pytest_terminal_summary(terminalreporter):
+    """Say so when the desktop GUI tests were skipped for want of PyQt6.
+
+    A module-level importorskip turns a whole GUI test file into one quiet "s",
+    so a run with the wrong Python looked green while testing none of the GUI
+    (issue 2, 2026-09-18). The skip stays — CI has no PyQt6 on purpose — but it
+    is announced.
+    """
+    skipped = [r for r in terminalreporter.stats.get("skipped", [])
+               if "PyQt6" in str(getattr(r, "longrepr", ""))]
+    if skipped:
+        terminalreporter.write_sep(
+            "!", f"{len(skipped)} desktop GUI test file(s)/test(s) SKIPPED: PyQt6 is not "
+                 "importable here. Run venv/bin/python -m pytest to include them.")
