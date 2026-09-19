@@ -1046,6 +1046,7 @@ def _run_flow(body):
         _js_block(r"async function loadResults\(\) \{.*?\n\}"),
         _js_block(r"function progressText\(job\) \{.*?\n\}"),
         _js_block(r"function enrichProblemsText\(job\) \{.*?\n\}"),
+        _js_block(r"function shouldStopPolling\(error, failuresInARow\) \{.*?\n\}"),
         "(async () => { const out = {};\n" + body + "\nconsole.log(JSON.stringify(out)); })();",
     ]
     result = subprocess.run([node, "-e", "\n".join(parts)], capture_output=True, text=True, timeout=20)
@@ -1200,3 +1201,72 @@ def test_i3_search_page_shows_enrichment_outage():
       out.note = $("enrich-problems").textContent;
     """)
     assert out["note"].startswith("Crossref could not be reached for 3 of 5 papers")
+
+
+
+@pytest.mark.parametrize("status,failures,stop", [
+    (0, 1, False), (502, 7, False), (0, 8, True),
+    (401, 1, True), (404, 1, True), (410, 1, True),
+])
+def test_i5_should_stop_polling(status, failures, stop):
+    got = _node_eval(["const POLL_GIVE_UP = 8;",
+                      _js_block(r"function shouldStopPolling\(error, failuresInARow\) \{.*?\n\}")],
+                     f"shouldStopPolling({{status: {status}}}, {failures})")
+    assert got is stop
+
+
+def _run_filter_test(body):
+    import json
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    harness = r"""
+const els = {};
+const $ = (id) => els[id] || (els[id] = { textContent: "", classList: { add() {}, remove() {} } });
+const POLL_GIVE_UP = 8;
+globalThis.setInterval = () => 1; globalThis.clearInterval = () => {};
+const polls = [];
+function httpError(status) { const e = new Error(`HTTP ${status}`); e.status = status; return e; }
+async function api(method, path) {
+  if (path.includes("/results")) return { total: 2, results: [] };
+  const next = polls.shift();
+  if (next instanceof Error) throw next;
+  return next;
+}
+function failedSourcesText() { return ""; } function renderFilterTestResults() {}
+"""
+    parts = [
+        _js_block(r"const state = \{.*?\n\};"),
+        harness,
+        _js_block(r"function shouldStopPolling\(error, failuresInARow\) \{.*?\n\}"),
+        _js_block(r"function progressText\(job\) \{.*?\n\}"),
+        _js_block(r"function enrichProblemsText\(job\) \{.*?\n\}"),
+        _js_block(r"async function pollFilterTest\(\) \{.*?\n\}"),
+        "(async () => { const out = {}; state.filterTestJobId = 't'; state.filterTestPolling = 1;\n"
+        + body + "\nconsole.log(JSON.stringify(out)); })();",
+    ]
+    result = subprocess.run([node, "-e", "\n".join(parts)], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip())
+
+
+def test_i5_filter_test_survives_one_failed_check():
+    """Issue 5: the Filters-tab test kept no count — one failed check ended it."""
+    out = _run_filter_test("""
+      polls.push(httpError(0), { status: "done", fetched: 5, matched: 2, sources_failed: [] });
+      await pollFilterTest(); out.afterBlip = $("filter-test-status").textContent;
+      await pollFilterTest(); out.after = $("filter-test-status").textContent;
+    """)
+    assert out["afterBlip"].startswith("Lost contact with the server — retrying (1/8)")
+    assert out["after"] == "2 papers matched."
+
+
+def test_i5_filter_test_gives_up_on_expired():
+    out = _run_filter_test("""
+      polls.push(httpError(410));
+      await pollFilterTest(); out.after = $("filter-test-status").textContent;
+      out.polling = state.filterTestPolling;
+    """)
+    assert out["after"] == "Lost track of the test: HTTP 410" and out["polling"] is None

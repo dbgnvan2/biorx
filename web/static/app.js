@@ -62,6 +62,7 @@ const state = {
   activeFilterId: null,
   filterTestJobId: null,
   filterTestPolling: null,
+  filterTestFailures: 0,      // consecutive failed status checks of the test
   // References tab
   refLists: [],
   activeListId: null,
@@ -649,6 +650,14 @@ function renderFilterRunButtons() {
   }
 }
 
+/* One failed status check is not a failed job: it is still running on the
+   server (P1). Give up only on a definite answer (signed out, gone, expired)
+   or after POLL_GIVE_UP failures in a row. Shared by the search and the
+   Filters-tab test. Pure, for the node-run test. */
+function shouldStopPolling(error, failuresInARow) {
+  return [401, 404, 410].includes(error.status) || failuresInARow >= POLL_GIVE_UP;
+}
+
 /* FR3: the live line under the progress bar — found, matched, and enriched
    once enrichment has started, then the current step. Pure, for the node-run
    test. */
@@ -731,13 +740,10 @@ async function pollSearch() {
   try { job = await api("GET", `/api/searches/${state.jobId}`); }
   catch (e) {
     if (!state.polling) return;
-    // One failed check is not a failed search: the job is still running on
-    // the server (P1). Give up only on a definite answer (gone, expired,
-    // signed out) or after repeated failures — and say "lost track", not
-    // "failed", because the search itself may well have finished.
+    // Say "lost track", not "failed", when giving up: the search itself may
+    // well have finished (shouldStopPolling).
     state.pollFailures += 1;
-    const definite = [401, 404, 410].includes(e.status);
-    if (!definite && state.pollFailures < POLL_GIVE_UP) {
+    if (!shouldStopPolling(e, state.pollFailures)) {
       $("phase").textContent =
         `Lost contact with the server — retrying (${state.pollFailures}/${POLL_GIVE_UP})…`;
       return;
@@ -1546,6 +1552,7 @@ async function testFilter() {
   try {
     const job = await api("POST", `/api/filters/${state.activeFilterId}/test`);
     state.filterTestJobId = job.job_id;
+    state.filterTestFailures = 0;
     state.filterTestPolling = setInterval(pollFilterTest, POLL_MS);
     pollFilterTest();
   } catch (e) { $("filter-test-status").textContent = e.message; }
@@ -1556,10 +1563,19 @@ async function pollFilterTest() {
   let job;
   try { job = await api("GET", `/api/searches/${state.filterTestJobId}`); }
   catch (e) {
+    if (!state.filterTestPolling) return;
+    state.filterTestFailures += 1;
+    if (!shouldStopPolling(e, state.filterTestFailures)) {
+      $("filter-test-status").textContent =
+        `Lost contact with the server — retrying (${state.filterTestFailures}/${POLL_GIVE_UP})…`;
+      return;
+    }
     clearInterval(state.filterTestPolling);
-    $("filter-test-status").textContent = e.message;
+    state.filterTestPolling = null;
+    $("filter-test-status").textContent = `Lost track of the test: ${e.message}`;
     return;
   }
+  state.filterTestFailures = 0;
   $("filter-test-status").textContent = progressText(job);
   if (["done", "error", "cancelled"].includes(job.status)) {
     clearInterval(state.filterTestPolling);
