@@ -297,3 +297,31 @@ def test_rl3_bad_or_foreign_item_ids_are_refused(signed_in, ctx):
                          params={"item_ids": "abc"}).status_code == 400
     assert signed_in.get(f"/api/references/{list_id}/summaries.pdf",
                          params={"item_ids": "999999"}).status_code == 400
+
+
+def test_ft1_4_pdf_says_abstract_only(signed_in, ctx):
+    """An abstract stand-in is labelled as such in the PDF, never as a summary;
+    a full-text summary says where its text came from."""
+    list_id = signed_in.post("/api/references", json={"name": "L"}).json()["id"]
+    a = ctx.db.insert_paper({**UNSUMMARIZED, "title": "Only an abstract"})
+    b = ctx.db.insert_paper({**SUMMARIZED, "title": "Full text one"})
+    for pid in (a, b):
+        user_store.add_reference_item(ctx.db, list_id, pid)
+    ctx.db.insert_summary(a, summary_text="We measured X in 40 people.",
+                          source_text="abstract")
+    ctx.db.insert_summary(b, summary_text="", key_findings=["F"], model_version="deepseek-flash",
+                          source_text="full_text", text_source="OpenAlex")
+    text = _text(signed_in.get(f"/api/references/{list_id}/summaries.pdf").content)
+    part = text.split("Only an abstract", 1)[1]
+    assert "Abstract only — no full text found (not a model summary)" in part
+    assert "We measured X in 40 people." in part
+    assert "Summary by deepseek-flash from the full text (via OpenAlex)" in text
+
+
+def test_ft1_4_list_summaries_carry_the_source(signed_in, ctx):
+    list_id = signed_in.post("/api/references", json={"name": "L"}).json()["id"]
+    a = ctx.db.insert_paper({**UNSUMMARIZED, "title": "Only an abstract"})
+    user_store.add_reference_item(ctx.db, list_id, a)
+    ctx.db.insert_summary(a, summary_text="The abstract.", source_text="abstract")
+    s = signed_in.get(f"/api/references/{list_id}/summaries").json()["summaries"][0]
+    assert (s["source_text"], s["abstract_only"]) == ("abstract", "The abstract.")

@@ -303,6 +303,12 @@ const LS_PROVIDER = "biorx_local_provider";
 const LS_MODEL    = "biorx_local_model";
 const LS_TAB      = "biorx_active_tab";
 const LS_DEFAULT_SOURCES = "biorx_default_sources";
+const LS_FIND_BY_TITLE = "biorx_find_by_title";
+
+/* FT3: look for free copies by title as well as DOI. On unless turned off. */
+function findByTitle() {
+  try { return localStorage.getItem(LS_FIND_BY_TITLE) !== "off"; } catch (e) { return true; }
+}
 
 function localSettings() {
   try {
@@ -878,7 +884,7 @@ function renderResults() {
     if (hasSummary(paper)) {
       const badge = document.createElement("span");
       badge.className = "tag small has-summary";
-      badge.textContent = "✓ Summary";
+      badge.textContent = summaryBadgeText(summaryFor(paper));
       badge.style.marginLeft = "4px";
       badge.addEventListener("click", () => openModal(paper));
       title.appendChild(badge);
@@ -1043,8 +1049,13 @@ async function startSummary(paper, button) {
   try {
     const stored = await api("POST", "/api/summaries/lookup", { paper });
     if (modalShows(paper)) renderStoredSummary(stored);
-    done();
-    return;
+    // FT1.2: an abstract kept for lack of full text is not final — Summarize
+    // searches again, in case a free copy has appeared since.
+    if (stored.source_text !== "abstract") {
+      done();
+      return;
+    }
+    if (modalShows(paper)) $("modal-summary-meta").textContent = "Searching again for the full text…";
   } catch (e) {
     if (e.status !== 404) {
       if (modalShows(paper)) $("modal-summary-meta").textContent = e.message;
@@ -1057,7 +1068,7 @@ async function startSummary(paper, button) {
   let job;
   try {
     const local = localSettings();
-    const summaryBody = { paper };
+    const summaryBody = { paper, find_by_title: findByTitle() };
     if (local.key) {
       summaryBody.api_key  = local.key;
       summaryBody.provider = local.provider || state.me.provider;
@@ -1105,6 +1116,8 @@ async function startSummary(paper, button) {
         state.searchSummaries = mergeSummaries(state.searchSummaries || [], [{
           canonical_id: paper.canonical_id || "", doi: paper.doi || "", title: paper.title || "",
           key_findings: s.result.key_findings || [], model_version: s.result.model || "",
+          source_text: s.result.source_text || "",
+          abstract_only: s.result.source_text === "abstract" ? (s.result.abstract || "") : "",
           created_at: new Date().toISOString(),
         }]);
         renderSummariesPanel();
@@ -1130,7 +1143,24 @@ async function startSummary(paper, button) {
   }, POLL_MS);
 }
 
+/* FT1: show an abstract kept for lack of full text for what it is. */
+function renderAbstractStandIn(abstract, why) {
+  const body = $("modal-summary");
+  body.textContent = "";
+  const heading = document.createElement("h4");
+  heading.textContent = "Abstract only — no full text found (not a model summary)";
+  const p = document.createElement("p");
+  p.textContent = abstract || "(no abstract)";
+  body.append(heading, p);
+  $("modal-summary-meta").textContent = why || "";
+}
+
 function renderStoredSummary(stored) {
+  if (stored.source_text === "abstract") {
+    renderAbstractStandIn(stored.summary_text,
+      "No full text was found when this was saved. Summarize searches again.");
+    return;
+  }
   let findings = stored.key_findings || [];
   if (typeof findings === "string") {
     try { findings = JSON.parse(findings || "[]"); } catch (e) { findings = []; }
@@ -1148,9 +1178,13 @@ function renderSummary(job, result) {
   const body = $("modal-summary");
   body.textContent = "";
   if (!result) return;
+  if (result.source_text === "abstract") {
+    renderAbstractStandIn(result.abstract,
+      `No full text found, so no model was used. Looked in: ${result.full_text || "—"}`);
+    return;
+  }
   $("modal-summary-meta").textContent = `${result.provider} · ${result.model} · ${result.key_source} key` +
-    (result.full_text && result.full_text !== "used"
-      ? ` · from the abstract only (full text ${result.full_text})` : "");
+    (result.text_source ? ` · from the full text via ${result.text_source}` : "");
   const heading = document.createElement("h4");
   heading.textContent = "Summary";
   body.appendChild(heading);
@@ -1191,10 +1225,20 @@ function mergeSummaries(existing, incoming) {
     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
 }
 
-function hasSummary(paper, summaries = state.searchSummaries) {
+function summaryFor(paper, summaries = state.searchSummaries) {
   const key = summaryKey(paper);
-  return (summaries || []).some(s => summaryKey(s) === key ||
+  return (summaries || []).find(s => summaryKey(s) === key ||
     (paper.doi && s.doi === paper.doi) || (paper.canonical_id && s.canonical_id === paper.canonical_id));
+}
+
+function hasSummary(paper, summaries = state.searchSummaries) {
+  return Boolean(summaryFor(paper, summaries));
+}
+
+/* FT1: an abstract kept because no full text was found is not a summary, and
+   its badge must not say so. Pure, for the node-run test. */
+function summaryBadgeText(entry) {
+  return entry && entry.source_text === "abstract" ? "✓ Abstract only" : "✓ Summary";
 }
 
 async function refreshSearchSummaries() {
@@ -1223,7 +1267,9 @@ function renderSummariesPanel() {
     const f = document.createElement("div");
     f.className = "finding";
     const first = (s.key_findings || [])[0];
-    f.textContent = (first ? first : "") + (s.model_version ? `  — ${s.model_version}` : "");
+    f.textContent = s.source_text === "abstract"
+      ? "Abstract only — no full text found"
+      : (first ? first : "") + (s.model_version ? `  — ${s.model_version}` : "");
     li.append(t, f);
     const paper = (state.results || []).find(p => summaryKey(p) === summaryKey(s)) ||
       { title: s.title, doi: s.doi, canonical_id: s.canonical_id };
@@ -1814,7 +1860,7 @@ function renderRefItems() {
     if (hasSummary(p, state.refSummaries)) {
       const badge = document.createElement("span");
       badge.className = "tag small has-summary";
-      badge.textContent = "✓ Summary";
+      badge.textContent = summaryBadgeText(summaryFor(p, state.refSummaries));
       badge.style.marginLeft = "4px";
       badge.style.cursor = "pointer";
       badge.addEventListener("click", () => openModal(p));
@@ -2085,6 +2131,10 @@ function wire() {
 
   // Settings tab
   $("btn-save-default-sources").addEventListener("click", saveDefaultSources);
+  $("find-by-title").checked = findByTitle();
+  $("find-by-title").addEventListener("change", (e) => {
+    try { localStorage.setItem(LS_FIND_BY_TITLE, e.target.checked ? "on" : "off"); } catch (err) {}
+  });
 }
 
 async function boot() {

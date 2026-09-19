@@ -187,6 +187,9 @@ def list_reference_summaries(list_id: int,
             "methodology": s.get("methodology") or "",
             "conclusions": s.get("conclusions") or "",
             "model_version": s.get("model_version") or "",
+            "source_text": s.get("source_text") or "",
+            "text_source": s.get("text_source") or "",
+            "abstract_only": s.get("summary_text") if s.get("source_text") == "abstract" else "",
             "created_at": str(s.get("created_at") or ""),
         })
     out.sort(key=lambda r: r["created_at"], reverse=True)

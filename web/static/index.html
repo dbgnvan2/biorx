@@ -386,6 +386,12 @@
           <button id="btn-save-default-sources" class="primary">Save defaults</button>
           <span id="default-sources-status" class="muted small"></span>
         </div>
+        <h3 style="margin-top:16px">Full text for summaries</h3>
+        <p class="muted small">Before summarizing, BioRx looks for a free copy of the paper:
+          its own link, then Unpaywall, OpenAlex and Semantic Scholar. With no full text
+          found, the abstract is kept and no model is used. Saved in this browser only.</p>
+        <label><input type="checkbox" id="find-by-title" checked>
+          Also look for free copies by title (exact title plus first author or year)</label>
       </div>
     </div><!-- /panel-settings -->
 

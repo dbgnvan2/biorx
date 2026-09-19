@@ -102,6 +102,14 @@ def build_summaries_pdf(list_name: str, items: List[Dict[str, Any]],
         if meta:
             body.append((meta, 9, False, 3))
         s = summaries[p.get("paper_id")]
+        when = str(s.get("created_at") or "")[:10]
+        if s.get("source_text") == "abstract":
+            # No full text was found, so no model ran: the abstract stands in
+            # and must not read as a summary (plan 2026-09-19 C1).
+            body.append(("Abstract only — no full text found (not a model summary)",
+                         11, True, 0.5))
+            body.append(((s.get("summary_text") or "").strip() or "(no abstract)", 10, False, 2))
+            continue
         findings = _findings(s)
         if findings:
             body.append(("Key findings", 11, True, 0.5))
@@ -112,8 +120,12 @@ def build_summaries_pdf(list_name: str, items: List[Dict[str, Any]],
                 body.append((label, 11, True, 0.5))
                 body.append((s[key], 10, False, 2))
         model = s.get("model_version") or "unknown model"
-        when = str(s.get("created_at") or "")[:10]
-        body.append((f"Summary by {model}" + (f", {when}" if when else "") + ".", 8, False, 0))
+        basis = ""
+        if s.get("source_text") == "full_text":
+            via = s.get("text_source") or ""
+            basis = " from the full text" + (f" (via {via})" if via else "")
+        body.append((f"Summary by {model}{basis}" + (f", {when}" if when else "") + ".",
+                     8, False, 0))
     if missing:
         body.append(None)
         body.append((f"Not summarized ({len(missing)})", 13, True, 3))

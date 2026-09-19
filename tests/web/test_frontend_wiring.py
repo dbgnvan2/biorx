@@ -1331,7 +1331,9 @@ def _run_ref(body):
         _REF_HARNESS,
         _js_block(r"function paperKey\(paper\) \{.*?\n\}"),
         _js_block(r"function summaryKey\(item\) \{.*?\n\}"),
+        _js_block(r"function summaryFor\(paper, summaries = state\.searchSummaries\) \{.*?\n\}"),
         _js_block(r"function hasSummary\(paper, summaries = state\.searchSummaries\) \{.*?\n\}"),
+        _js_block(r"function summaryBadgeText\(entry\) \{.*?\n\}"),
         _js_block(r"async function refreshRefSummaries\(listId\) \{.*?\n\}"),
         _js_block(r"function renderRefItems\(\) \{.*?\n\}"),
         _js_block(r"async function exportRefSummariesPdf\(\) \{.*?\n\}"),
@@ -1388,3 +1390,72 @@ def test_rl3_save_summaries_sends_the_ticked_items():
     """)
     assert out["ticked"] == ["/api/references/5/summaries.pdf?item_ids=12"]
     assert out["all"][-1] == "/api/references/5/summaries.pdf"
+
+
+
+# ── FT1: abstract-only entries are labelled, and Summarize searches again ─────
+
+@pytest.mark.parametrize("entry,text", [
+    ({"source_text": "abstract"}, "✓ Abstract only"),
+    ({"source_text": "full_text"}, "✓ Summary"),
+    ({"source_text": ""}, "✓ Summary"),
+])
+def test_ft1_4_badge_says_abstract_only(entry, text):
+    import json
+    got = _node_eval([_js_block(r"function summaryBadgeText\(entry\) \{.*?\n\}")],
+                     f"summaryBadgeText({json.dumps(entry)})")
+    assert got == text
+
+
+def test_ft1_4_list_row_labels_an_abstract_stand_in():
+    out = _run_ref("""
+      summariesReply = { summaries: [{ canonical_id: "doi:2", source_text: "abstract" }] };
+      await refreshRefSummaries(5);
+      out.rows = rows();
+    """)
+    assert out["rows"][1]["tags"] == ["detail", "✓ Abstract only"]
+
+
+def _run_start_summary(stored):
+    import json
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    harness = """
+const state = { summarizing: new Set(), me: { provider: "deepseek" } };
+const els = {};
+const $ = (id) => els[id] || (els[id] = { textContent: "", classList: { contains() { return false; } } });
+const calls = [];
+const STORED = %s;
+async function api(method, path, body) {
+  calls.push([method, path, body]);
+  if (path === "/api/summaries/lookup") return STORED;
+  throw Object.assign(new Error("stop here"), { status: 500 });
+}
+function notice() {} async function openModal() {} function modalShows() { return true; }
+function setSummarizeButtons() {} function renderStoredSummary() {}
+function localSettings() { return { key: "", provider: "", model: "" }; }
+let titleSearch = false;
+function findByTitle() { return titleSearch; }
+""" % json.dumps(stored)
+    parts = [harness,
+             _js_block(r"function paperKey\(paper\) \{.*?\n\}"),
+             _js_block(r"async function startSummary\(paper, button\) \{.*?\n\}"),
+             """(async () => {
+                await startSummary({ title: "T", canonical_id: "doi:9" }, { disabled: false, textContent: "" });
+                console.log(JSON.stringify(calls.map(c => [c[1], c[2] && c[2].find_by_title])));
+             })();"""]
+    result = subprocess.run([node, "-e", "\n".join(parts)], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip())
+
+
+def test_ft1_2_abstract_only_entry_is_retried():
+    """Summarize on a stored abstract stand-in searches again (POST), sending the
+    title-search setting; a real stored summary is returned without a POST."""
+    assert _run_start_summary({"source_text": "abstract", "summary_text": "A."}) == [
+        ["/api/summaries/lookup", None], ["/api/summaries", False]]
+    assert _run_start_summary({"source_text": "full_text", "key_findings": ["F"]}) == [
+        ["/api/summaries/lookup", None]]
