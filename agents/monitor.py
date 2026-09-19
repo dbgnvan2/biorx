@@ -85,6 +85,7 @@ def run_search(
     max_results: int = 200,
     dry_run: bool = False,
     sources_failed: Optional[list] = None,
+    enrich_problems: Optional[list] = None,
 ) -> list:
     """
     Run a single search and return the deduplicated records that match the filter.
@@ -102,6 +103,8 @@ def run_search(
         max_results:    Maximum results to return
         dry_run:        If True, don't download PDFs
         sources_failed: If provided, failed source names are appended here.
+        enrich_problems: If provided, one line per enrichment service whose
+                        lookups failed is appended here (review finding 1).
 
     Returns:
         List of paper dicts (CanonicalRecord.to_dict()) that match the filter.
@@ -127,11 +130,19 @@ def run_search(
             source_name = _label_to_name.get(label, label)
             failed_this_run.append(source_name)
 
+    def on_enrich_problem(label: str, failed: int, attempted: int) -> None:
+        line = f"[{filter_name}] {label} failed for {failed} of {attempted} papers"
+        if enrich_problems is not None:
+            enrich_problems.append(line)
+
     records = orchestrator.search(
         filter_dict,
         source_selection=source_selection,
         on_status=on_status,
         max_results=max_results,
+        # Only papers the filter keeps are worth two HTTP calls (plan C2).
+        enrich_only=lambda r: bool(filter_papers([r.to_dict()], filter_dict)),
+        on_enrich_problem=on_enrich_problem,
     )
 
     papers = [r.to_dict() for r in records]
@@ -277,6 +288,7 @@ def main(args=None):
     # Run searches and emit results
     all_records = []
     all_sources_failed: list = []
+    all_enrich_problems: list = []
     total_downloaded = 0
     total_failed_downloads = 0
 
@@ -288,6 +300,7 @@ def main(args=None):
             max_results=parsed.max,
             dry_run=parsed.dry_run,
             sources_failed=all_sources_failed,
+            enrich_problems=all_enrich_problems,
         )
 
         # Emit as JSONL to stdout (records are already filtered plain dicts)
@@ -331,6 +344,14 @@ def main(args=None):
         return 2
 
     if total_failed_downloads > 0:
+        return 2
+
+    # A Crossref/Unpaywall outage leaves records without PDF links, so
+    # --download-dir quietly skips them; a cron run must not read that as
+    # success (review finding 1).
+    if all_enrich_problems:
+        for line in all_enrich_problems:
+            print(f"Enrichment incomplete: {line}", file=sys.stderr)
         return 2
 
     return 0

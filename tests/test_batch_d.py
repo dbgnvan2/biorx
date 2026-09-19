@@ -213,7 +213,7 @@ def test_d_monitor_exit_code_reflects_failed_sources(tmp_path, capsys):
     FAILURE_MSG = f"Europe PMC {_FM} (unavailable)"
 
     def fake_search(filter_dict, source_selection=None, on_batch=None, on_progress=None,
-                    on_status=None, should_stop=None, max_results=200):
+                    on_status=None, should_stop=None, max_results=200, **_):
         if on_status:
             on_status(FAILURE_MSG)
         return []
@@ -244,7 +244,7 @@ def test_d_monitor_run_search_resolves_internal_source_name():
     FAILURE_MSG = f"Europe PMC {_FM} (unavailable)"
 
     def fake_search(filter_dict, source_selection=None, on_batch=None, on_progress=None,
-                    on_status=None, should_stop=None, max_results=200):
+                    on_status=None, should_stop=None, max_results=200, **_):
         if on_status:
             on_status(FAILURE_MSG)
         return []
@@ -397,7 +397,7 @@ def test_d_monitor_main_prints_download_summary(tmp_path, capsys):
     }
 
     def fake_search(filter_dict, source_selection=None, on_batch=None, on_progress=None,
-                    on_status=None, should_stop=None, max_results=200):
+                    on_status=None, should_stop=None, max_results=200, **_):
         return []
 
     orch = MagicMock()

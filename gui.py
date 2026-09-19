@@ -121,6 +121,7 @@ class SearchWorker(QObject):
     # [(paper_key of the streamed row, enriched dict)] once enrichment has run.
     # Keyed, not by identity: a list signal hands the GUI copies of the dicts.
     refreshed   = pyqtSignal(object)
+    enrich_problem = pyqtSignal(str)    # "Crossref failed for 3 of 40 papers"
     finished    = pyqtSignal(list)      # all matched papers
     error       = pyqtSignal(str)
 
@@ -183,6 +184,8 @@ class SearchWorker(QObject):
                 should_stop=self._stop_event.is_set,
                 max_results=self.MAX_PAPERS,
                 enrich_only=lambda r: id(r) in matched_ids,
+                on_enrich_problem=lambda label, failed, attempted: self.enrich_problem.emit(
+                    f"{label} failed for {failed:,} of {attempted:,} papers"),
             )
 
             # What enrichment added (PDF links, licence, filled abstracts)
@@ -833,6 +836,7 @@ class SearchBrowseTab(QWidget):
         self._current_filter_name    = ""
         self._current_filter_matched = 0
         self._current_phase          = ""
+        self._enrich_notes: List[str] = []   # outages shown in the final status
         self._progress_format        = "Fetched %v / %m papers"
         self._current_worker: Optional[SearchWorker] = None
         # Indeterminate bar while we don't know total yet
@@ -881,6 +885,7 @@ class SearchBrowseTab(QWidget):
         thread.started.connect(worker.run)
         worker.batch_ready.connect(self._append_batch)
         worker.refreshed.connect(self._apply_enrichment)
+        worker.enrich_problem.connect(self._enrich_notes.append)
         worker.progress.connect(self._update_progress)
         worker.phase.connect(self._on_phase)
         worker.status.connect(self.status_label.setText)
@@ -970,9 +975,13 @@ class SearchBrowseTab(QWidget):
         self.stop_btn.setVisible(False)
         self.stop_btn.setEnabled(True)
         self.status_label.setStyleSheet("")
-        self.status_label.setText(
-            f"✅  Done — {self._results.unique_count:,} unique papers found"
-        )
+        text = f"✅  Done — {self._results.unique_count:,} unique papers found"
+        if self._enrich_notes:
+            # Results are complete, but PDF links / details may be missing
+            # (review finding 1: this used to be a passing phase line).
+            text += ("  ⚠  " + "; ".join(dict.fromkeys(self._enrich_notes))
+                     + " — some PDF links or details may be missing")
+        self.status_label.setText(text)
         self._update_matches_label()
         self.run_selected_btn.setEnabled(True)
         self.run_all_btn.setEnabled(True)
@@ -1944,6 +1953,8 @@ class FiltersTab(QWidget):
         self.test_btn.clicked.connect(self._stop_test)
 
         self._test_worker = SearchWorker(self.orchestrator, f, save_to_db=False)
+        self._test_enrich_notes: List[str] = []
+        self._test_worker.enrich_problem.connect(self._test_enrich_notes.append)
         thread = QThread()
         self._test_worker.moveToThread(thread)
         thread.started.connect(self._test_worker.run)
@@ -1986,7 +1997,11 @@ class FiltersTab(QWidget):
     def _on_test_done(self, papers: list):
         self.test_progress.setVisible(False)
         self.test_status.setStyleSheet("")
-        self.test_status.setText(f"{len(papers):,} papers matched")
+        text = f"{len(papers):,} papers matched"
+        notes = getattr(self, "_test_enrich_notes", [])
+        if notes:
+            text += "  ⚠  " + "; ".join(notes) + " — some PDF links or details may be missing"
+        self.test_status.setText(text)
         self.test_btn.setText("▶  Test Filter")
         self.test_btn.setEnabled(True)
         self.test_btn.clicked.disconnect()

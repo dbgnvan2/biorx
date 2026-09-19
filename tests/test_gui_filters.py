@@ -144,3 +144,33 @@ def test_i4_apply_enrichment_updates_rows_in_place():
               ("doi:10.1/zzz", {"pdf_url": "stray"})])
     assert row["pdf_url"] == "u" and other["pdf_url"] == ""
     tab.display_page.assert_called_once()
+
+
+def test_r1_gui_worker_reports_enrichment_outage():
+    """Review finding 1: the worker turns on_enrich_problem into a signal the
+    tabs keep for their final status line."""
+    from unittest.mock import MagicMock
+
+    def search(on_enrich_problem=None, **_):
+        on_enrich_problem("Crossref", 3, 40)
+        return []
+
+    orch = MagicMock()
+    orch.search.side_effect = search
+    worker = gui.SearchWorker(orch, {"text_groups": [{"both": "x"}]}, save_to_db=False)
+    notes = []
+    worker.enrich_problem.connect(notes.append)
+    worker.run()
+    assert notes == ["Crossref failed for 3 of 40 papers"]
+
+
+def test_r1_final_status_keeps_the_outage_note():
+    """The note survives into the Done line instead of being overwritten."""
+    from unittest.mock import MagicMock
+    tab = MagicMock()
+    tab._enrich_notes = ["Crossref failed for 3 of 40 papers"]
+    tab._results.unique_count = 12
+    tab.progress_bar.maximum.return_value = 0
+    gui.SearchBrowseTab._on_all_filters_done(tab)
+    text = tab.status_label.setText.call_args.args[0]
+    assert "12 unique papers found" in text and "Crossref failed for 3 of 40 papers" in text

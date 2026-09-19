@@ -113,3 +113,33 @@ def test_fr1_6_empty_filter_is_skipped(capsys):
     assert out == []
     orch.search.assert_not_called()
     assert "[empty] Skipped: This filter has no search terms" in capsys.readouterr().err
+
+
+def test_r1_enrichment_outage_fails_the_cron_run(tmp_path, capsys):
+    """Review finding 1: with Unpaywall down every pdf_url stays empty, downloads
+    are skipped, and the run exited 0. An enrichment problem now exits 2."""
+    from unittest.mock import patch
+
+    def fake_search(filter_dict, on_enrich_problem=None, **_):
+        on_enrich_problem("Unpaywall", 3, 3)
+        return []
+
+    orch = MagicMock()
+    orch.search.side_effect = fake_search
+    with patch.object(monitor, "load_sources_config", return_value={}), \
+         patch.object(monitor, "SourceOrchestrator", return_value=orch), \
+         patch.object(monitor, "load_filters", return_value=[
+             {"name": "T", "enabled": True, "text_groups": [{"both": "stress"}], "authors": []}]):
+        code = monitor.main(["--all"])
+    assert code == 2
+    assert "Enrichment incomplete: [T] Unpaywall failed for 3 of 3 papers" in capsys.readouterr().err
+
+
+def test_r1_monitor_enriches_only_matching_papers():
+    """monitor passes an enrich_only that keeps only what the filter matches."""
+    orch = MagicMock()
+    orch.search.return_value = []
+    monitor.run_search(orch, {"text_groups": [{"both": "generative"}]}, "t")
+    enrich_only = orch.search.call_args.kwargs["enrich_only"]
+    assert enrich_only(_record("Generative agents")) is True
+    assert enrich_only(_record("Protein folding")) is False
