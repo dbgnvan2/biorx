@@ -121,6 +121,26 @@ def title_matches(paper: Dict[str, Any], title: str, first_author: str, year: An
     return bool(our_year) and our_year == _year(year)
 
 
+# How far into a PDF's text the title must appear.
+TITLE_WINDOW_CHARS = 10000
+
+
+def text_is_this_paper(paper: Dict[str, Any], text: str) -> bool:
+    """Purpose: Check a downloaded PDF is the paper, not another document.
+    Spec:    docs/implementation_plan_2026-09-19_full_text.md#C2
+    Tests:   tests/test_fulltext.py::test_ft3_8_wrong_document_is_rejected
+
+    A finder's record can be the right paper while one of the files it lists
+    is not (a mirror, a cover page, a different version). The title must appear
+    near the start. Spaces are ignored on both sides, because PDF extraction
+    often drops them ("AshishVaswani"). A paper with no title is not checked.
+    """
+    want = normalise_title(paper.get("title", "")).replace(" ", "")
+    if not want:
+        return True
+    return want in normalise_title(text[:TITLE_WINDOW_CHARS]).replace(" ", "")
+
+
 # ── HTTP ─────────────────────────────────────────────────────────────────────
 
 def default_get_json(user_agent: str) -> GetJson:
@@ -308,6 +328,11 @@ def find_full_text(paper: Dict[str, Any], download: Download, *,
                 text = download(url)
             except NoText as e:
                 reasons.append(str(e))
+                continue
+            if text.strip() and not text_is_this_paper(paper, text):
+                reasons.append("a PDF that is a different document (its title is not in it)")
+                logger.info("Rejected %s for %r: title not found in the text",
+                            url, (paper.get("title") or "")[:80])
                 continue
             if text.strip():
                 result.text, result.url = text, url

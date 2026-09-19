@@ -99,7 +99,7 @@ def test_ft3_1_chain_order_and_stop():
     get = _json({"unpaywall.org": {"best_oa_location": None, "oa_locations": []},
                  "openalex.org/works/doi:": {"best_oa_location": {"pdf_url": "https://repo/x.pdf"}},
                  "semanticscholar": {"openAccessPdf": {"url": "https://s2/x.pdf"}}})
-    dl = _download({"https://repo/x.pdf": "Full text of the paper."})
+    dl = _download({"https://repo/x.pdf": PAPER["title"] + ". Full text of the paper."})
     r = find_full_text(paper, dl, own_links=["https://doi.org/10.1/x"], email="me@x.org",
                        get_json=get)
     assert r.found and r.source == "OpenAlex" and r.url == "https://repo/x.pdf"
@@ -159,8 +159,38 @@ def test_ft3_download_cap_is_announced():
 
 def test_ft3_empty_pdf_moves_on():
     get = _json({"semanticscholar.org/graph/v1/paper/DOI:": {"openAccessPdf": {"url": "https://s/x.pdf"}}})
-    dl = _download({"https://a/x.pdf": "", "https://s/x.pdf": "Real text."})
+    dl = _download({"https://a/x.pdf": "", "https://s/x.pdf": PAPER["title"] + ". Real text."})
     r = find_full_text({**PAPER, "doi": "10.1/x"}, dl, own_links=["https://a/x.pdf"],
                        get_json=get)
     assert r.source == "Semantic Scholar"
     assert "the paper's own link: the PDF had no extractable text" in r.tried
+
+
+def test_ft3_8_wrong_document_is_rejected():
+    """A finder lists the right paper, but the file at one of its links is
+    another document (a mirror, a cover page): rejected, and the next copy used."""
+    paper = {**PAPER, "doi": "10.1/x"}
+    get = _json({"openalex.org/works/doi:": {"locations": [
+        {"pdf_url": "https://mirror/x.pdf"}, {"pdf_url": "https://repo/x.pdf"}]}})
+    dl = _download({
+        "https://mirror/x.pdf": "Journal of Other Things. Soil carbon in Iowa farms. " * 20,
+        "https://repo/x.pdf": "Maternal stress and infant cortisol:\na cohort\nstudy. Smith J.",
+    })
+    r = find_full_text(paper, dl, own_links=[], get_json=get)
+    assert r.url == "https://repo/x.pdf"
+    assert dl.got == ["https://mirror/x.pdf", "https://repo/x.pdf"]
+
+
+def test_ft3_8_title_check_ignores_lost_spaces():
+    from src.fulltext import text_is_this_paper
+    squashed = "Providedproperattribution MaternalStressandInfantCortisol:ACohortStudy SmithJ"
+    assert text_is_this_paper(PAPER, squashed) is True
+    assert text_is_this_paper(PAPER, "An unrelated paper about soil.") is False
+
+
+def test_ft3_8_only_wrong_documents_means_not_found():
+    get = _json({"openalex.org/works/doi:": {"locations": [{"pdf_url": "https://mirror/x.pdf"}]}})
+    dl = _download({"https://mirror/x.pdf": "Some other paper entirely."})
+    r = find_full_text({**PAPER, "doi": "10.1/x"}, dl, own_links=[], get_json=get)
+    assert not r.found
+    assert "OpenAlex: a PDF that is a different document (its title is not in it)" in r.tried
