@@ -96,7 +96,7 @@ def test_sum3_summary_job_passes_the_guarded_fetcher(ctx, signed_in, monkeypatch
         return AbstractRecovery(tried=["stubbed"])
 
     monkeypatch.setattr("web.routes_summaries.recover_abstract", fake_recover)
-    monkeypatch.setattr("web.routes_summaries._extract_text", lambda ctx, p, outcome=None: "")
+    monkeypatch.setattr("web.routes_summaries._extract_text", lambda ctx, p, outcome=None, **kw: "")
     with patch("src.llm_providers.build_client", return_value=MagicMock()):
         r = signed_in.post("/api/summaries", json={
             "paper": {"title": "No abstract", "doi": "10.1/none"},
@@ -123,8 +123,9 @@ def test_sum4_http_link_is_tried_as_https_and_the_outcome_recorded(ctx):
         assert _extract_text(ctx, {"title": "x", "pdf_url": "http://pub.example/x.pdf"},
                              outcome) == ""
     assert asked == ["https://pub.example/x.pdf"]
-    assert outcome["full_text"].startswith("not used:")
-    assert "404" in outcome["full_text"]
+    # The outcome lists every place tried (plan 2026-09-19 C2), own link first.
+    assert outcome["full_text"].startswith("the paper's own link: ")
+    assert "404" in outcome["full_text"].split(";")[0]
 
 
 def test_sum4_landing_page_outcome_is_plain(ctx):
@@ -132,7 +133,8 @@ def test_sum4_landing_page_outcome_is_plain(ctx):
     outcome = {}
     with patch.object(safe_fetch, "fetch_pdf", side_effect=safe_fetch.NotAPdf()):
         _extract_text(ctx, {"title": "x", "pdf_url": "https://pub.example/x"}, outcome)
-    assert outcome["full_text"] == "not used: the link leads to a web page, not a PDF"
+    assert outcome["full_text"].split(";")[0] == \
+        "the paper's own link: the link leads to a web page, not a PDF"
 
 
 def test_sum5_disk_error_falls_back_to_the_abstract(ctx):
@@ -142,7 +144,7 @@ def test_sum5_disk_error_falls_back_to_the_abstract(ctx):
          patch("tempfile.TemporaryDirectory", side_effect=OSError("disk full")):
         assert _extract_text(ctx, {"title": "x", "pdf_url": "https://pub.example/x.pdf"},
                              outcome) == ""
-    assert outcome["full_text"] == "not used: the PDF could not be read"
+    assert outcome["full_text"].split(";")[0] == "the paper's own link: the PDF could not be read"
 
 
 def test_sum4_job_result_labels_an_abstract_only_summary(ctx, signed_in):
@@ -164,4 +166,28 @@ def test_sum4_job_result_labels_an_abstract_only_summary(ctx, signed_in):
                 break
             time.sleep(0.02)
     assert body["status"] == "done", body
-    assert body["result"]["full_text"] == "not used: the link leads to a web page, not a PDF"
+    # No full text: the abstract stands in and the model is never called
+    # (plan 2026-09-19 C1); the result says where it looked.
+    client.summarize_paper.assert_not_called()
+    assert body["result"]["source_text"] == "abstract"
+    assert body["result"]["full_text"].startswith(
+        "the paper's own link: the link leads to a web page, not a PDF")
+
+
+
+def test_ft3_7_finder_downloads_are_guarded(ctx, monkeypatch):
+    """FT3.7: a PDF link supplied by a finder's API reply is fetched through the
+    SSRF guard like any other — an internal address is refused, never fetched."""
+    from web.routes_summaries import _extract_text
+    monkeypatch.setattr("web.routes_summaries._FINDER_GET_JSON",
+                        lambda url, params: {"best_oa_location": {"pdf_url": "https://169.254.169.254/x.pdf"}}
+                        if "openalex" in url else None)
+    trip = Tripwire()
+    outcome = {}
+    with patch("src.pdf_handler.PDFHandler.download_pdf", trip), \
+         patch("src.pdf_handler.requests.get", trip):
+        # Own link is an internal literal too: refused without any DNS lookup.
+        assert _extract_text(ctx, {"title": "x", "doi": "10.1/x",
+                                   "pdf_url": "https://10.0.0.1/own.pdf"}, outcome) == ""
+    assert trip.calls == []
+    assert "OpenAlex: " in outcome["full_text"] and "full text found" not in outcome["full_text"]

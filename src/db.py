@@ -410,6 +410,12 @@ class Database:
         # `summaries.paper_id` is UNIQUE, so one summary exists per paper and a
         # later run replaces it; these columns record whose run is current.
         self._add_column_if_missing(cursor, "summaries", "created_by_user_id", "TEXT")
+        # What the entry was made from (plan 2026-09-19 FT1): "full_text" (a
+        # model summary of the paper's text), "abstract" (no full text was
+        # found, so the abstract stands in and no model ran), or "" for rows
+        # from before this was recorded. text_source: where the text came from.
+        self._add_column_if_missing(cursor, "summaries", "source_text", "TEXT DEFAULT ''")
+        self._add_column_if_missing(cursor, "summaries", "text_source", "TEXT DEFAULT ''")
         self._add_column_if_missing(cursor, "users", "preferred_model", "TEXT DEFAULT ''")
 
         # Web accounts (docs/implementation_plan_2026-09-18_accounts.md): a
@@ -653,6 +659,8 @@ class Database:
         conclusions: Optional[str] = None,
         model_version: str = "",
         created_by_user_id: Optional[str] = None,
+        source_text: str = "",
+        text_source: str = "",
     ) -> Optional[int]:
         """
         Insert or update a summary for a paper.
@@ -667,6 +675,8 @@ class Database:
                 model is assumed: a row claiming "qwen:7b" for a summary some
                 other model wrote is a false record.
             created_by_user_id: Web-app user whose run produced this summary
+            source_text: "full_text", "abstract" (stand-in, no model), or "" (unknown)
+            text_source: where the text came from, e.g. "Unpaywall", "OpenAlex"
 
         Returns:
             Summary ID if successful, None otherwise
@@ -677,8 +687,9 @@ class Database:
                 """
                 INSERT OR REPLACE INTO summaries
                 (paper_id, summary_text, key_findings, methodology,
-                 conclusions, model_version, created_by_user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                 conclusions, model_version, created_by_user_id,
+                 source_text, text_source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     paper_id,
@@ -688,6 +699,8 @@ class Database:
                     conclusions,
                     model_version,
                     created_by_user_id,
+                    source_text,
+                    text_source,
                 ),
             )
             self.conn.commit()

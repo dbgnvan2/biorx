@@ -42,6 +42,9 @@ class SummaryRequest(BaseModel):
     api_key: str = Field(default="", max_length=500)
     provider: str = Field(default="", max_length=50)
     model: str = Field(default="", max_length=200)
+    # Look for free copies by title as well as DOI (plan 2026-09-19 C2). None
+    # = sources_config.yaml full_text.find_by_title (default on).
+    find_by_title: Optional[bool] = None
 
 
 def _resolve_for(ctx: AppContext, user_id: str,
@@ -99,65 +102,81 @@ def _resolve_for(ctx: AppContext, user_id: str,
     return resolved, usage_id
 
 
-def _extract_text(ctx: AppContext, paper: Dict[str, Any],
-                  outcome: Optional[Dict[str, str]] = None) -> str:
-    """Get text to summarize: the PDF if we can fetch it, else "".
+# The finders' HTTP (OpenAlex, Semantic Scholar, Unpaywall). None = the real
+# one; tests replace it so no test can reach those services (tests/web/conftest).
+_FINDER_GET_JSON = None
 
-    The paper dict comes from the client, so its URL does too. The PDF is
-    fetched through src/safe_fetch (public https hosts only, every redirect
-    checked) into a temporary file, and never into the shared PDF cache: that
-    cache is keyed by DOI and title, which a client could use to plant a file
-    that every later summary of the real paper would read.
 
-    `outcome["full_text"]` records "used" or why not, so an abstract-only
-    summary is labelled as one rather than looking like a full-text one (P2).
+def _download_pdf_text(url: str) -> str:
+    """Fetch one PDF through the SSRF guard and extract its text.
+
+    The URL may come from the client's paper or from a finder's API reply, so
+    it is fetched through src/safe_fetch (public https hosts only, every
+    redirect checked) into a temporary file — never the shared PDF cache,
+    which is keyed by DOI and title and could be planted. Raises NoText with a
+    reason a user can read.
     """
     import tempfile
 
     from src import safe_fetch
+    from src.fulltext import NoText
     from src.pdf_handler import PDFHandler
 
-    outcome = outcome if outcome is not None else {}
-    url = pdf_url(paper)
-    if not url:
-        outcome["full_text"] = "not used: no PDF link"
-        return ""
-    # safe_fetch is https-only. Many open-access hosts serve both; try the
-    # https form of an http link before giving up on it.
-    data = None
-    for candidate in [safe_fetch.https_candidate(url)]:
-        try:
-            data = safe_fetch.fetch_pdf(candidate)
-        except (safe_fetch.FetchRefused, safe_fetch.FetchFailed,
-                safe_fetch.NotAPdf, safe_fetch.TooLarge) as e:
-            # A paper whose PDF will not download is still summarizable from
-            # its abstract; say so in the log and in the result.
-            reason = str(e) or type(e).__name__
-            if isinstance(e, safe_fetch.NotAPdf):
-                reason = "the link leads to a web page, not a PDF"
-            elif isinstance(e, safe_fetch.TooLarge):
-                reason = "the PDF is too large"
-            outcome["full_text"] = f"not used: {reason}"
-            logger.info("No PDF text for %s (%s): %s",
-                        paper.get("doi") or paper.get("canonical_id"),
-                        type(e).__name__, e)
-    if data is None:
-        return ""
+    try:
+        data = safe_fetch.fetch_pdf(safe_fetch.https_candidate(url))
+    except safe_fetch.NotAPdf as e:
+        raise NoText("the link leads to a web page, not a PDF") from e
+    except safe_fetch.TooLarge as e:
+        raise NoText("the PDF is too large") from e
+    except (safe_fetch.FetchRefused, safe_fetch.FetchFailed) as e:
+        raise NoText(str(e) or type(e).__name__) from e
     try:
         with tempfile.TemporaryDirectory() as tmp:
             path = f"{tmp}/paper.pdf"
             with open(path, "wb") as fh:
                 fh.write(data)
-            text = PDFHandler(tmp).extract_text(path) or ""
+            return PDFHandler(tmp).extract_text(path) or ""
     except Exception as e:
-        # Disk full, no writable tmp, or an unreadable PDF: fall back to the
-        # abstract, as the cache-based code did.
-        logger.info("Could not extract PDF text for %s: %s",
-                    paper.get("doi") or paper.get("canonical_id"), e)
-        outcome["full_text"] = "not used: the PDF could not be read"
-        return ""
-    outcome["full_text"] = "used" if text else "not used: the PDF had no extractable text"
-    return text
+        raise NoText("the PDF could not be read") from e
+
+
+def _extract_text(ctx: AppContext, paper: Dict[str, Any],
+                  outcome: Optional[Dict[str, str]] = None,
+                  by_title: Optional[bool] = None) -> str:
+    """Purpose: The paper's full text, searched for in every free source, or "".
+    Spec:    docs/implementation_plan_2026-09-19_full_text.md#C2
+    Tests:   tests/web/test_summaries_routes.py::test_ft1_3_full_text_source_is_recorded
+
+    `outcome["full_text"]` is "used" or where it looked and what each place
+    said; `outcome["text_source"]` names where the text came from.
+    """
+    from src.fulltext import find_full_text
+    from src.sources.config import get_unpaywall_email, polite_user_agent
+
+    outcome = outcome if outcome is not None else {}
+    cfg = ctx.sources_config or {}
+    settings = cfg.get("full_text") or {}
+    if by_title is None:
+        by_title = bool(settings.get("find_by_title", True))
+    own = pdf_url(paper)
+    found = find_full_text(
+        paper, _download_pdf_text,
+        own_links=[own] if own else [],
+        by_title=by_title,
+        email=get_unpaywall_email(cfg),
+        max_downloads=int(settings.get("max_downloads", 4)),
+        user_agent=polite_user_agent(cfg),
+        get_json=_FINDER_GET_JSON,
+    )
+    if found.found:
+        outcome["full_text"] = "used"
+        outcome["text_source"] = found.source
+        return found.text
+    outcome["full_text"] = found.explain()
+    outcome["text_source"] = ""
+    logger.info("No full text for %s — %s",
+                paper.get("doi") or paper.get("canonical_id"), found.explain())
+    return ""
 
 
 def _paper_row_id(ctx: AppContext, paper: Dict[str, Any]) -> Optional[int]:
@@ -181,13 +200,13 @@ def _paper_row_id(ctx: AppContext, paper: Dict[str, Any]) -> Optional[int]:
 
 
 def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
-                 usage_id: Optional[int] = None):
+                 usage_id: Optional[int] = None, find_by_title: Optional[bool] = None):
     def work(job: Job) -> Dict[str, Any]:
         provider_called = False
         try:
-            job.phase = "Fetching the paper"
+            job.phase = "Looking for the full text"
             text_outcome: Dict[str, str] = {}
-            full_text = _extract_text(ctx, paper, text_outcome)
+            full_text = _extract_text(ctx, paper, text_outcome, by_title=find_by_title)
             abstract = paper.get("abstract", "") or ""
 
             if not abstract and not full_text:
@@ -219,6 +238,28 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
                         f"(looked in: {tried}).{unreachable}"
                     )
 
+            if not full_text:
+                # No full text anywhere: the abstract stands in, and the model
+                # is not called — a "summary" of an abstract costs tokens and
+                # reads as more than it is (plan 2026-09-19 C1, FT1).
+                job.phase = "No full text found — keeping the abstract"
+                paper_id = _paper_row_id(ctx, paper)
+                if paper_id:
+                    ctx.db.insert_summary(
+                        paper_id, summary_text=abstract, model_version="",
+                        created_by_user_id=user_id, source_text="abstract",
+                    )
+                if usage_id is not None:
+                    user_store.release_usage(ctx.db, usage_id)   # nothing was spent
+                return {
+                    "paper_id": paper_id,
+                    "source_text": "abstract",
+                    "abstract": abstract,
+                    "full_text": text_outcome.get("full_text") or "not found",
+                    "provider": "", "model": "", "key_source": "none",
+                    "key_findings": [], "methodology": "", "conclusions": "",
+                }
+
             job.phase = f"Summarizing with {resolved.provider}"
             provider_called = True
             summary = resolved.client.summarize_paper(abstract, full_text)
@@ -247,6 +288,8 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
                     conclusions=summary.get("conclusions"),
                     model_version=resolved.model,
                     created_by_user_id=user_id,
+                    source_text="full_text",
+                    text_source=text_outcome.get("text_source", ""),
                 )
             if usage_id is not None:
                 user_store.finalize_usage(ctx.db, usage_id, resolved.provider,
@@ -260,9 +303,9 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
                 "provider": resolved.provider,
                 "model": resolved.model,
                 "key_source": resolved.key_source,
-                # "used", or why the summary is from the abstract alone.
-                "full_text": text_outcome.get("full_text") or
-                             ("used" if full_text else "not used"),
+                "full_text": "used",
+                "source_text": "full_text",
+                "text_source": text_outcome.get("text_source", ""),
                 **summary,
             }
         except BaseException:
@@ -308,7 +351,8 @@ def start_summary(body: SummaryRequest,
                             detail=str(e)) from e
 
     job = ctx.jobs.submit("summary", user_id,
-                          _run_summary(ctx, user_id, body.paper, resolved, usage_id))
+                          _run_summary(ctx, user_id, body.paper, resolved, usage_id,
+                                       find_by_title=body.find_by_title))
     payload = job.to_dict()
     payload["provider"] = resolved.provider
     payload["model"] = resolved.model

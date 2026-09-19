@@ -21,9 +21,17 @@ PAPER = {"title": "Generative Agents", "abstract": "Interactive simulacra.",
 SUMMARY = {"key_findings": ["f"], "methodology": "m", "conclusions": "c"}
 
 
+
+def _full_text(ctx, paper, outcome=None, by_title=None):
+    """Stand-in for a found PDF: summaries now need full text, or the abstract
+    is kept without calling the model (plan 2026-09-19 C1)."""
+    if outcome is not None:
+        outcome.update(full_text="used", text_source="Unpaywall")
+    return "Full text of the paper: methods, results and discussion."
+
 @pytest.fixture
 def no_pdf():
-    with patch("web.routes_summaries._extract_text", return_value=""):
+    with patch("web.routes_summaries._extract_text", side_effect=_full_text):
         yield
 
 

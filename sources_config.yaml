@@ -45,6 +45,18 @@ publication_sources:
 # over this field when both are set; all consumers also read this field directly.
 contact_email: ""
 
+# Finding a free full-text copy before summarizing (docs/implementation_plan_2026-09-19_full_text.md).
+# Order: the paper's own link, Unpaywall (needs a contact email), OpenAlex,
+# Semantic Scholar. With no full text found, the abstract is kept as the entry
+# and the model is not called.
+full_text:
+  # Also search OpenAlex / Semantic Scholar by title when a DOI finds nothing.
+  # Title hits must match exactly plus first author or year. Users can turn it
+  # off for themselves in Settings.
+  find_by_title: true
+  # PDFs fetched per paper at most (each can take up to 30 s).
+  max_downloads: 4
+
 # What the web app tells users when a source fails during a search, by the
 # failure kind the orchestrator reports. Wording only — edit freely.
 failure_explanations:

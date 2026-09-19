@@ -70,6 +70,14 @@ def _abstract_recovery_is_offline_by_default():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _full_text_finders_are_offline_by_default(monkeypatch):
+    """The full-text finders (Unpaywall, OpenAlex, Semantic Scholar) answer "not
+    found" in every web test unless a test sets its own, so none reaches the
+    network (plan 2026-09-19 C2)."""
+    monkeypatch.setattr("web.routes_summaries._FINDER_GET_JSON", lambda url, params: None)
+
+
 ACCESS_CODE = "shared-code-for-tests"
 
 

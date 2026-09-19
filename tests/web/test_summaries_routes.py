@@ -30,10 +30,26 @@ SUMMARY = {
 }
 
 
+
+def _full_text(ctx, paper, outcome=None, by_title=None):
+    """Stand-in for a found PDF: summaries now need full text, or the abstract
+    is kept without calling the model (plan 2026-09-19 C1)."""
+    if outcome is not None:
+        outcome.update(full_text="used", text_source="Unpaywall")
+    return "Full text of the paper: methods, results and discussion."
+
 @pytest.fixture
 def no_pdf():
-    """Summaries run from the abstract; PDF fetching is its own concern."""
+    """No full text anywhere: the abstract stands in and the model is not called
+    (plan 2026-09-19 C1). Finding text is its own concern (test_fulltext.py)."""
     with patch("web.routes_summaries._extract_text", return_value=""):
+        yield
+
+
+@pytest.fixture
+def with_full_text():
+    """Full text was found, so the model runs."""
+    with patch("web.routes_summaries._extract_text", side_effect=_full_text):
         yield
 
 
@@ -55,7 +71,7 @@ def _client_returning(summary):
 
 # ── D2, mode 1: owner key only ────────────────────────────────────────────────
 
-def test_summary_with_owner_key_only(ctx, signed_in, monkeypatch, no_pdf):
+def test_summary_with_owner_key_only(ctx, signed_in, monkeypatch, with_full_text):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-owner-OWNERKEY")
     ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
@@ -73,7 +89,7 @@ def test_summary_with_owner_key_only(ctx, signed_in, monkeypatch, no_pdf):
 
 # ── D2, mode 2: the user's own key overrides the owner's ──────────────────────
 
-def test_user_key_overrides_owner_key(ctx, signed_in, monkeypatch, enc_secret, no_pdf):
+def test_user_key_overrides_owner_key(ctx, signed_in, monkeypatch, enc_secret, with_full_text):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-owner-OWNERKEY")
     ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
@@ -101,7 +117,7 @@ def test_user_key_overrides_owner_key(ctx, signed_in, monkeypatch, enc_secret, n
 # ── D2, mode 3: no key at all — a clean error, not a crash ────────────────────
 
 def test_no_key_returns_clean_error_and_does_not_crash(ctx, signed_in, monkeypatch,
-                                                       no_pdf):
+                                                       with_full_text):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
 
@@ -117,7 +133,7 @@ def test_no_key_returns_clean_error_and_does_not_crash(ctx, signed_in, monkeypat
 # ── Failures inside the job ───────────────────────────────────────────────────
 
 def test_a_provider_failure_lands_as_an_error_status_not_a_hang(ctx, signed_in,
-                                                                monkeypatch, no_pdf):
+                                                                monkeypatch, with_full_text):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-owner")
     ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
@@ -133,7 +149,7 @@ def test_a_provider_failure_lands_as_an_error_status_not_a_hang(ctx, signed_in,
 
 
 def test_an_ollama_none_return_is_an_error_not_a_blank_summary(ctx, signed_in,
-                                                               monkeypatch, no_pdf):
+                                                               monkeypatch, with_full_text):
     """
     OllamaClient returns None on failure while the hosted clients raise. The
     route must not store None as a summary (chunk-3 gate finding 3, P22).
@@ -167,7 +183,7 @@ def test_an_empty_paper_is_rejected(signed_in):
 # ── Persistence and provenance ────────────────────────────────────────────────
 
 def test_a_summary_is_stored_with_its_model_and_author(ctx, signed_in, monkeypatch,
-                                                       no_pdf):
+                                                       with_full_text):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-owner")
     ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
@@ -186,7 +202,7 @@ def test_a_summary_is_stored_with_its_model_and_author(ctx, signed_in, monkeypat
                          ).status_code == 200
 
 
-def test_one_user_cannot_read_anothers_summary_job(ctx, app, monkeypatch, no_pdf):
+def test_one_user_cannot_read_anothers_summary_job(ctx, app, monkeypatch, with_full_text):
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
     ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
 
@@ -202,7 +218,7 @@ def test_one_user_cannot_read_anothers_summary_job(ctx, app, monkeypatch, no_pdf
         assert bob.get(f"/api/summaries/{job_id}").status_code == 404
 
 
-def test_an_oversized_paper_is_refused_at_the_boundary(signed_in, monkeypatch, no_pdf):
+def test_an_oversized_paper_is_refused_at_the_boundary(signed_in, monkeypatch, with_full_text):
     """
     The paper arrives in the request body, so its size is user-controlled.
     Refuse it at the entry point rather than truncating it silently inside the
@@ -220,7 +236,7 @@ def test_an_oversized_paper_is_refused_at_the_boundary(signed_in, monkeypatch, n
     assert "larger than" in r.json()["detail"]
 
 
-def test_a_normal_sized_paper_is_accepted(signed_in, ctx, monkeypatch, no_pdf):
+def test_a_normal_sized_paper_is_accepted(signed_in, ctx, monkeypatch, with_full_text):
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
     ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
     with patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
@@ -231,7 +247,7 @@ def test_a_normal_sized_paper_is_accepted(signed_in, ctx, monkeypatch, no_pdf):
 # ── Cold-review findings ──────────────────────────────────────────────────────
 
 def test_a_summary_is_saved_even_when_the_paper_is_already_in_the_database(
-    ctx, signed_in, monkeypatch, no_pdf
+    ctx, signed_in, monkeypatch, with_full_text
 ):
     """
     insert_paper() returns None for a DOI already stored — the normal case when
@@ -257,7 +273,7 @@ def test_a_summary_is_saved_even_when_the_paper_is_already_in_the_database(
 
 
 def test_an_ollama_summary_with_empty_fields_is_an_error_not_a_blank_card(
-    ctx, signed_in, monkeypatch, no_pdf
+    ctx, signed_in, monkeypatch, with_full_text
 ):
     """
     OllamaClient does no validation: its text parser returns a dict of empty
@@ -277,7 +293,7 @@ def test_an_ollama_summary_with_empty_fields_is_an_error_not_a_blank_card(
 
 
 def test_an_existing_summary_is_returned_without_running_the_model(
-    ctx, signed_in, monkeypatch, no_pdf
+    ctx, signed_in, monkeypatch, with_full_text
 ):
     """
     Summaries are shared per paper. Re-running one costs a model call for an
@@ -322,7 +338,7 @@ def _arxiv_paper():
     }).to_dict()
 
 
-def test_n1_arxiv_summary_is_saved_and_looked_up(ctx, signed_in, monkeypatch, no_pdf):
+def test_n1_arxiv_summary_is_saved_and_looked_up(ctx, signed_in, monkeypatch, with_full_text):
     """
     Found by the 2026-09-16 smoke test: a DOI-less paper could never be stored,
     so an arXiv summary was billed and lost, and the lookup — keyed on DOI —
@@ -349,7 +365,7 @@ def test_n1_arxiv_summary_is_saved_and_looked_up(ctx, signed_in, monkeypatch, no
 
 
 def test_n1_resummarizing_a_stored_arxiv_paper_saves_to_the_same_row(
-    ctx, signed_in, monkeypatch, no_pdf
+    ctx, signed_in, monkeypatch, with_full_text
 ):
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
     ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
@@ -390,13 +406,17 @@ def test_n2_missing_abstract_is_recovered_before_summarizing(ctx, signed_in, mon
         body = _await(signed_in, job_id)
 
     assert body["status"] == "done", body
-    assert client.summarize_paper.call_args.args[0] == "Recovered abstract text."
+    # No full text: the recovered abstract stands in and the model is not
+    # called (plan 2026-09-19 C1 — this test predates it).
+    client.summarize_paper.assert_not_called()
+    assert body["result"]["source_text"] == "abstract"
+    assert body["result"]["abstract"] == "Recovered abstract text."
     stored = ctx.db.find_paper(FLAMING)
     assert stored["abstract"] == "Recovered abstract text.", \
         "the recovered abstract should be stored with the paper, not fetched again"
 
 
-def test_n2_recovery_is_not_attempted_when_the_record_has_an_abstract(ctx, signed_in, monkeypatch, no_pdf):
+def test_n2_recovery_is_not_attempted_when_the_record_has_an_abstract(ctx, signed_in, monkeypatch, with_full_text):
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
     ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
     with patch("web.routes_summaries.recover_abstract") as rec, \
@@ -462,7 +482,7 @@ def test_r5_unreachable_source_is_named_apart_from_empty_ones(ctx, signed_in, mo
     assert "Could not reach: crossref" in body["error"]
 
 
-def test_rl2_summary_made_from_a_saved_list_shows_on_that_list(ctx, signed_in, monkeypatch, no_pdf):
+def test_rl2_summary_made_from_a_saved_list_shows_on_that_list(ctx, signed_in, monkeypatch, with_full_text):
     """RL2 end to end: the paper dict the References tab holds (from GET
     /items) is summarized through the real route, and the list's summaries
     then include it — the ✓ badge's source of truth."""
@@ -483,3 +503,57 @@ def test_rl2_summary_made_from_a_saved_list_shows_on_that_list(ctx, signed_in, m
     listed = signed_in.get(f"/api/references/{list_id}/summaries").json()["summaries"]
     assert [s["title"] for s in listed] == ["Agents in a saved list"]
     assert listed[0]["key_findings"] == ["Agents cooperate"]
+
+
+
+# ── FT1: no model call without full text (plan 2026-09-19) ───────────────────
+
+def test_ft1_1_no_full_text_stores_the_abstract_without_a_model_call(ctx, signed_in, monkeypatch, no_pdf):
+    """No full text: the model is not called, no owner usage is spent, and the
+    abstract is stored as the entry, marked source_text=abstract."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "owner-key-for-test")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    client = _client_returning(SUMMARY)
+    before = signed_in.get("/api/me").json()["owner_summaries_remaining"]
+    with patch("src.llm_providers.build_client", return_value=client):
+        job_id = signed_in.post("/api/summaries", json={"paper": PAPER}).json()["job_id"]
+        body = _await(signed_in, job_id)
+    assert body["status"] == "done", body
+    client.summarize_paper.assert_not_called()
+    assert body["result"]["source_text"] == "abstract"
+    assert body["result"]["abstract"] == PAPER["abstract"]
+    assert signed_in.get("/api/me").json()["owner_summaries_remaining"] == before
+    stored = ctx.db.get_summary(ctx.db.find_paper(PAPER)["id"])
+    assert (stored["source_text"], stored["summary_text"], stored["model_version"]) == \
+        ("abstract", PAPER["abstract"], "")
+
+
+def test_ft1_3_full_text_source_is_recorded(ctx, signed_in, monkeypatch, with_full_text):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    client = _client_returning(SUMMARY)
+    with patch("src.llm_providers.build_client", return_value=client):
+        job_id = signed_in.post("/api/summaries", json={"paper": PAPER}).json()["job_id"]
+        body = _await(signed_in, job_id)
+    assert client.summarize_paper.call_args.args[1].startswith("Full text of the paper")
+    assert (body["result"]["source_text"], body["result"]["text_source"]) == ("full_text", "Unpaywall")
+    stored = ctx.db.get_summary(ctx.db.find_paper(PAPER)["id"])
+    assert (stored["source_text"], stored["text_source"]) == ("full_text", "Unpaywall")
+
+
+def test_ft1_find_by_title_reaches_the_finder(ctx, signed_in, monkeypatch):
+    """The per-request title-search switch from Settings arrives at _extract_text."""
+    seen = {}
+
+    def fake(ctx_, paper, outcome=None, by_title=None):
+        seen["by_title"] = by_title
+        return ""
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    with patch("web.routes_summaries._extract_text", side_effect=fake), \
+         patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
+        job_id = signed_in.post("/api/summaries",
+                                json={"paper": PAPER, "find_by_title": False}).json()["job_id"]
+        _await(signed_in, job_id)
+    assert seen["by_title"] is False
