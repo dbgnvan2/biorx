@@ -346,13 +346,10 @@ def test_h_gui_calls_show_startup_warnings_with_orchestrator_warnings(monkeypatc
     def fake_show(self, warnings):
         captured.extend(warnings)
 
-    # SummarizationAgent binds src.db.Database directly (not gui_module.Database),
-    # so we must patch it here or MainWindow.__init__ reaches the real production DB.
     # load_filters / FILTERS_PATH reads the real filters.json — patch those too (P34).
     with patch.object(gui_module, "SourceOrchestrator", return_value=fake_orch), \
          patch.object(gui_module, "load_sources_config", return_value={}), \
          patch.object(gui_module, "Database", return_value=MagicMock()), \
-         patch.object(gui_module, "SummarizationAgent", return_value=MagicMock()), \
          patch.object(gui_module, "load_filters", return_value=[]), \
          patch.object(gui_module.MainWindow, "_show_startup_warnings", fake_show):
 

@@ -48,6 +48,8 @@ class SummarizationAgent:
         # and a missing API key must not stop the app from opening.
         self.llm = MockOllamaClient() if use_mock else None
         self.model = "mock" if use_mock else ""
+        self.provider = "mock" if use_mock else ""
+        self.key_source = "none"     # "owner"/"user" means a paid, keyed API
         if use_mock:
             logger.info("Using mock LLM client")
 
@@ -62,6 +64,7 @@ class SummarizationAgent:
         if self.llm is None:
             resolved = resolve_client(config=load_llm_config())
             self.llm, self.model = resolved.client, resolved.model
+            self.provider, self.key_source = resolved.provider, resolved.key_source
             logger.info("Summaries will use %s (%s)", resolved.provider, resolved.model)
         return self.llm
 
@@ -247,6 +250,19 @@ def main():
 
     agent = SummarizationAgent(use_mock=args.mock)
 
+    # Say which model will run, and whether it is billed, before any call:
+    # the default is now a paid API (review finding 7).
+    if not args.mock:
+        try:
+            agent._client()
+        except LLMError as e:
+            print(f"Cannot summarize: {e}", file=sys.stderr)
+            return 1
+        count = 1 if args.paper_id else args.max_count
+        paid = " — a paid API, billed per paper" if agent.key_source in ("owner", "user") else ""
+        print(f"Summarizing up to {count} paper(s) with {agent.provider} ({agent.model}){paid}.",
+              file=sys.stderr)
+
     if args.paper_id:
         success = agent.summarize_paper_by_id(args.paper_id)
         result = {"success": success, "paper_id": args.paper_id}
@@ -255,7 +271,8 @@ def main():
 
     logger.info(f"Result: {result}")
     print(json.dumps(result, indent=2))
+    return 0 if result.get("success") else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

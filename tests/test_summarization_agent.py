@@ -146,3 +146,30 @@ def test_r4_ollama_gets_config_budget_and_timeout():
         client.summarize_paper("abs", "x" * 80)
     assert "x" * 50 in sent["p"] and "x" * 51 not in sent["p"]
     assert "# Limit" not in sent["p"]
+
+
+def test_r7_cli_names_the_paid_model_before_running(monkeypatch, capsys):
+    """Review finding 7: the CLI says which model runs and that it is billed,
+    before any paper is summarized."""
+    fake = MagicMock()
+    monkeypatch.setattr(agent_module, "resolve_client",
+                        lambda **_: ResolvedLLM(fake, "deepseek", "deepseek-flash", "owner"))
+    monkeypatch.setattr(sys, "argv", ["summarization_agent", "--max-count", "3"])
+    monkeypatch.setattr(agent_module, "Database", MagicMock())
+    with patch.object(SummarizationAgent, "summarize_all_unsummarized",
+                      return_value={"success": True}) as run:
+        assert agent_module.main() == 0
+    err = capsys.readouterr().err
+    assert "Summarizing up to 3 paper(s) with deepseek (deepseek-flash) — a paid API" in err
+    run.assert_called_once()
+
+
+def test_r7_cli_without_a_key_stops_before_running(monkeypatch, capsys):
+    monkeypatch.setattr(agent_module, "resolve_client",
+                        lambda **_: (_ for _ in ()).throw(NoLLMCredentialError("no API key")))
+    monkeypatch.setattr(sys, "argv", ["summarization_agent"])
+    monkeypatch.setattr(agent_module, "Database", MagicMock())
+    with patch.object(SummarizationAgent, "summarize_all_unsummarized") as run:
+        assert agent_module.main() == 1
+    assert "Cannot summarize: no API key" in capsys.readouterr().err
+    run.assert_not_called()

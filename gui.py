@@ -23,7 +23,6 @@ from PyQt6.QtCore import Qt, QDate, pyqtSignal, QThread, QObject
 from PyQt6.QtGui import QFont
 
 from agents.search_agent import SearchAgent
-from agents.summarization_agent import SummarizationAgent
 from src.db import Database
 from src.biorxiv_api import BioRxivAPI
 from src.pdf_handler import PDFHandler
@@ -212,32 +211,6 @@ class SearchWorker(QObject):
             # thread to be torn down (src/db.py — Database.release).
             if self.db:
                 self.db.release()
-
-
-class SummarizationWorker(QObject):
-    finished = pyqtSignal()
-    error    = pyqtSignal(str)
-    progress = pyqtSignal(str)
-
-    def __init__(self, agent: SummarizationAgent, paper_id: Optional[int] = None, max_count: int = 10):
-        super().__init__()
-        self.agent = agent
-        self.paper_id = paper_id
-        self.max_count = max_count
-
-    def run(self):
-        try:
-            self.progress.emit("Starting summarization…")
-            if self.paper_id:
-                ok = self.agent.summarize_paper_by_id(self.paper_id)
-                msg = f"Summary generated for paper {self.paper_id}" if ok else f"Failed to summarize paper {self.paper_id}"
-                self.progress.emit(msg)
-            else:
-                result = self.agent.summarize_all_unsummarized(max_count=self.max_count)
-                self.progress.emit(f"Complete: {result.get('summarized_count', 0)} papers summarized")
-            self.finished.emit()
-        except Exception as e:
-            self.error.emit(str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +630,6 @@ class SearchBrowseTab(QWidget):
         super().__init__()
         self.db           = db
         self.orchestrator = orchestrator
-        self.summ_agent   = SummarizationAgent()
         self._results = ResultsAccumulator()  # dedups results across filters
         self.current_results: List[Dict[str, Any]] = self._results.papers
         self.current_page   = 0
