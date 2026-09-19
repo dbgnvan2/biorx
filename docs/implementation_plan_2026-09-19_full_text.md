@@ -1,7 +1,7 @@
 # Implementation plan — summaries from full text, and finding free copies
 
 **Request:** chat, 2026-09-19.
-**Status:** APPROVED 2026-09-19 with C1 revised (abstract stands in; no button).
+**Status:** IMPLEMENTED 2026-09-19 (b73bcdf, 30bfb3b, 98c107c, 5597e5c). C1 revised by the owner: abstract stands in, no button.
 
 ## 0. Spec IDs
 
