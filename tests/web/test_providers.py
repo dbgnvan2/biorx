@@ -227,7 +227,7 @@ def test_ollama_client_interface_unchanged():
     from src.llm import OllamaClient
     c = OllamaClient()
     assert c.base_url == "http://localhost:11434"
-    assert c.model == "qwen:7b"
+    assert c.model == "qwen3.5:4b"      # the installed model, not qwen:7b
     assert hasattr(c, "is_available") and hasattr(c, "generate")
     assert hasattr(c, "summarize_paper")
 

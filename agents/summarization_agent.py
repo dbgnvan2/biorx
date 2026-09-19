@@ -17,7 +17,7 @@ from src.db import Database
 from src.pdf_handler import PDFHandler
 from src.llm import MockOllamaClient
 from src.llm_config import load_llm_config, max_text_chars
-from src.llm_providers import LLMError, resolve_client
+from src.llm_providers import LLMError, ProviderResponseError, _coerce_summary, resolve_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -182,6 +182,12 @@ class SummarizationAgent:
             llm = self._client()
             logger.debug(f"Generating summary with {self.model} for paper {paper_id}")
             summary_data = llm.summarize_paper(abstract, full_text)
+            if summary_data is None:
+                raise ProviderResponseError(f"{self.model} returned no summary")
+            # Same check the web app applies: Ollama's text parser returns a
+            # dict of empty fields when the reply is not in the expected shape,
+            # which must not be saved as a success (review finding 4).
+            summary_data = _coerce_summary(summary_data)
 
             if not summary_data:
                 logger.warning(f"Failed to generate summary for paper {paper_id}")

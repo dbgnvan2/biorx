@@ -10,36 +10,52 @@ import logging
 logger = logging.getLogger(__name__)
 
 OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "qwen:7b"
+# Only for a bare OllamaClient(); every real path passes the model named in
+# llm_config.yaml. Was "qwen:7b", which was never installed here (2026-09-18).
+OLLAMA_MODEL = "qwen3.5:4b"
 
 
 class OllamaClient:
     """Client for Ollama API."""
 
-    def __init__(self, base_url: str = OLLAMA_URL, model: str = OLLAMA_MODEL):
+    def __init__(self, base_url: str = OLLAMA_URL, model: str = OLLAMA_MODEL,
+                 timeout: int = 120, max_chars: int = 3000):
         """
         Initialize Ollama client.
 
         Args:
             base_url: Ollama API base URL
-            model: Model name (e.g., 'qwen:7b')
+            model: Model name, as `ollama list` shows it (e.g. 'qwen3.5:4b')
+            timeout: Seconds to wait for a generation (llm_config.yaml timeout)
+            max_chars: Paper text sent per summary (llm_config.yaml max_text_chars)
         """
         self.base_url = base_url
         self.model = model
+        self.timeout = timeout
+        self.max_chars = max_chars
 
     def is_available(self) -> bool:
         """
-        Check if Ollama is running and model is available.
+        Check that Ollama is running AND this model is installed.
 
-        Returns:
-            True if Ollama is reachable
+        Only checking the server let a configured model that was never pulled
+        (qwen:7b) look available until the first summary failed (P6).
         """
         try:
             response = requests.get(f"{self.base_url}/api/tags", timeout=5)
-            return response.status_code == 200
-        except requests.RequestException:
-            logger.warning("Ollama is not available. Ensure it's running on localhost:11434")
+            if response.status_code != 200:
+                return False
+            names = {m.get("name", "") for m in (response.json() or {}).get("models", [])}
+        except (requests.RequestException, ValueError):
+            logger.warning("Ollama is not available. Ensure it's running at %s", self.base_url)
             return False
+        wanted = self.model if ":" in self.model else f"{self.model}:latest"
+        if wanted not in names and self.model not in names:
+            logger.warning("Ollama is running but model %r is not installed "
+                           "(installed: %s). Run: ollama pull %s",
+                           self.model, ", ".join(sorted(names)) or "none", self.model)
+            return False
+        return True
 
     def generate(self, prompt: str, context: Optional[str] = None) -> Optional[str]:
         """
@@ -64,7 +80,7 @@ class OllamaClient:
                 "stream": False,
             }
 
-            response = requests.post(url, json=payload, timeout=120)
+            response = requests.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
 
             result = response.json()
@@ -97,7 +113,7 @@ PAPER ABSTRACT:
 {abstract}
 
 PAPER TEXT:
-{full_text[:3000]}  # Limit to first 3000 chars to avoid token limits
+{full_text[:self.max_chars]}
 
 Provide ONLY the following structured output (no markdown, plain text):
 

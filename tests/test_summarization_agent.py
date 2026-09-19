@@ -100,3 +100,49 @@ def test_m1_insert_summary_assumes_no_model(tmp_path):
         assert db.get_summary(pid)["model_version"] == ""
     finally:
         db.close()
+
+
+def test_r4_blank_summary_is_not_saved(tmp_path, monkeypatch):
+    """Review finding 4: Ollama's parser returns empty fields for a reply in
+    the wrong shape. The agent must fail it, not store a blank summary."""
+    fake = MagicMock()
+    fake.summarize_paper.return_value = {"key_findings": [], "methodology": "", "conclusions": ""}
+    monkeypatch.setattr(agent_module, "resolve_client",
+                        lambda **_: ResolvedLLM(fake, "ollama", "qwen3.5:4b", "none"))
+    agent = SummarizationAgent(db_path=str(tmp_path / "t.db"))
+    pid = _paper(agent.db, tmp_path)
+    with patch.object(agent.pdf_handler, "extract_text", return_value="Full text."):
+        assert agent.summarize_paper_by_id(pid) is False
+    assert agent.db.get_summary(pid) is None
+
+
+def _tags(*names):
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {"models": [{"name": n} for n in names]}
+    return resp
+
+
+@pytest.mark.parametrize("model,installed,ok", [
+    ("qwen3.5:4b", ["qwen3.5:4b", "nomic-embed-text:latest"], True),
+    ("qwen:7b", ["qwen3.5:4b"], False),                  # the original problem
+    ("llama3", ["llama3:latest"], True),                 # untagged means :latest
+])
+def test_r4_ollama_available_only_if_model_installed(model, installed, ok):
+    from src.llm import OllamaClient
+    with patch("src.llm.requests.get", return_value=_tags(*installed)):
+        assert OllamaClient(model=model).is_available() is ok
+
+
+def test_r4_ollama_gets_config_budget_and_timeout():
+    """build_client passes llm_config's budget and timeout, and the prompt
+    carries exactly max_chars of text and no stray code comment."""
+    from src.llm_config import provider_config
+    from src.llm_providers import build_client
+    pconf = provider_config(load_llm_config(), "ollama")
+    client = build_client(pconf, "", 50)
+    assert (client.max_chars, client.timeout) == (50, pconf.timeout)
+    sent = {}
+    with patch.object(client, "generate", side_effect=lambda p, **_: sent.setdefault("p", p) and ""):
+        client.summarize_paper("abs", "x" * 80)
+    assert "x" * 50 in sent["p"] and "x" * 51 not in sent["p"]
+    assert "# Limit" not in sent["p"]
