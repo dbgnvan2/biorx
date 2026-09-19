@@ -16,6 +16,9 @@ PyYAML==6.0.2
 urllib3==2.2.2
 certifi==2024.6.2
 
+# .env loading for desktop/CLI entry points (src/env_file.py); its tests run in CI.
+python-dotenv==1.0.0
+
 # Summaries PDF export (src/summary_pdf.py). Pure Python.
 fpdf2==2.8.7
 

@@ -216,6 +216,8 @@ class SummarizationAgent:
 def main():
     """CLI entry point."""
     import argparse
+    from src.env_file import load_project_env
+    load_project_env()      # DEEPSEEK_API_KEY etc. from .env (review finding 3)
 
     parser = argparse.ArgumentParser(
         description="Summarize papers with the default provider in llm_config.yaml")

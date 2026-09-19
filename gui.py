@@ -1362,8 +1362,9 @@ class DiscoverTermsWorker(QObject):
 
         from src.llm_providers import resolve_client, NoLLMCredentialError
         _settings_hint = (
-            "To configure: open the Settings tab → select 'LLM Config' → "
-            "set default_provider to 'anthropic' or 'deepseek', and add your api_key."
+            "To configure: put the provider's key in .env (DEEPSEEK_API_KEY or "
+            "ANTHROPIC_API_KEY) and restart. Do not put a key in llm_config.yaml: "
+            "that file is committed to git."
         )
         try:
             resolved = resolve_client()
@@ -2551,6 +2552,8 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    from src.env_file import load_project_env
+    load_project_env()      # DEEPSEEK_API_KEY etc. from .env (review finding 3)
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()

@@ -251,3 +251,17 @@ def pytest_terminal_summary(terminalreporter):
         terminalreporter.write_sep(
             "!", f"{len(skipped)} desktop GUI test file(s)/test(s) SKIPPED: PyQt6 is not "
                  "importable here. Run venv/bin/python -m pytest to include them.")
+
+
+@pytest.fixture(autouse=True)
+def _never_load_the_real_env_file(tmp_path, monkeypatch):
+    """Entry points (monitor.main, the summarization CLI, gui.main) load the
+    project's .env. A test that runs one must not pull real keys or settings
+    into the test process (learnings P34): point the loader at a missing file."""
+    try:
+        from src import env_file
+    except ImportError:
+        # An isolated pytester session (tests/test_network_guard.py copies this
+        # file) has no src package — and so no entry point to guard.
+        return
+    monkeypatch.setattr(env_file, "PROJECT_ENV", tmp_path / "no-such.env")

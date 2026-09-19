@@ -63,6 +63,7 @@ def test_every_dependency_is_pinned():
     # CI run failed with "pytest: command not found" (all runs to 2026-09-17).
     ("pytest", "pytest"),
     ("fpdf2", "fpdf"),           # src/summary_pdf.py
+    ("python-dotenv", "dotenv"),  # src/env_file.py
 ])
 def test_each_pinned_package_is_real_and_importable(name, module):
     """

@@ -16,7 +16,8 @@
 # To switch provider: change default_provider to anthropic, deepseek, or ollama.
 
 # DeepSeek: works on this Mac and on the Railway deploy, where there is no
-# Ollama. Needs DEEPSEEK_API_KEY in the environment (.env).
+# Ollama. Needs DEEPSEEK_API_KEY: in .env (read by the desktop app and CLI
+# agents at start-up) or the host's environment (web deploy).
 default_provider: deepseek        # or anthropic, or ollama (local only)
 
 providers:

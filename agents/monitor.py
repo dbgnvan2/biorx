@@ -203,6 +203,8 @@ def download_pdf(record: dict, dest_dir: Path, timeout: int = 30) -> str:
 
 
 def main(args=None):
+    from src.env_file import load_project_env
+    load_project_env()      # contact emails / keys from .env (review finding 3)
     parser = argparse.ArgumentParser(
         description="Headless search across multiple publication sources."
     )

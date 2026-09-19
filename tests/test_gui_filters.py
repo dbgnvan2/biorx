@@ -200,3 +200,16 @@ def test_r2_a_failed_filter_does_not_stall_the_run():
     gui.SearchBrowseTab._on_filter_error(tab, "Inflammation", "boom")
     assert tab._run_errors == ["'Inflammation' failed: boom"]
     tab._run_next_filter.assert_called_once()
+
+
+def test_r3_gui_entry_point_loads_env(monkeypatch):
+    """gui.main reads .env before the window (and any LLM call) exists."""
+    from unittest.mock import MagicMock
+    from src import env_file
+    order = []
+    monkeypatch.setattr(env_file, "load_project_env", lambda *a, **k: order.append("env"))
+    monkeypatch.setattr(gui, "QApplication", MagicMock())
+    monkeypatch.setattr(gui, "MainWindow", lambda: order.append("window") or MagicMock())
+    monkeypatch.setattr(gui.sys, "exit", lambda *_: None)
+    gui.main()
+    assert order == ["env", "window"]
