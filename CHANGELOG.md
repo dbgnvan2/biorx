@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-09-19 — summaries from full text, and finding free copies
+
+Gates: `docs/cycles/2026-09-19_full-text-qa-gate.md` (REJECTED, F1–F5 fixed),
+`docs/cycles/2026-09-19_full-text-regate-qa-gate.md` (APPROVED).
+Plan: `docs/implementation_plan_2026-09-19_full_text.md`.
+
+### Changed
+- **No summary without full text.** Before summarizing, BioRx looks for a free
+  copy: the paper's own link, Unpaywall, OpenAlex, Semantic Scholar (DOI, else
+  exact title + first author or year). With none found, the model is not called
+  and nothing is charged: the abstract is kept, labelled "Abstract only — no full
+  text found (not a model summary)" with a ✓ Abstract only badge, in the details
+  view, summaries panel and summaries PDF. Summarize on it later searches again.
+- A downloaded PDF must contain the paper's title, or it is rejected as another
+  document. Full-text summaries record where the text came from.
+- The desktop/CLI summarizer follows the same rule.
+
+### Added
+- Settings: "Also look for free copies by title" (default from
+  `sources_config.yaml` `full_text.find_by_title`). `/healthz` lists the active
+  full-text finders.
+
+### Not added
+- Google Scholar and ResearchGate: no public API; both forbid automated access.
+- CORE: needs an API key.
+
 ## 2026-09-18 (filter runs, model default, saved lists)
 
 Gate: `docs/cycles/2026-09-18_filter-run-batch-qa-gate.md` — APPROVED.

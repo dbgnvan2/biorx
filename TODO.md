@@ -3,6 +3,19 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the full-text gates (2026-09-19) — APPROVED, deferred
+
+- G1 (LOW) — `src/fulltext.default_get_json` reports any 401/403 as a settings
+  problem; only Unpaywall's is. An OpenAlex/Semantic Scholar 403 (quota) should
+  read as temporary.
+- G2 (LOW) — if `/healthz` fails at page load, the page falls back to title
+  search on and overrides an operator's `find_by_title: false`.
+- G3 (LOW) — the Settings checkbox re-sync after `/healthz` loads has no test.
+- F6 (INFO, deliberate) — a real PDF whose title appears after the first 10,000
+  characters is rejected as "a different document"; the abstract is kept instead.
+- Older summaries (before 2026-09-19) have no recorded source and show a plain
+  ✓ Summary; Summarize returns them as stored.
+
 ## From the filter-run batch gate (`docs/cycles/2026-09-18_filter-run-batch-qa-gate.md`) — APPROVED, deferred
 
 Carried to the next batch rather than fixed after approval (a post-approval fix
