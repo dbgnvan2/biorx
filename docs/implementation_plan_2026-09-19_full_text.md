@@ -43,9 +43,8 @@ yields text:
 2. Unpaywall by DOI (needs `BIORX_CONTACT_EMAIL`);
 3. OpenAlex by DOI, else by title — every open-access location, including
    repository and author copies;
-4. Semantic Scholar by DOI, else by title — `openAccessPdf`;
-5. CORE by DOI, else by title — needs `CORE_API_KEY` (free); skipped, and said so,
-   without it.
+4. Semantic Scholar by DOI, else by title — `openAccessPdf`.
+   (CORE dropped 2026-09-19: it needs an API key the owner cannot get.)
 - **Title matching is strict:** normalised titles equal (case, punctuation,
   whitespace) AND (first-author surname matches OR year matches). No fuzzy
   "close enough". A near-miss is rejected and logged.
@@ -58,10 +57,10 @@ yields text:
 
 **C3 (FT2) — Google Scholar / ResearchGate: not added.** No public API; both
 forbid automated access; Scholar blocks scripts with CAPTCHAs. Recorded in the
-README. OpenAlex, Semantic Scholar and CORE (C2) cover the same need.
+README. OpenAlex and Semantic Scholar (C2) cover the same need, keyless.
 
-**C4 — Railway.** Set `BIORX_CONTACT_EMAIL` (turns Unpaywall on) and optionally
-`CORE_API_KEY`. `/healthz` reports which finders are active.
+**C4 — Railway.** `BIORX_CONTACT_EMAIL` is set (confirmed 2026-09-19, Unpaywall on).
+`/healthz` reports which finders are active.
 
 ## 3. Acceptance criteria → tests
 
@@ -76,13 +75,11 @@ README. OpenAlex, Semantic Scholar and CORE (C2) cover the same need.
 | FT3.2 | Adversarial: similar title, different paper → rejected | `tests/test_fulltext.py::test_ft3_2_near_miss_title_is_rejected` |
 | FT3.3 | Same title, wrong author and year → rejected | `tests/test_fulltext.py::test_ft3_3_title_alone_is_not_enough` |
 | FT3.4 | Title search off → only DOI lookups run | `tests/test_fulltext.py::test_ft3_4_title_search_can_be_turned_off` |
-| FT3.5 | No `CORE_API_KEY` → CORE skipped and reported, others run | `tests/test_fulltext.py::test_ft3_5_core_without_key_is_skipped_and_said` |
 | FT3.6 | A source timing out is retried, then reported as unreachable — not "no copy" | `tests/test_fulltext.py::test_ft3_6_outage_is_not_absence` |
 | FT3.7 | Downloads go through the SSRF guard | `tests/web/test_summary_fetch_guard.py::test_ft3_7_finder_downloads_are_guarded` |
 | C4 | `/healthz` lists active finders | `tests/web/test_app.py::test_c4_healthz_lists_full_text_finders` |
 
-Integration-only (flagged, not claimed): live calls to OpenAlex, Semantic Scholar
-and CORE. Proposal: after deploy, run one known paper through each and note which
+Integration-only (flagged, not claimed): live calls to OpenAlex and Semantic Scholar. Proposal: after deploy, run one known paper through each and note which
 source found it.
 
 ## 4. Order
