@@ -18,8 +18,9 @@
   (`outcome["full_text"]`), which the modal shows in small print
   (`web/static/app.js:1152`). It is not stored with the summary, so the ✓ badge,
   the list, and the summaries PDF cannot say "abstract only".
-- On Railway `BIORX_CONTACT_EMAIL` is unset, so Unpaywall — the main source of
-  `pdf_url` — is off (`/healthz` warning). Most papers therefore have no PDF link.
+- Until 2026-09-19 `BIORX_CONTACT_EMAIL` had not reached the Railway service, so
+  Unpaywall — the main source of `pdf_url` — was off and most papers had no PDF
+  link. It is set now; papers with no Unpaywall copy still fall back silently.
 - PDF text comes only from `paper_meta.pdf_url()`: enrichment's `pdf_url`/`best_oa_url`,
   a bioRxiv pattern, or the DOI resolver (a publisher page, usually not a PDF).
 - An OpenAlex adapter exists but is disabled as a search source.
@@ -53,7 +54,7 @@ yields text:
 - Option: `find_full_text_by_title` in `sources_config.yaml` (default on) plus a
   per-user toggle in Settings ("Look for free copies by title"). DOI lookups
   always run; the toggle only governs title searches.
-- Where the text came from is stored with the summary ("full text via CORE").
+- Where the text came from is stored with the summary ("full text via OpenAlex").
 
 **C3 (FT2) — Google Scholar / ResearchGate: not added.** No public API; both
 forbid automated access; Scholar blocks scripts with CAPTCHAs. Recorded in the
