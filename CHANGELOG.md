@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-19 — Search panel: sticky tabs, Select Filter, Ad Hoc Search
+
+Gate: `docs/cycles/2026-09-19_ui-enhancements-qa-gate.md` (APPROVED).
+
+### Changed
+- **The tab bar stays at the top of the viewport** while a panel is scrolled, so
+  the tabs never scroll out of reach. `.tab-bar`/`.tab` had no styling at all
+  before this, so the tabs also gain a visible active state. The notice banner,
+  already sticky, was moved from `top: 8px` to `top: 52px` so it parks below the
+  bar instead of behind it.
+- **Saved Filters in the Search panel is now a "Select Filter" dropdown** with a
+  single Run button, replacing a list that grew one row per saved filter. The run
+  state the per-filter buttons carried is kept: the Run button reads Run /
+  Running… / Done / Stopped / Failed / Lost track for the filter now picked, the
+  button and the dropdown are both disabled before the request leaves, and the
+  selection survives a rebuild of the list. With nothing saved, the dropdown says
+  so and Run is disabled. The Filters tab still manages saved filters.
+- **The manual search card is "Ad Hoc Search"**, told apart from running a saved
+  filter. Tab names and the Search/Stop buttons are unchanged.
+
+### Known limitation
+- The sticky layout and the 52px clearance are browser-render properties the
+  headless suite cannot verify; the test pins the CSS value against drift but
+  cannot prove the bar is actually 52px tall. See TODO.
+
 ## 2026-09-19 — summaries from full text, and finding free copies
 
 Gates: `docs/cycles/2026-09-19_full-text-qa-gate.md` (REJECTED, F1–F5 fixed),

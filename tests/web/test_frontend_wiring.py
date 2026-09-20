@@ -670,7 +670,20 @@ def test_e2_tab_bar_is_sticky():
     notice = re.search(r"#notice\s*\{([^}]*)\}", css).group(1)
     notice_z = int(re.search(r"z-index:\s*(\d+)", notice).group(1))
     assert bar_z > notice_z
-    assert int(re.search(r"top:\s*(\d+)px", notice).group(1)) > 0
+    # P29: pin the exact clearance, not a floor. The point of this test is that
+    # the notice sits BELOW the tab bar; `> 0` stays green if the value shrinks
+    # back toward 8px and the notice slides behind the z-index-45 bar.
+    assert int(re.search(r"top:\s*(\d+)px", notice).group(1)) == 52
+
+
+def test_e2_run_controls_are_wired():
+    """E2: the Select Filter dropdown's change and the Run button's click must
+    reach their handlers. The node tests below inject their own onclick and call
+    renderFilterRunButtons directly, so deleting either wiring line in wire()
+    would leave the suite green while the controls went dead in a browser."""
+    code = _js_without_comments()
+    assert '$("search-filter-select").addEventListener("change", renderFilterRunButtons)' in code
+    assert '$("btn-run-filter").addEventListener("click", runSelectedFilter)' in code
 
 
 @pytest.mark.parametrize("label,expected", [

@@ -3,6 +3,14 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the UI-enhancements gate (`docs/cycles/2026-09-19_ui-enhancements-qa-gate.md`) — APPROVED, deferred
+
+- MED / P32 — `test_e2_tab_bar_is_sticky` pins `#notice { top: 52px }` by reading
+  the same `styles.css` it asserts on, so it proves the value did not drift, not
+  that 52px actually clears the tab bar. If the bar's padding or font grows its
+  rendered height past 52px, the "notice behind the bar" defect reproduces and
+  the test stays green. A real-browser visual check is the only true fix.
+
 ## From the full-text gates (2026-09-19) — APPROVED, deferred
 
 - G1 (LOW) — `src/fulltext.default_get_json` reports any 401/403 as a settings
