@@ -34,6 +34,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
+from .tokens import UNCOUNTED, TokenUsage
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_WORKERS = 4
@@ -90,6 +92,9 @@ class Job:
     enrich_problems: Dict[str, List[int]] = field(default_factory=dict)
     error: str = ""
     result: Any = None
+    # What the model call this job made cost (M1.A.1). UNCOUNTED until a
+    # provider reports something — uncounted means unknown, never free.
+    token_usage: TokenUsage = field(default_factory=lambda: UNCOUNTED)
     # Sources that failed mid-run. The orchestrator swallows these per source;
     # surfacing them is what separates "no new papers" from "arXiv was down".
     sources_failed: List[str] = field(default_factory=list)
@@ -130,6 +135,12 @@ class Job:
             "source_problems": dict(self.source_problems),
             "created_at": self.created_at,
             "finished_at": self.finished_at,
+            "tokens": {
+                "prompt": self.token_usage.prompt,
+                "completion": self.token_usage.completion,
+                "total": self.token_usage.total,
+                "counted": self.token_usage.counted,
+            },
         }
 
 

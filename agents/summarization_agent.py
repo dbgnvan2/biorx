@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.db import Database
 from src.pdf_handler import PDFHandler
 from src.llm import MockOllamaClient
+from src.tokens import UNCOUNTED
 from src.llm_config import load_llm_config, max_text_chars
 from src.llm_providers import LLMError, ProviderResponseError, _coerce_summary, resolve_client
 
@@ -50,6 +51,9 @@ class SummarizationAgent:
         self.model = "mock" if use_mock else ""
         self.provider = "mock" if use_mock else ""
         self.key_source = "none"     # "owner"/"user" means a paid, keyed API
+        # What the most recent summarize call cost (M1.A.1). Declared here so
+        # it always exists, rather than appearing only after a successful run.
+        self.last_usage = UNCOUNTED
         if use_mock:
             logger.info("Using mock LLM client")
 
@@ -212,7 +216,8 @@ class SummarizationAgent:
 
             llm = self._client()
             logger.debug(f"Generating summary with {self.model} for paper {paper_id}")
-            summary_data = llm.summarize_paper(abstract, full_text)
+            summary_data, usage = llm.summarize_paper(abstract, full_text)
+            self.last_usage = usage
             if summary_data is None:
                 raise ProviderResponseError(f"{self.model} returned no summary")
             # Same check the web app applies: Ollama's text parser returns a

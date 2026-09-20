@@ -106,7 +106,8 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
 
             job.phase = f"Asking {resolved.provider} ({len(papers)} papers found)"
             provider_called = True
-            raw = resolved.client.generate(prompt, context=_DISCOVER_SYSTEM_PROMPT)
+            raw, usage = resolved.client.generate(prompt, context=_DISCOVER_SYSTEM_PROMPT)
+            job.token_usage = usage
             try:
                 terms = parse_terms(raw)
             except DiscoverParseError as e:

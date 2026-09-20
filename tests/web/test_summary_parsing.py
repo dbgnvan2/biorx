@@ -47,16 +47,16 @@ def _anthropic_returning(content):
 def test_each_provider_response_shape_parses_to_the_same_fields():
     body = json.dumps(CANONICAL)
     with _deepseek_returning(body):
-        ds = DeepSeekClient(api_key="k").summarize_paper("a", "t")
+        ds, _ = DeepSeekClient(api_key="k").summarize_paper("a", "t")
     with _anthropic_returning(body):
-        an = AnthropicClient(api_key="k").summarize_paper("a", "t")
+        an, _ = AnthropicClient(api_key="k").summarize_paper("a", "t")
     assert ds == an == CANONICAL
 
 
 def test_a_json_fenced_reply_is_accepted():
     """Some providers wrap structured output in a markdown fence."""
     with _deepseek_returning("```json\n" + json.dumps(CANONICAL) + "\n```"):
-        assert DeepSeekClient(api_key="k").summarize_paper("a", "t") == CANONICAL
+        assert DeepSeekClient(api_key="k").summarize_paper("a", "t")[0] == CANONICAL
 
 
 # ── Unusable replies raise; they are never stored as content ──────────────────

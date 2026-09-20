@@ -83,7 +83,7 @@ def test_deepseek_retries_a_retryable_status_then_succeeds():
     responses = [_ds_response("", status=503, ok=False),
                  _ds_response(json.dumps(SUMMARY_JSON))]
     with patch("src.llm_providers.requests.post", side_effect=responses) as post:
-        out = client.summarize_paper("a", "t")
+        out, _ = client.summarize_paper("a", "t")
     assert post.call_count == 2
     assert out["conclusions"] == SUMMARY_JSON["conclusions"]
 
@@ -156,7 +156,7 @@ def test_anthropic_uses_messages_api_with_configured_model():
     client = AnthropicClient(api_key="sk-ant-test", model="claude-sonnet-5")
     ctx, sdk = _patched_anthropic(_anthropic_message(json.dumps(SUMMARY_JSON)))
     with ctx:
-        out = client.summarize_paper("abstract", "text")
+        out, usage = client.summarize_paper("abstract", "text")
 
     kwargs = sdk.messages.create.call_args.kwargs
     assert kwargs["model"] == "claude-sonnet-5"

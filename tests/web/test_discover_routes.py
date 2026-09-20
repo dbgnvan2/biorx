@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import pytest
 
 from src import user_store
+from src.tokens import UNCOUNTED
 from src.discover import (DiscoverParseError, discover_settings, parse_terms,
                           query_to_keywords)
 
@@ -49,7 +50,7 @@ class FakeOrchestrator:
 
 def _llm(reply):
     client = MagicMock()
-    client.generate.return_value = reply
+    client.generate.return_value = (reply, UNCOUNTED)
     return client
 
 

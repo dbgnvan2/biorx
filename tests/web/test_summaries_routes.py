@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src import user_store
+from src.tokens import UNCOUNTED
 from tests.web.conftest import ACCESS_CODE, account_body
 
 PAPER = {
@@ -65,7 +66,7 @@ def _await(client, job_id, timeout=5):
 
 def _client_returning(summary):
     client = MagicMock()
-    client.summarize_paper.return_value = summary
+    client.summarize_paper.return_value = (summary, UNCOUNTED)
     return client
 
 

@@ -4,8 +4,10 @@ Ollama/Qwen interface for summarization.
 
 import requests
 import json
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple
 import logging
+
+from .tokens import UNCOUNTED, TokenUsage, from_ollama
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +59,8 @@ class OllamaClient:
             return False
         return True
 
-    def generate(self, prompt: str, context: Optional[str] = None) -> Optional[str]:
+    def generate(self, prompt: str, context: Optional[str] = None
+                 ) -> Tuple[Optional[str], TokenUsage]:
         """
         Generate text using Ollama.
 
@@ -66,7 +69,10 @@ class OllamaClient:
             context: Optional context/document text
 
         Returns:
-            Generated text, or None if failed
+            (generated text, what the call cost). The text is None if the call
+            failed. Ollama does not always report counts, so the usage may be
+            uncounted even on success — uncounted means unknown, not free
+            (M1.A.1).
         """
         full_prompt = prompt
         if context:
@@ -84,18 +90,18 @@ class OllamaClient:
             response.raise_for_status()
 
             result = response.json()
-            return result.get("response", "").strip()
+            return result.get("response", "").strip(), from_ollama(result)
 
         except requests.RequestException as e:
             logger.error(f"Ollama generation failed: {e}")
-            return None
+            return None, UNCOUNTED
 
     def summarize_paper(
         self,
         abstract: str,
         full_text: str,
         max_findings: int = 3,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Tuple[Optional[Dict[str, Any]], TokenUsage]:
         """
         Summarize a paper using Qwen.
 
@@ -128,9 +134,9 @@ Brief description of the research methods used.
 CONCLUSIONS:
 Brief description of the conclusions and implications."""
 
-        response = self.generate(prompt)
+        response, usage = self.generate(prompt)
         if not response:
-            return None
+            return None, usage
 
         # Parse response
         try:
@@ -158,11 +164,13 @@ Brief description of the conclusions and implications."""
                 elif section.startswith("CONCLUSIONS:"):
                     result["conclusions"] = section.replace("CONCLUSIONS:", "").strip()
 
-            return result
+            return result, usage
 
         except Exception as e:
+            # The model ran and was billed; the tokens are reported even though
+            # the text could not be parsed (M1.B.3).
             logger.error(f"Failed to parse summarization response: {e}")
-            return None
+            return None, usage
 
 
 class MockOllamaClient(OllamaClient):
@@ -172,17 +180,18 @@ class MockOllamaClient(OllamaClient):
         """Always returns True for testing."""
         return True
 
-    def generate(self, prompt: str, context: Optional[str] = None) -> Optional[str]:
-        """Return mock response."""
-        return "This is a mock response for testing."
+    def generate(self, prompt: str, context: Optional[str] = None
+                 ) -> Tuple[Optional[str], TokenUsage]:
+        """Return mock response. No model ran, so nothing is counted."""
+        return "This is a mock response for testing.", UNCOUNTED
 
     def summarize_paper(
         self,
         abstract: str,
         full_text: str,
         max_findings: int = 3,
-    ) -> Optional[Dict[str, Any]]:
-        """Return mock summary."""
+    ) -> Tuple[Optional[Dict[str, Any]], TokenUsage]:
+        """Return mock summary. No model ran, so nothing is counted."""
         return {
             "key_findings": [
                 "Mock finding 1 from the abstract",
@@ -191,4 +200,4 @@ class MockOllamaClient(OllamaClient):
             ],
             "methodology": "Mock methodology description based on the paper text.",
             "conclusions": "Mock conclusions and implications inferred from the paper.",
-        }
+        }, UNCOUNTED

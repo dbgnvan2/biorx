@@ -235,7 +235,10 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
 
             job.phase = f"Summarizing with {resolved.provider}"
             provider_called = True
-            summary = resolved.client.summarize_paper(abstract, full_text)
+            summary, usage = resolved.client.summarize_paper(abstract, full_text)
+            # Recorded before the validation below: a reply the model was
+            # billed for still cost tokens even when it is unusable (M1.B.3).
+            job.token_usage = usage
 
             # OllamaClient returns None on failure while the hosted clients
             # raise; normalise here so the route has one contract (P22).

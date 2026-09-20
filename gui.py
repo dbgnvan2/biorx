@@ -1355,7 +1355,7 @@ class DiscoverTermsWorker(QObject):
             self.finished.emit(self._papers_fallback(papers))
             return
 
-        result = resolved.client.generate(prompt)
+        result, _usage = resolved.client.generate(prompt)
         if not result:
             logger.warning("Discover Terms: LLM (%s) returned empty response", resolved.provider)
             self.status.emit(f"LLM ({resolved.provider}) returned no response — showing papers.")

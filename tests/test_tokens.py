@@ -1,0 +1,231 @@
+"""
+Tests for M1.A — every provider reports what its call cost, and no caller
+throws that away.
+
+Spec: docs/implementation_plan_2026-09-20_references_batch.md#M1.A
+"""
+
+import json
+import re
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import pytest
+
+from src.llm_providers import AnthropicClient, DeepSeekClient
+from src.llm import OllamaClient
+from src.tokens import (UNCOUNTED, TokenUsage, from_anthropic, from_ollama,
+                        from_openai_style)
+
+SUMMARY_JSON = {"key_findings": ["f"], "methodology": "m", "conclusions": "c"}
+
+
+def _ds_response(body, usage=None):
+    """A DeepSeek (OpenAI-dialect) response body, with or without usage."""
+    payload = {"choices": [{"message": {"content": body}}]}
+    if usage is not None:
+        payload["usage"] = usage
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.ok = True
+    resp.json.return_value = payload
+    return resp
+
+
+def _anthropic_message(body, usage=None):
+    block = MagicMock()
+    block.type = "text"
+    block.text = body
+    msg = MagicMock()
+    msg.content = [block]
+    msg.stop_reason = "end_turn"
+    msg.usage = usage
+    return msg
+
+
+# ── M1.A.1: each provider's usage is read in its own dialect ──────────────────
+
+def test_m1a1_each_provider_reports_its_usage():
+    """The three dialects name these fields differently; each is read correctly
+    and lands in the same TokenUsage shape."""
+    deepseek = from_openai_style(
+        {"usage": {"prompt_tokens": 1200, "completion_tokens": 300,
+                   "total_tokens": 1500}}, "DeepSeek")
+    assert (deepseek.prompt, deepseek.completion, deepseek.total) == (1200, 300, 1500)
+    assert deepseek.counted
+
+    anthropic = from_anthropic(_anthropic_message(
+        "x", usage=MagicMock(input_tokens=1000, output_tokens=250,
+                             cache_creation_input_tokens=0,
+                             cache_read_input_tokens=0)))
+    assert (anthropic.prompt, anthropic.completion, anthropic.total) == (1000, 250, 1250)
+    assert anthropic.counted
+
+    ollama = from_ollama({"prompt_eval_count": 800, "eval_count": 120})
+    assert (ollama.prompt, ollama.completion, ollama.total) == (800, 120, 920)
+    assert ollama.counted
+
+
+def test_m1a1_anthropic_counts_cached_tokens_as_prompt_tokens():
+    """input_tokens excludes tokens served from or written to the prompt cache.
+    Counting only input_tokens would under-report a cached call — the same
+    paper would look cheaper on a second run than it was."""
+    usage = from_anthropic(_anthropic_message("x", usage=MagicMock(
+        input_tokens=200, output_tokens=50,
+        cache_creation_input_tokens=1000, cache_read_input_tokens=4000)))
+    assert usage.prompt == 5200          # 200 + 1000 + 4000, not 200
+    assert usage.total == 5250
+
+
+@pytest.mark.parametrize("payload", [
+    {},                                        # no usage block at all
+    {"usage": None},                           # present but null
+    {"usage": {}},                             # present but empty
+    {"usage": {"prompt_tokens": None, "completion_tokens": None}},
+    {"usage": {"prompt_tokens": "1200"}},      # a string, not a count
+    {"usage": {"prompt_tokens": -5}},          # negative
+    {"usage": {"prompt_tokens": True}},        # bool is an int subclass
+])
+def test_m1a1_missing_usage_is_not_zero(payload):
+    """A provider that says nothing usable gives an UNCOUNTED result. This is
+    the distinction the whole module exists for: `counted=False` means unknown.
+    A counted zero would be a false record, and a meter adding it would
+    under-report silently (P2)."""
+    usage = from_openai_style(payload, "DeepSeek")
+    assert usage.counted is False
+    assert (usage.prompt, usage.completion, usage.total) == (0, 0, 0)
+
+
+def test_m1a1_ollama_without_counts_is_uncounted():
+    """Ollama omits these on some model/version combinations."""
+    assert from_ollama({"response": "text"}).counted is False
+    assert from_anthropic(_anthropic_message("x", usage=None)).counted is False
+
+
+def test_m1a1_a_partial_report_is_still_counted():
+    """One of the two counts present is a real, if incomplete, report — better
+    recorded as what it is than discarded."""
+    usage = from_openai_style({"usage": {"prompt_tokens": 900}}, "DeepSeek")
+    assert usage.counted and usage.prompt == 900 and usage.completion == 0
+
+
+def test_m1a1_summing_an_uncounted_call_does_not_look_complete():
+    """Adding an unknown to a known total must not present the sum as the whole
+    truth, or a batch containing one uncounted call reads as fully measured."""
+    known = TokenUsage(prompt=100, completion=10, total=110, counted=True)
+    assert (known + known).counted is True
+    assert (known + known).total == 220
+    assert (known + UNCOUNTED).counted is False
+    assert (known + UNCOUNTED).total == 110      # the known part is still kept
+
+
+# ── M1.A.1: the clients return the pair, end to end ───────────────────────────
+
+def test_m1a1_deepseek_client_returns_text_and_usage():
+    client = DeepSeekClient(api_key="k")
+    response = _ds_response(json.dumps(SUMMARY_JSON),
+                            usage={"prompt_tokens": 7000, "completion_tokens": 400,
+                                   "total_tokens": 7400})
+    with patch("src.llm_providers.requests.post", return_value=response):
+        summary, usage = client.summarize_paper("abstract", "text")
+    assert summary["conclusions"] == "c"
+    assert (usage.prompt, usage.completion, usage.counted) == (7000, 400, True)
+
+
+def test_m1a1_anthropic_client_returns_text_and_usage():
+    client = AnthropicClient(api_key="k")
+    sdk = MagicMock()
+    sdk.messages.create.return_value = _anthropic_message(
+        json.dumps(SUMMARY_JSON),
+        usage=MagicMock(input_tokens=6000, output_tokens=350,
+                        cache_creation_input_tokens=0, cache_read_input_tokens=0))
+    with patch.object(AnthropicClient, "_client", return_value=sdk):
+        summary, usage = client.summarize_paper("abstract", "text")
+    assert summary["conclusions"] == "c"
+    assert (usage.prompt, usage.completion, usage.counted) == (6000, 350, True)
+
+
+def test_m1a1_ollama_client_returns_text_and_usage():
+    client = OllamaClient()
+    resp = MagicMock()
+    resp.json.return_value = {"response": "hello", "prompt_eval_count": 500,
+                              "eval_count": 60}
+    resp.raise_for_status.return_value = None
+    with patch("src.llm.requests.post", return_value=resp):
+        text, usage = client.generate("prompt")
+    assert text == "hello"
+    assert (usage.prompt, usage.completion, usage.counted) == (500, 60, True)
+
+
+def test_m1a1_a_failed_ollama_call_is_uncounted_not_free():
+    """The request never reached the model, so there is nothing to report —
+    but the caller must still get the pair, not a bare None."""
+    import requests as _requests
+    with patch("src.llm.requests.post", side_effect=_requests.RequestException("down")):
+        text, usage = OllamaClient().generate("prompt")
+    assert text is None and usage.counted is False
+
+
+def test_m1b3_ollama_records_tokens_even_when_the_reply_cannot_be_parsed():
+    """The model ran and was billed. An unparseable reply loses the summary,
+    never the record of what it cost (M1.B.3)."""
+    resp = MagicMock()
+    resp.json.return_value = {"response": "not in the expected shape at all",
+                              "prompt_eval_count": 400, "eval_count": 30}
+    resp.raise_for_status.return_value = None
+    with patch("src.llm.requests.post", return_value=resp):
+        summary, usage = OllamaClient().summarize_paper("abstract", "text")
+    assert usage.counted and usage.prompt == 400
+
+
+# ── M1.A.2: no call site drops the usage ──────────────────────────────────────
+
+_CALLERS = [
+    ("src/llm_providers.py", r"self\.generate\("),
+    ("src/llm.py", r"self\.generate\("),
+    ("web/routes_discover.py", r"\.generate\("),
+    ("web/routes_summaries.py", r"\.summarize_paper\("),
+    ("agents/summarization_agent.py", r"\.summarize_paper\("),
+    ("gui.py", r"\.generate\("),
+]
+
+
+@pytest.mark.parametrize("path,pattern", _CALLERS)
+def test_m1a2_no_caller_discards_usage(path, pattern):
+    """Every call site unpacks both halves of the pair.
+
+    Without this, adding a call site that writes `text = client.generate(...)`
+    silently binds a tuple and the cost is never recorded — the failure mode
+    the pair-return exists to prevent, and one no runtime test would catch
+    because the code still 'works' (P25).
+    """
+    source = (Path(__file__).parent.parent / path).read_text()
+    calls = [line.strip() for line in source.splitlines()
+             if re.search(pattern, line) and "def " not in line
+             and not line.strip().startswith("#")]
+    assert calls, f"no call site found in {path} — did the pattern go stale?"
+    for line in calls:
+        assert re.search(r"^\s*\w+\s*,\s*\w+\s*=", line), (
+            f"{path}: this call drops the token usage: {line}"
+        )
+
+
+def test_m1a2_every_provider_client_returns_a_pair():
+    """A fourth provider added later must return the pair too. Asserting on the
+    annotation catches the one that does not, before it ships."""
+    import inspect
+    from src.llm import MockOllamaClient
+
+    for cls in (DeepSeekClient, AnthropicClient, OllamaClient, MockOllamaClient):
+        for method in ("generate", "summarize_paper"):
+            fn = getattr(cls, method, None)
+            if fn is None or method not in cls.__dict__:
+                continue          # inherited; checked on the class that defines it
+            annotation = inspect.signature(fn).return_annotation
+            assert "Tuple" in str(annotation), (
+                f"{cls.__name__}.{method} returns {annotation}, not a "
+                "(value, TokenUsage) pair"
+            )

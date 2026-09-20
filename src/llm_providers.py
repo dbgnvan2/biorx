@@ -28,10 +28,11 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from .tokens import TokenUsage, from_anthropic, from_openai_style
 from .llm_config import (
     ProviderConfig, default_provider, load_llm_config, max_text_chars,
     provider_config,
@@ -197,7 +198,14 @@ class DeepSeekClient:
         return bool(self.api_key)
 
     def generate(self, prompt: str, context: Optional[str] = None,
-                 json_schema: Optional[Dict[str, Any]] = None) -> str:
+                 json_schema: Optional[Dict[str, Any]] = None
+                 ) -> Tuple[str, TokenUsage]:
+        """The model's text and what the call cost (M1.A.1).
+
+        Returns a pair so no caller can use the text while forgetting the cost:
+        an optional out-parameter or a stashed attribute would both be dropped
+        silently the first time someone added a call site.
+        """
         if not self.api_key:
             raise NoLLMCredentialError("no DeepSeek API key")
 
@@ -257,19 +265,20 @@ class DeepSeekClient:
                 ) from e
 
             try:
-                return data["choices"][0]["message"]["content"]
+                content = data["choices"][0]["message"]["content"]
             except (KeyError, IndexError, TypeError) as e:
                 raise ProviderResponseError(
                     f"DeepSeek response had an unexpected shape: {str(data)[:200]}"
                 ) from e
+            return content, from_openai_style(data, "DeepSeek")
 
         raise ProviderUnavailableError(f"DeepSeek failed after {MAX_ATTEMPTS} attempts: {last_error}")
 
     def summarize_paper(self, abstract: str, full_text: str,
-                        max_findings: int = 3) -> Dict[str, Any]:
+                        max_findings: int = 3) -> Tuple[Dict[str, Any], TokenUsage]:
         prompt = _build_summary_prompt(abstract, full_text, self.max_chars, max_findings)
-        raw = self.generate(prompt, json_schema=SUMMARY_SCHEMA)
-        return _coerce_summary(_extract_json(raw))
+        raw, usage = self.generate(prompt, json_schema=SUMMARY_SCHEMA)
+        return _coerce_summary(_extract_json(raw)), usage
 
 
 # ── Anthropic (Messages API, official SDK) ────────────────────────────────────
@@ -301,7 +310,9 @@ class AnthropicClient:
         return bool(self.api_key)
 
     def generate(self, prompt: str, context: Optional[str] = None,
-                 json_schema: Optional[Dict[str, Any]] = None) -> str:
+                 json_schema: Optional[Dict[str, Any]] = None
+                 ) -> Tuple[str, TokenUsage]:
+        """The model's text and what the call cost (M1.A.1)."""
         client = self._client()
         kwargs: Dict[str, Any] = {
             "model": self.model,
@@ -332,15 +343,16 @@ class AnthropicClient:
             raise ProviderResponseError("Anthropic declined to answer this request")
 
         try:
-            return next(b.text for b in response.content if b.type == "text")
+            text = next(b.text for b in response.content if b.type == "text")
         except StopIteration as e:
             raise ProviderResponseError("Anthropic returned no text block") from e
+        return text, from_anthropic(response)
 
     def summarize_paper(self, abstract: str, full_text: str,
-                        max_findings: int = 3) -> Dict[str, Any]:
+                        max_findings: int = 3) -> Tuple[Dict[str, Any], TokenUsage]:
         prompt = _build_summary_prompt(abstract, full_text, self.max_chars, max_findings)
-        raw = self.generate(prompt, json_schema=SUMMARY_SCHEMA)
-        return _coerce_summary(_extract_json(raw))
+        raw, usage = self.generate(prompt, json_schema=SUMMARY_SCHEMA)
+        return _coerce_summary(_extract_json(raw)), usage
 
 
 # ── The resolver ──────────────────────────────────────────────────────────────
