@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-20 — Saved References: Select All, and Save as CSV/RTF/PDF
+
+Plan: `docs/implementation_plan_2026-09-20_references_batch.md` (M2, M6).
+
+### Added
+- **Select All on the Saved References tab.** One box in the table header ticks
+  or clears every paper in the list, and shows the mixed state when only some
+  are ticked, so it never claims a whole-list selection that is not there.
+- **Save Reference List**, replacing Export CSV, with a format choice: CSV for
+  a spreadsheet, RTF for Word or Pages, or PDF. Ticked papers only when any are
+  ticked, the whole list otherwise. The file is named after the list.
+
+### Changed
+- The saved file is named after the list rather than `references.csv`.
+- `GET /api/references/{id}/export.csv` still works — it is a plain URL someone
+  may have bookmarked — and now renders through the same code as the new
+  endpoint, so the two cannot drift.
+
+### Notes
+- RTF is written directly, with no new dependency. Greek letters, accents,
+  curly quotes, braces and backslashes in titles are escaped and verified to
+  round-trip through the system RTF reader that TextEdit and Pages use.
+- Spreadsheet formula injection is defused in all three formats, not only CSV:
+  text copied out of a PDF into a spreadsheet is just as live.
+
 ## 2026-09-20 — token accounting, and a session meter
 
 Gate: `docs/cycles/2026-09-20_token-capture-qa-gate.md` (REJECTED twice, then

@@ -314,7 +314,8 @@
 
           <table>
             <thead><tr>
-              <th style="width:2%"></th>
+              <th style="width:2%"><input id="select-all-refs" type="checkbox"
+                     title="Select all papers in this list"></th>
               <th style="width:50%">Title</th><th>Authors</th><th>Date</th><th>Source</th><th></th>
             </tr></thead>
             <tbody id="ref-papers-body"></tbody>
@@ -326,7 +327,13 @@
             <span class="spacer"></span>
             <button id="btn-ref-dl-selected" class="small">⬇ Download selected PDFs</button>
             <button id="btn-ref-dl-all" class="small">⬇ Download all PDFs</button>
-            <button id="btn-ref-export-csv" class="small">Export CSV</button>
+            <label class="shrink small source-pick" style="margin:0">
+              <select id="ref-save-format" style="width:auto">
+                <option value="csv">CSV (spreadsheet)</option>
+                <option value="rtf">RTF (Word, Pages)</option>
+                <option value="pdf">PDF</option>
+              </select></label>
+            <button id="btn-ref-save-list" class="small">Save Reference List</button>
             <button id="btn-ref-export-summaries" class="small">Save summaries (PDF)</button>
           </div>
           <div id="ref-dl-status" class="muted small hidden" style="margin-top:4px"></div>

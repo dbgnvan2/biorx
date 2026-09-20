@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
-from src import safe_fetch, user_store
+from src import reference_export, safe_fetch, user_store
 from src.paper_meta import pdf_url as _pdf_url_from_paper
 
 from .auth import current_user, get_context
@@ -111,39 +111,58 @@ def remove_reference_item(list_id: int, item_id: int,
     return {"ok": True}
 
 
+@router.get("/api/references/{list_id}/save")
+def save_list(list_id: int, format: str = "csv",
+              item_ids: Optional[str] = None,
+              ctx: AppContext = Depends(get_context),
+              user_id: str = Depends(current_user)):
+    """Download this reference list as CSV, RTF or PDF (M6.A.1).
+
+    item_ids selects a subset; omitted means the whole list, which is what the
+    Select All box ticks. An unknown format is refused rather than quietly
+    served as CSV — handing someone a different file type than they asked for
+    is worse than an error.
+    """
+    ref_list = _get_list_or_404(ctx, user_id, list_id)
+    items = user_store.list_reference_items(ctx.db, list_id)
+
+    wanted = _parse_item_ids(item_ids)
+    if wanted is not None:
+        items = [i for i in items if i.get("item_id") in wanted]
+
+    try:
+        body, media_type, extension = reference_export.render(
+            format, items, _pdf_url_from_paper, ref_list.get("name", ""))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=str(e)) from e
+
+    safe_name = reference_export.safe_filename(ref_list.get("name", "references"))
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={"Content-Disposition":
+                 f'attachment; filename="{safe_name}.{extension}"'},
+    )
+
+
 @router.get("/api/references/{list_id}/export.csv")
 def export_csv(list_id: int,
                ctx: AppContext = Depends(get_context),
                user_id: str = Depends(current_user)):
-    """Download this reference list as a CSV file."""
+    """Download this reference list as a CSV file.
+
+    Kept working alongside /save: it is a plain URL someone may have
+    bookmarked. It renders through the same code, so the two cannot drift.
+    """
     ref_list = _get_list_or_404(ctx, user_id, list_id)
     items = user_store.list_reference_items(ctx.db, list_id)
-
-    buf = io.StringIO()
-    writer = csv.writer(buf, quoting=csv.QUOTE_ALL)
-    writer.writerow(["Title", "Authors", "Date", "DOI", "Source", "PDF URL"])
-
-    for item in items:
-        p = item.get("paper", item)
-        title = p.get("title", "")
-        authors = p.get("authors", "")
-        date = p.get("pub_date", "")
-        doi = p.get("doi", "")
-        source = p.get("source", p.get("server", ""))
-        url = _pdf_url_from_paper(p) or ""
-
-        # Prevent formula injection in spreadsheet apps (P-equivalent: CSV safety)
-        def _safe_cell(v: str) -> str:
-            v = str(v)
-            return "'" + v if v and v[0] in ("=", "+", "-", "@", "\t", "\r") else v
-
-        writer.writerow([_safe_cell(title), _safe_cell(authors), _safe_cell(date),
-                         _safe_cell(doi), _safe_cell(source), _safe_cell(url)])
-
-    safe_name = _safe_filename(ref_list.get("name", "references"))
+    body, media_type, _ = reference_export.render(
+        "csv", items, _pdf_url_from_paper, ref_list.get("name", ""))
+    safe_name = reference_export.safe_filename(ref_list.get("name", "references"))
     return Response(
-        content=buf.getvalue(),
-        media_type="text/csv",
+        content=body,
+        media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{safe_name}.csv"'},
     )
 

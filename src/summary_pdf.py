@@ -49,6 +49,24 @@ def find_unicode_font() -> Optional[str]:
     return None
 
 
+def register_unicode_font(pdf, font_path: Optional[str] = None) -> tuple:
+    """Register the Unicode font on an FPDF and return (family, font_path).
+
+    Shared with src/reference_export.py: both documents need a Unicode font for
+    the same reason (paper titles carry Greek, accents and dashes), and one of
+    them quietly replacing those characters while the other showed them would
+    be worse than either behaviour alone (P5).
+
+    font_path None means "look for one"; a caller that already resolved it, or
+    that is deliberately testing the no-font path, passes it in.
+    """
+    resolved = font_path if font_path is not None else find_unicode_font()
+    if resolved:
+        pdf.add_font("Body", "", resolved)
+        return "Body", resolved
+    return "Helvetica", None
+
+
 def _latin1(value: str) -> tuple:
     """(text a core font can show, number of characters replaced)."""
     out = value.encode("latin-1", errors="replace").decode("latin-1")
@@ -164,11 +182,7 @@ def build_summaries_pdf(list_name: str, items: List[Dict[str, Any]],
     pdf = FPDF(format="A4")
     pdf.set_margins(18, 18, 18)
     pdf.set_auto_page_break(True, margin=18)
-    if font_path:
-        pdf.add_font("Body", "", font_path)
-        family = "Body"
-    else:
-        family = "Helvetica"
+    family, _ = register_unicode_font(pdf, font_path)
     pdf.add_page()
     for block in cover + body:
         if block is None:

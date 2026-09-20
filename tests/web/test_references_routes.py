@@ -71,6 +71,83 @@ def _add(signed_in, ctx, list_id, paper):
     return pid, item_id
 
 
+# ── M6: Save Reference List ───────────────────────────────────────────────────
+
+@pytest.mark.parametrize("fmt,content_type,magic", [
+    ("csv", "text/csv", b'"Title"'),
+    ("rtf", "application/rtf", b"{\\rtf1"),
+    ("pdf", "application/pdf", b"%PDF-"),
+])
+def test_m6a1_save_serves_each_format(signed_in, ctx, fmt, content_type, magic):
+    list_id = signed_in.post("/api/references", json={"name": "Saveable"}).json()["id"]
+    _add(signed_in, ctx, list_id, PAPER)
+
+    r = signed_in.get(f"/api/references/{list_id}/save?format={fmt}")
+    assert r.status_code == 200
+    assert content_type in r.headers["content-type"]
+    assert r.content.startswith(magic)
+    assert f'filename="Saveable.{fmt}"' in r.headers["content-disposition"]
+
+
+def test_m6a1_an_unknown_format_is_refused(signed_in, ctx):
+    """400, not a CSV in disguise."""
+    list_id = signed_in.post("/api/references", json={"name": "Saveable"}).json()["id"]
+    r = signed_in.get(f"/api/references/{list_id}/save?format=docx")
+    assert r.status_code == 400
+
+
+def test_m6a1_save_defaults_to_the_whole_list(signed_in, ctx):
+    """No item_ids means every paper — what Select All ticks, and what a user
+    who ticked nothing expects."""
+    list_id = signed_in.post("/api/references", json={"name": "Whole"}).json()["id"]
+    _add(signed_in, ctx, list_id, PAPER)
+    _add(signed_in, ctx, list_id, dict(PAPER, doi="10.9/second",
+                                       canonical_id="doi:10.9/second",
+                                       title="The second paper"))
+
+    text = signed_in.get(f"/api/references/{list_id}/save?format=csv").text
+    assert PAPER["title"] in text and "The second paper" in text
+
+
+def test_m6a1_save_can_take_a_subset(signed_in, ctx):
+    """The ticked papers only — and the ones left out really are left out."""
+    list_id = signed_in.post("/api/references", json={"name": "Subset"}).json()["id"]
+    _, first = _add(signed_in, ctx, list_id, PAPER)
+    _add(signed_in, ctx, list_id, dict(PAPER, doi="10.9/second",
+                                       canonical_id="doi:10.9/second",
+                                       title="The second paper"))
+
+    text = signed_in.get(
+        f"/api/references/{list_id}/save?format=csv&item_ids={first}").text
+    assert PAPER["title"] in text
+    assert "The second paper" not in text
+
+
+def test_m6a1_save_is_per_user(app, signed_in, other_client, ctx):
+    """Another account's list is a 404 — not a 403, which would confirm it
+    exists — whatever format is asked for."""
+    from tests.web.conftest import ACCESS_CODE, account_body
+    other_client.post("/api/session", json=account_body(ACCESS_CODE))
+    list_id = signed_in.post("/api/references", json={"name": "Mine"}).json()["id"]
+    _add(signed_in, ctx, list_id, PAPER)
+
+    for fmt in ("csv", "rtf", "pdf"):
+        r = other_client.get(f"/api/references/{list_id}/save?format={fmt}")
+        assert r.status_code == 404, fmt
+
+
+def test_m6a1_the_old_csv_endpoint_still_works(signed_in, ctx):
+    """It is a plain URL someone may have bookmarked, and it now renders
+    through the same code as /save, so the two cannot drift."""
+    list_id = signed_in.post("/api/references", json={"name": "Bookmarked"}).json()["id"]
+    _add(signed_in, ctx, list_id, PAPER)
+
+    old = signed_in.get(f"/api/references/{list_id}/export.csv")
+    new = signed_in.get(f"/api/references/{list_id}/save?format=csv")
+    assert old.status_code == 200
+    assert old.text == new.text, "the two CSV paths have drifted"
+
+
 # ── Items ─────────────────────────────────────────────────────────────────────
 
 def test_add_and_list_item(signed_in, ctx):

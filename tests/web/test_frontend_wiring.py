@@ -134,6 +134,7 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/me",
         "/api/me/llm-key",
         "/api/usage/session",
+        "/api/references/{param}/save",
         "/api/me/llm-model",
         "/api/filters",
         "/api/filters/{param}",
@@ -151,7 +152,6 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/references/{param}",
         "/api/references/{param}/items",
         "/api/references/{param}/items/{param}",
-        "/api/references/{param}/export.csv",
         "/api/references/{param}/summaries",
         "/api/references/{param}/summaries.pdf",
         "/api/references/{param}/pdf/{param}",
@@ -734,6 +734,120 @@ def test_m1c2_a_failed_meter_read_does_not_disturb_the_page():
     assert "notice(" not in body, "a failed meter read must not shout at the user"
 
 
+# ── M2: Select All on the References tab ──────────────────────────────────────
+
+_REF_SELECT_HARNESS = r"""
+function mkBox(id, checked) {
+  return { type: "checkbox", checked: !!checked, dataset: { itemId: String(id) } };
+}
+const rows = [mkBox(1), mkBox(2), mkBox(3)];
+const els = {
+  "ref-papers-body": {
+    querySelectorAll: (sel) => sel.includes(":checked")
+      ? rows.filter(r => r.checked) : rows,
+  },
+  "ref-checked-count": { textContent: "" },
+  "select-all-refs": { checked: false, indeterminate: false },
+};
+const $ = (id) => els[id];
+"""
+
+
+def _ref_select_eval(body):
+    return _node_eval([_REF_SELECT_HARNESS,
+                       _js_block(r"function updateRefCheckedCount\(\) \{.*?\n\}"),
+                       _js_block(r"function toggleSelectAllRefs\(checked\) \{.*?\n\}")],
+                      body)
+
+
+def test_m2a1_select_all_refs_toggles_every_row():
+    got = _ref_select_eval("""(() => {
+      toggleSelectAllRefs(true);
+      const allOn = rows.every(r => r.checked);
+      toggleSelectAllRefs(false);
+      const allOff = rows.every(r => !r.checked);
+      return { allOn, allOff };
+    })()""")
+    assert got == {"allOn": True, "allOff": True}
+
+
+def test_m2a1_partial_selection_is_indeterminate():
+    """The header box must not claim a whole-list selection that is not there:
+    with some rows ticked it shows the mixed state, not a tick."""
+    got = _ref_select_eval("""(() => {
+      rows[0].checked = true;
+      updateRefCheckedCount();
+      const partial = { checked: $("select-all-refs").checked,
+                        indeterminate: $("select-all-refs").indeterminate,
+                        label: $("ref-checked-count").textContent };
+      rows.forEach(r => r.checked = true);
+      updateRefCheckedCount();
+      const full = { checked: $("select-all-refs").checked,
+                     indeterminate: $("select-all-refs").indeterminate,
+                     label: $("ref-checked-count").textContent };
+      rows.forEach(r => r.checked = false);
+      updateRefCheckedCount();
+      const none = { checked: $("select-all-refs").checked,
+                     indeterminate: $("select-all-refs").indeterminate };
+      return { partial, full, none };
+    })()""")
+    assert got["partial"] == {"checked": False, "indeterminate": True,
+                              "label": "1 selected"}
+    assert got["full"] == {"checked": True, "indeterminate": False,
+                           "label": "3 selected"}
+    assert got["none"] == {"checked": False, "indeterminate": False}
+
+
+def test_m2a2_count_matches_the_selection():
+    got = _ref_select_eval("""(() => {
+      toggleSelectAllRefs(true);
+      return $("ref-checked-count").textContent;
+    })()""")
+    assert got == "3 selected"
+
+
+def test_m2a1_select_all_is_in_the_references_table_header():
+    html = INDEX.read_text()
+    panel = re.search(r'<div id="panel-references".*?</div><!-- /panel-references -->',
+                      html, re.DOTALL)
+    assert panel, "the References panel was not found"
+    assert 'id="select-all-refs"' in panel.group(0)
+
+
+# ── M6: Save Reference List, with a format choice ─────────────────────────────
+
+def test_m6a4_save_button_offers_three_formats():
+    """The renamed control, and every format the server accepts."""
+    html = INDEX.read_text()
+    assert 'id="btn-ref-save-list"' in html
+    assert ">Save Reference List<" in html
+    for fmt in ("csv", "rtf", "pdf"):
+        assert f'value="{fmt}"' in html, fmt
+    # The control it replaces is gone, deliberately (ui-regression rule 2).
+    assert 'id="btn-ref-export-csv"' not in html
+
+
+def test_m6a4_saving_sends_the_chosen_format_and_the_ticked_papers():
+    code = _js_without_comments()
+    body = re.search(r"async function saveRefList\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "format=${encodeURIComponent(format)}" in body
+    assert "item_ids=" in body
+    # Nothing ticked means the whole list, the same rule the Search tab uses.
+    assert "ticked.length" in body
+
+
+@pytest.mark.parametrize("name,fmt,expected", [
+    ("Maternal stress", "csv", "Maternal_stress.csv"),
+    ("Σ weird: name", "pdf", "weird_name.pdf"),
+    ("", "rtf", "references.rtf"),
+])
+def test_m6a5_saved_file_is_named_after_the_list(name, fmt, expected):
+    """A folder of "references.csv (3)" is unusable."""
+    got = _node_eval([_js_block(r"function savedListFileName\(listName, format\) \{.*?\n\}")],
+                     f"savedListFileName({name!r}, {fmt!r})")
+    assert got == expected
+
+
 def test_e2_manual_search_card_is_called_ad_hoc_search():
     """E2: the manual search card is Ad Hoc Search, told apart from running a
     saved filter."""
@@ -1066,7 +1180,7 @@ def test_downloads_handle_sign_out_and_network_errors():
     assert "Could not reach the server" in api
     raw = api[api.index("opts.raw"):]
     assert "showGate(detail)" in raw[:600]
-    for fn in ("saveSummariesPdf", "exportRefSummariesPdf", "exportRefCsv"):
+    for fn in ("saveSummariesPdf", "exportRefSummariesPdf", "saveRefList"):
         body = re.search(rf"async function {fn}\(\) \{{.*?\n\}}", code, re.DOTALL).group(0)
         assert "catch (e)" in body and "resp.status === 401" in body, fn
 

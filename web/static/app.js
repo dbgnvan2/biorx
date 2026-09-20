@@ -1976,9 +1976,28 @@ function renderRefItems() {
 }
 
 function updateRefCheckedCount() {
-  const checked = $("ref-papers-body")
-    ? $("ref-papers-body").querySelectorAll("input:checked").length : 0;
+  const boxes = $("ref-papers-body")
+    ? Array.from($("ref-papers-body").querySelectorAll("input[data-item-id]")) : [];
+  const checked = boxes.filter(cb => cb.checked).length;
   $("ref-checked-count").textContent = `${checked} selected`;
+  // M2.A.1: the header box mirrors the rows — ticked when all are, cleared when
+  // none are, and indeterminate in between, so it never claims a whole-list
+  // selection that is not there.
+  const all = $("select-all-refs");
+  if (all) {
+    all.checked = boxes.length > 0 && checked === boxes.length;
+    all.indeterminate = checked > 0 && checked < boxes.length;
+  }
+}
+
+/* M2.A.1: tick or clear every paper in the list. The References table renders
+   the whole list — it is not paginated — so "all" here really is all of it,
+   which is what the count then reports. */
+function toggleSelectAllRefs(checked) {
+  const body = $("ref-papers-body");
+  if (!body) return;
+  for (const cb of body.querySelectorAll("input[data-item-id]")) cb.checked = checked;
+  updateRefCheckedCount();
 }
 
 async function newRefList() {
@@ -2115,21 +2134,68 @@ async function exportRefSummariesPdf() {
   $("ref-dl-status").textContent = "Summaries PDF downloaded.";
 }
 
-async function exportRefCsv() {
+/* M6.A.5: the saved file is named after the list, not "references". The server
+   sends the name in Content-Disposition; this is the fallback for when the
+   browser does not use it. Pure, for the node-run test. */
+function savedListFileName(listName, format) {
+  const stem = String(listName || "")
+    .replace(/[^\w\s-]/g, "")
+    .replace(/[-\s]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 60);
+  return `${stem || "references"}.${format}`;
+}
+
+/* M6: save the open list as CSV, RTF or PDF. Ticked papers only when any are
+   ticked, the whole list otherwise — the same rule the Search tab's save uses,
+   so "save" never quietly means something different on the two screens. */
+async function saveRefList() {
   if (!state.activeListId) return;
+  const format = $("ref-save-format").value || "csv";
+  const ticked = Array.from(
+    $("ref-papers-body").querySelectorAll("input[data-item-id]:checked"))
+    .map(cb => cb.dataset.itemId);
+
+  const idsParam = ticked.length
+    ? `&item_ids=${encodeURIComponent(ticked.join(","))}` : "";
+
+  const status = $("ref-dl-status");
+  status.classList.remove("hidden");
+  status.textContent = ticked.length
+    ? `Saving ${ticked.length} selected as ${format.toUpperCase()}…`
+    : `Saving the whole list as ${format.toUpperCase()}…`;
+
   let resp;
   try {
-    resp = await api("GET", `/api/references/${state.activeListId}/export.csv`, undefined, { raw: true });
-  } catch (e) { notice(`Export failed: ${e.message}`); return; }
+    resp = await api("GET",
+      `/api/references/${state.activeListId}/save?format=${encodeURIComponent(format)}${idsParam}`,
+      undefined, { raw: true });
+  }
+  catch (e) { status.textContent = `Save failed: ${e.message}`; return; }
   if (resp.status === 401) return;          // api() has shown the sign-in page
-  if (!resp.ok) { notice(`Export failed: ${resp.status}`); return; }
+  if (!resp.ok) {
+    let detail = `${resp.status}`;
+    try { detail = (await resp.json()).detail || detail; } catch (e) {}
+    status.textContent = `Save failed: ${detail}`;
+    return;
+  }
   const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "references.csv";
+  a.download = savedListFileName(refListName(), format);
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
+  status.textContent = ticked.length
+    ? `Saved ${ticked.length} of ${state.refItems.length} as ${format.toUpperCase()}.`
+    : `Saved ${state.refItems.length} paper(s) as ${format.toUpperCase()}.`;
+}
+
+/* The open list's name, for the download filename. */
+function refListName() {
+  const list = (state.refLists || []).find(
+    l => String(l.id) === String(state.activeListId));
+  return list ? list.name : "";
 }
 
 /* ── Wiring ──────────────────────────────────────────────────────────────── */
@@ -2225,7 +2291,9 @@ function wire() {
   $("btn-ref-remove-selected").addEventListener("click", removeRefSelected);
   $("btn-ref-dl-selected").addEventListener("click", () => downloadRefPdfs(true));
   $("btn-ref-dl-all").addEventListener("click", () => downloadRefPdfs(false));
-  $("btn-ref-export-csv").addEventListener("click", exportRefCsv);
+  $("btn-ref-save-list").addEventListener("click", saveRefList);
+  $("select-all-refs").addEventListener("change",
+    (e) => toggleSelectAllRefs(e.target.checked));
   $("btn-ref-export-summaries").addEventListener("click", exportRefSummariesPdf);
 
   // Settings tab
