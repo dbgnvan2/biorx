@@ -52,6 +52,7 @@ const state = {
   searchRunning: false,       // a search job is in flight (any Run button)
   pollFailures: 0,            // consecutive failed status checks this run
   filterRun: null,            // {id, status} of the last saved-filter run (FR4)
+  searchFilters: [],          // saved filters behind the Select Filter dropdown
   results: [],
   checkedPapers: new Set(),   // canonical_ids of checked search results
   summarizing: new Set(),     // paperKey()s with a summary in progress
@@ -616,36 +617,45 @@ function populateSelect(selectId, options) {
   }
 }
 
+/* E2: the saved filters are a Select Filter dropdown, not a list that grows
+   without end. The selection survives a rebuild of the list (a filter saved on
+   the Filters tab) as long as that filter still exists. */
 async function loadSearchFilters() {
   populateCategorySelect("search-category");
-  const list = $("search-filter-list");
-  list.textContent = "";
+  const sel = $("search-filter-select");
+  const previous = sel.value;
+  sel.textContent = "";
   let filters = [];
   try { filters = (await api("GET", "/api/filters")).filters; }
   catch (e) { notice(e.message); return; }
 
+  state.searchFilters = filters;
   if (!filters.length) {
-    const li = document.createElement("li");
-    li.className = "muted small";
-    li.textContent = "No saved filters yet.";
-    list.appendChild(li);
-    return;
-  }
-  for (const filter of filters) {
-    const li = document.createElement("li");
-    const name = document.createElement("span");
-    name.className = "name";
-    name.textContent = filter.name;
-    const run = document.createElement("button");
-    run.dataset.filterId = filter.id;
-    run.addEventListener("click", () => {
-      state.searchLabel = filter.name;
-      startSearch({ filter_id: filter.id });
-    });
-    li.append(name, run);
-    list.appendChild(li);
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "No saved filters yet";
+    sel.appendChild(opt);
+    sel.value = "";
+  } else {
+    for (const filter of filters) {
+      const opt = document.createElement("option");
+      opt.value = String(filter.id);
+      opt.textContent = filter.name;
+      sel.appendChild(opt);
+    }
+    const keep = filters.some((f) => String(f.id) === previous);
+    sel.value = keep ? previous : String(filters[0].id);
   }
   renderFilterRunButtons();
+}
+
+/* Run the filter picked in the dropdown. */
+function runSelectedFilter() {
+  const id = $("search-filter-select").value;
+  if (!id) return;
+  const filter = (state.searchFilters || []).find((f) => String(f.id) === String(id));
+  state.searchLabel = filter ? filter.name : "";
+  return startSearch({ filter_id: Number(id) });
 }
 
 /* FR4: the label a saved filter's Run button shows. "Done" only for a run that
@@ -658,13 +668,15 @@ function filterRunLabel(filterId, run) {
     || "Run";
 }
 
-/* Apply state to every saved-filter Run button. Called on each state change
-   and after the list is rebuilt, so a re-render keeps the label (FR4.3). */
+/* Apply state to the Run button beside the Select Filter dropdown. Called on
+   each state change, after the list is rebuilt, and when the selection changes,
+   so the label always describes the filter now picked (FR4.3). */
 function renderFilterRunButtons() {
-  for (const btn of $("search-filter-list").querySelectorAll("button[data-filter-id]")) {
-    btn.textContent = filterRunLabel(btn.dataset.filterId, state.filterRun);
-    btn.disabled = state.searchRunning;
-  }
+  const sel = $("search-filter-select");
+  const btn = $("btn-run-filter");
+  btn.textContent = filterRunLabel(sel.value, state.filterRun);
+  btn.disabled = state.searchRunning || !sel.value;
+  sel.disabled = state.searchRunning;
 }
 
 /* One failed status check is not a failed job: it is still running on the
@@ -2086,6 +2098,8 @@ function wire() {
     $("search-days-wrap").classList.toggle("hidden", on);
     $("search-date-range-wrap").classList.toggle("hidden", !on);
   });
+  $("search-filter-select").addEventListener("change", renderFilterRunButtons);
+  $("btn-run-filter").addEventListener("click", runSelectedFilter);
   $("run-search").addEventListener("click", () => {
     state.searchLabel = $("q-both").value;
     startSearch({ filter: manualFilter() });

@@ -642,8 +642,35 @@ def test_rn1_labels_match_the_desktop():
     html = INDEX.read_text().replace("&amp;", "&")
     web_tabs = re.findall(r'<button id="tab-\w+" class="tab[^"]*">([^<]+)</button>', html)
     assert [t.strip() for t in web_tabs] == [t.strip() for t in desktop_tabs]
-    assert "<h2>Saved Filters</h2>" in html
+    # E2: the Search panel picks a saved filter from a Select Filter dropdown;
+    # the Filters tab is still where the saved filters are managed.
+    assert "<h2>Select Filter</h2>" in html
+    assert '<select id="search-filter-select">' in html
+    assert "<strong>Saved Filters</strong>" in html
+    assert "<h2>Saved Filters</h2>" not in html
     assert "Saved searches" not in html
+
+
+def test_e2_manual_search_card_is_called_ad_hoc_search():
+    """E2: the manual search card is Ad Hoc Search, told apart from running a
+    saved filter."""
+    html = INDEX.read_text()
+    assert "<h2>Ad Hoc Search</h2>" in html
+    assert "<h2>Search</h2>" not in html
+
+
+def test_e2_tab_bar_is_sticky():
+    """E2: the tabs stay at the top of the viewport while a panel scrolls, and
+    the notice sits below them rather than behind them."""
+    css = _css()
+    bar = re.search(r"\.tab-bar\s*\{([^}]*)\}", css)
+    assert bar and "position: sticky" in bar.group(1)
+    assert "top: 0" in bar.group(1)
+    bar_z = int(re.search(r"z-index:\s*(\d+)", bar.group(1)).group(1))
+    notice = re.search(r"#notice\s*\{([^}]*)\}", css).group(1)
+    notice_z = int(re.search(r"z-index:\s*(\d+)", notice).group(1))
+    assert bar_z > notice_z
+    assert int(re.search(r"top:\s*(\d+)px", notice).group(1)) > 0
 
 
 @pytest.mark.parametrize("label,expected", [
@@ -985,23 +1012,23 @@ function mk(tag) {
 }
 const document = { createElement: mk };
 const els = {};
-els["search-filter-list"] = Object.assign(mk("ul"), {
-  querySelectorAll: () => els["search-filter-list"].children
-    .flatMap(li => li.children || []).filter(c => c.tag === "button" && c.dataset.filterId !== undefined),
-});
-Object.defineProperty(els["search-filter-list"], "textContent", {
+// The Select Filter dropdown: setting textContent empties it, and its value
+// follows the options the client appends (as a real <select> does).
+els["search-filter-select"] = mk("select");
+Object.defineProperty(els["search-filter-select"], "textContent", {
   set(v) { this.children = []; }, get() { return ""; } });
 const $ = (id) => els[id] || (els[id] = mk("x"));
-let mode = "ok", seenAtPost = null, resultsFail = false;
+let mode = "ok", seenAtPost = null, resultsFail = false, noFilters = false;
 // Each poll of the job takes the next entry: a job object, or an error to throw.
 const polls = [];
 function httpError(status) { const e = new Error(`HTTP ${status}`); e.status = status; return e; }
 let postBody = null;
 async function api(method, path, body) {
   if (method === "POST") postBody = body;
-  if (method === "GET" && path === "/api/filters") return { filters: [{ id: 7, name: "A" }, { id: 8, name: "B" }] };
+  if (method === "GET" && path === "/api/filters")
+    return { filters: noFilters ? [] : [{ id: 7, name: "A" }, { id: 8, name: "B" }] };
   if (method === "POST") {
-    seenAtPost = $("search-filter-list").querySelectorAll().map(b => [b.textContent, b.disabled]);
+    seenAtPost = runButton();
     if (mode === "refuse") throw new Error("no search terms");
     return { job_id: "j" };
   }
@@ -1023,7 +1050,15 @@ function populateCategorySelect() {} function getSourceSelection() { return { al
 const POLL_MS = 1000;
 const POLL_GIVE_UP = 8;
 globalThis.setInterval = () => 1; globalThis.clearInterval = () => {};
-const labels = () => $("search-filter-list").querySelectorAll().map(b => [b.textContent, b.disabled]);
+// [label, disabled] of the one Run button, plus the filter it would run.
+const runButton = () => [$("btn-run-filter").textContent, $("btn-run-filter").disabled];
+const picked = () => $("search-filter-select").value;
+// Pick a filter by index in the dropdown, then click Run.
+const runNth = (n) => {
+  $("search-filter-select").value = $("search-filter-select").children[n].value;
+  renderFilterRunButtons();
+  return $("btn-run-filter").onclick();
+};
 """
 
 
@@ -1040,6 +1075,8 @@ def _run_flow(body):
         _js_block(r"async function loadSearchFilters\(\) \{.*?\n\}"),
         _js_block(r"function filterRunLabel\(filterId, run\) \{.*?\n\}"),
         _js_block(r"function renderFilterRunButtons\(\) \{.*?\n\}"),
+        _js_block(r"function runSelectedFilter\(\) \{.*?\n\}"),
+        '$("btn-run-filter").onclick = runSelectedFilter;',
         _js_block(r"async function startSearch\(payload\) \{.*?\n\}"),
         _js_block(r"function searchFinished\(status\) \{.*?\n\}"),
         _js_block(r"function stopPolling\(\) \{.*?\n\}"),
@@ -1056,29 +1093,61 @@ def _run_flow(body):
 
 
 def test_fr4_2_buttons_disabled_before_request():
-    """FR4.2: clicking Run disables every Run button and labels the clicked one
+    """FR4.2: clicking Run disables the Run button and the dropdown and reads
     Running… before the POST leaves; the job finishing (through the real
     pollSearch) labels it Done and re-enables. Clicking Done runs it again."""
     out = _run_flow("""
       await loadSearchFilters();
-      out.initial = labels();
-      const buttons = $("search-filter-list").querySelectorAll();
+      out.initial = runButton();
+      out.firstPicked = picked();
       polls.push(job("done"));
-      await buttons[0].onclick();
+      await runNth(0);
       out.atPost = seenAtPost;
       await new Promise(r => setTimeout(r, 0));
-      out.done = labels();
+      out.done = runButton();
       polls.push(job("cancelled"));
-      await buttons[0].onclick();
+      await runNth(0);
       out.againAtPost = seenAtPost;
       await new Promise(r => setTimeout(r, 0));
-      out.stopped = labels();
+      out.stopped = runButton();
     """)
-    assert out["initial"] == [["Run", False], ["Run", False]]
-    assert out["atPost"] == [["Running…", True], ["Run", True]]
-    assert out["done"] == [["Done", False], ["Run", False]]
-    assert out["againAtPost"] == [["Running…", True], ["Run", True]]
-    assert out["stopped"] == [["Stopped", False], ["Run", False]]
+    assert out["initial"] == ["Run", False]
+    assert out["firstPicked"] == "7"          # the first saved filter is preselected
+    assert out["atPost"] == ["Running…", True]
+    assert out["done"] == ["Done", False]
+    assert out["againAtPost"] == ["Running…", True]
+    assert out["stopped"] == ["Stopped", False]
+
+
+def test_e2_dropdown_lists_every_saved_filter():
+    """E2: Select Filter holds one option per saved filter, and switching the
+    selection re-labels the Run button for the filter now picked."""
+    out = _run_flow("""
+      await loadSearchFilters();
+      out.options = $("search-filter-select").children.map(o => [o.value, o.textContent]);
+      polls.push(job("done"));
+      await runNth(1);
+      await new Promise(r => setTimeout(r, 0));
+      out.onRunFilter = runButton();
+      $("search-filter-select").value = "7";
+      renderFilterRunButtons();
+      out.onOtherFilter = runButton();
+    """)
+    assert out["options"] == [["7", "A"], ["8", "B"]]
+    assert out["onRunFilter"] == ["Done", False]
+    assert out["onOtherFilter"] == ["Run", False]
+
+
+def test_e2_no_saved_filters_disables_run():
+    """With nothing saved, the dropdown says so and Run cannot be clicked."""
+    out = _run_flow("""
+      noFilters = true;
+      await loadSearchFilters();
+      out.options = $("search-filter-select").children.map(o => [o.value, o.textContent]);
+      out.button = runButton();
+    """)
+    assert out["options"] == [["", "No saved filters yet"]]
+    assert out["button"] == ["Run", True]
 
 
 def test_fr4_2_refused_run_returns_to_run():
@@ -1086,26 +1155,30 @@ def test_fr4_2_refused_run_returns_to_run():
     out = _run_flow("""
       await loadSearchFilters();
       mode = "refuse";
-      await $("search-filter-list").querySelectorAll()[0].onclick();
-      out.after = labels();
+      await runNth(0);
+      out.after = runButton();
     """)
-    assert out["after"] == [["Run", False], ["Run", False]]
+    assert out["after"] == ["Run", False]
 
 
 def test_fr4_3_rerender_keeps_state():
-    """FR4.3: the list is rebuilt after a filter is saved; the label survives."""
+    """FR4.3: the dropdown is rebuilt after a filter is saved; the selection and
+    the Run button's label both survive."""
     out = _run_flow("""
       await loadSearchFilters();
       polls.push(job("running"));
-      await $("search-filter-list").querySelectorAll()[1].onclick();
-      out.midRun = (await loadSearchFilters(), labels());
+      await runNth(1);
+      await loadSearchFilters();
+      out.midRunPicked = picked();
+      out.midRun = runButton();
       polls.push(job("done"));
       await pollSearch();
       await loadSearchFilters();
-      out.after = labels();
+      out.after = runButton();
     """)
-    assert out["midRun"] == [["Run", True], ["Running…", True]]
-    assert out["after"] == [["Run", False], ["Done", False]]
+    assert out["midRunPicked"] == "8"
+    assert out["midRun"] == ["Running…", True]
+    assert out["after"] == ["Done", False]
 
 
 def test_fr4_4_one_failed_check_does_not_end_the_search():
@@ -1115,16 +1188,16 @@ def test_fr4_4_one_failed_check_does_not_end_the_search():
     out = _run_flow("""
       await loadSearchFilters();
       polls.push(httpError(0));
-      await $("search-filter-list").querySelectorAll()[0].onclick();
+      await runNth(0);
       await new Promise(r => setTimeout(r, 0));
-      out.afterBlip = labels();
+      out.afterBlip = runButton();
       polls.push(httpError(502), job("done"));
-      await pollSearch(); out.afterSecond = labels();
-      await pollSearch(); out.after = labels();
+      await pollSearch(); out.afterSecond = runButton();
+      await pollSearch(); out.after = runButton();
     """)
-    assert out["afterBlip"] == [["Running…", True], ["Run", True]]
-    assert out["afterSecond"] == [["Running…", True], ["Run", True]]
-    assert out["after"] == [["Done", False], ["Run", False]]
+    assert out["afterBlip"] == ["Running…", True]
+    assert out["afterSecond"] == ["Running…", True]
+    assert out["after"] == ["Done", False]
 
 
 @pytest.mark.parametrize("errors", [
@@ -1137,12 +1210,12 @@ def test_fr4_4_giving_up_says_lost_track_not_failed(errors):
     out = _run_flow(f"""
       await loadSearchFilters();
       polls.push({", ".join(errors)});
-      await $("search-filter-list").querySelectorAll()[0].onclick();
+      await runNth(0);
       await new Promise(r => setTimeout(r, 0));
       for (let i = 1; i < {len(errors)}; i++) await pollSearch();
-      out.after = labels();
+      out.after = runButton();
     """)
-    assert out["after"] == [["Lost track", False], ["Run", False]]
+    assert out["after"] == ["Lost track", False]
 
 
 def test_fr4_4_failed_results_load_still_releases_buttons():
@@ -1152,11 +1225,11 @@ def test_fr4_4_failed_results_load_still_releases_buttons():
       await loadSearchFilters();
       resultsFail = true;
       polls.push(job("done"));
-      await $("search-filter-list").querySelectorAll()[0].onclick();
+      await runNth(0);
       await new Promise(r => setTimeout(r, 0));
-      out.after = labels();
+      out.after = runButton();
     """)
-    assert out["after"] == [["Done", False], ["Run", False]]
+    assert out["after"] == ["Done", False]
 
 
 def test_i1_saved_filter_runs_on_its_own_sources():
@@ -1166,7 +1239,7 @@ def test_i1_saved_filter_runs_on_its_own_sources():
     out = _run_flow("""
       await loadSearchFilters();
       polls.push(job("done"));
-      await $("search-filter-list").querySelectorAll()[0].onclick();
+      await runNth(0);
       out.saved = postBody;
       await new Promise(r => setTimeout(r, 0));
       polls.push(job("done"));
@@ -1197,7 +1270,7 @@ def test_i3_search_page_shows_enrichment_outage():
     out = _run_flow("""
       await loadSearchFilters();
       polls.push(Object.assign(job("done"), { enrich_problems: { Crossref: [3, 5] } }));
-      await $("search-filter-list").querySelectorAll()[0].onclick();
+      await runNth(0);
       await new Promise(r => setTimeout(r, 0));
       out.note = $("enrich-problems").textContent;
     """)

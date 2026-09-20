@@ -103,18 +103,24 @@
     <!-- ═══ Search tab ═══════════════════════════════════════════════════════ -->
     <div id="panel-search">
 
-      <!-- Saved filter runner: a filter drives a search; its results can be
-           saved to Saved References. -->
+      <!-- Saved filter runner: pick a saved filter from the list and run it;
+           its results can be saved to Saved References. -->
       <div class="card">
-        <h2>Saved Filters</h2>
-        <p class="muted small">Run a filter to search. Save the results you want to keep
-          to Saved References.</p>
-        <ul id="search-filter-list" class="filters"></ul>
+        <h2>Select Filter</h2>
+        <p class="muted small">Pick a saved filter and run it to search. Save the results
+          you want to keep to Saved References.</p>
+        <div class="row">
+          <label style="flex:1"><span>Saved filter</span>
+            <select id="search-filter-select"></select></label>
+          <div class="shrink">
+            <button id="btn-run-filter" class="primary">Run</button>
+          </div>
+        </div>
       </div>
 
       <!-- Search controls -->
       <div class="card">
-        <h2>Search</h2>
+        <h2>Ad Hoc Search</h2>
         <div class="row">
           <label><span>Words in title or abstract (comma-separated)</span>
             <input id="q-both" type="text" placeholder="generative agents, agent-based model"></label>
