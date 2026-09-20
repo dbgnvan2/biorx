@@ -11,6 +11,18 @@
   rendered height past 52px, the "notice behind the bar" defect reproduces and
   the test stays green. A real-browser visual check is the only true fix.
 
+## From the token-capture gate (`docs/cycles/2026-09-20_token-capture-qa-gate.md`)
+
+Findings 1-4 were fixed in the same session (see the re-gate). One item is
+deferred deliberately:
+
+- Discover calls are logged and capped under `kind = "summary"` (`USAGE_KIND`
+  in `web/routes_summaries.py`). They share the summary daily allowance, which
+  is existing behaviour, but it means the usage log calls a discover run a
+  summary. Giving discover its own kind would also take it out of the cap's
+  count unless the cap query is changed at the same time — a deliberate change
+  to what users are allowed to spend, not a side effect of token accounting.
+
 ## From the full-text gates (2026-09-19) — APPROVED, deferred
 
 - G1 (LOW) — `src/fulltext.default_get_json` reports any 401/403 as a settings

@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from .tokens import TokenUsage, from_anthropic, from_openai_style
+from .tokens import UNCOUNTED, TokenUsage, from_anthropic, from_openai_style
 from .llm_config import (
     ProviderConfig, default_provider, load_llm_config, max_text_chars,
     provider_config,
@@ -70,7 +70,18 @@ SUMMARY_INSTRUCTIONS = (
 # ── Errors ────────────────────────────────────────────────────────────────────
 
 class LLMError(Exception):
-    """Base class for provider failures."""
+    """Base class for provider failures.
+
+    Carries the token usage of the call that failed, when the provider reported
+    it. A hosted provider bills for a reply whose content turns out to be
+    unusable: the response said what it cost, and throwing that away means a
+    run that spent real money is recorded as costing nothing (gate finding 2,
+    M1.B.3). UNCOUNTED when the call never reached the model.
+    """
+
+    def __init__(self, *args, usage: Optional["TokenUsage"] = None):
+        super().__init__(*args)
+        self.usage = usage or UNCOUNTED
 
 
 class NoLLMCredentialError(LLMError):
@@ -173,6 +184,26 @@ def _extract_json(text: str) -> Any:
         ) from e
 
 
+def _parsed_or_billed(raw: str, usage: TokenUsage) -> Dict[str, Any]:
+    """Parse a hosted provider's reply, keeping the cost if it will not parse.
+
+    The model ran and the response reported what it cost; only its content is
+    unusable. Letting the bare parse error escape loses that, and the route
+    then records a call that spent real money as costing nothing (gate finding
+    2). The usage rides on the exception instead.
+
+    Attached here rather than passed into _coerce_summary/_extract_json so
+    those keep their one-argument signature — routes_summaries and the CLI
+    agent both call _coerce_summary directly.
+    """
+    try:
+        return _coerce_summary(_extract_json(raw))
+    except LLMError as e:
+        if not e.usage.counted:
+            e.usage = usage
+        raise
+
+
 def _sleep_backoff(attempt: int) -> None:
     import time
     time.sleep(BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)))
@@ -264,13 +295,15 @@ class DeepSeekClient:
                     f"DeepSeek returned non-JSON: {resp.text[:200]}"
                 ) from e
 
+            usage = from_openai_style(data, "DeepSeek")
             try:
                 content = data["choices"][0]["message"]["content"]
             except (KeyError, IndexError, TypeError) as e:
                 raise ProviderResponseError(
-                    f"DeepSeek response had an unexpected shape: {str(data)[:200]}"
+                    f"DeepSeek response had an unexpected shape: {str(data)[:200]}",
+                    usage=usage,
                 ) from e
-            return content, from_openai_style(data, "DeepSeek")
+            return content, usage
 
         raise ProviderUnavailableError(f"DeepSeek failed after {MAX_ATTEMPTS} attempts: {last_error}")
 
@@ -278,7 +311,7 @@ class DeepSeekClient:
                         max_findings: int = 3) -> Tuple[Dict[str, Any], TokenUsage]:
         prompt = _build_summary_prompt(abstract, full_text, self.max_chars, max_findings)
         raw, usage = self.generate(prompt, json_schema=SUMMARY_SCHEMA)
-        return _coerce_summary(_extract_json(raw)), usage
+        return _parsed_or_billed(raw, usage), usage
 
 
 # ── Anthropic (Messages API, official SDK) ────────────────────────────────────
@@ -339,20 +372,23 @@ class AnthropicClient:
                 raise ProviderUnavailableError(f"Anthropic unavailable: {e}") from e
             raise ProviderResponseError(f"Anthropic call failed: {e}") from e
 
+        usage = from_anthropic(response)
         if getattr(response, "stop_reason", None) == "refusal":
-            raise ProviderResponseError("Anthropic declined to answer this request")
+            raise ProviderResponseError("Anthropic declined to answer this request",
+                                        usage=usage)
 
         try:
             text = next(b.text for b in response.content if b.type == "text")
         except StopIteration as e:
-            raise ProviderResponseError("Anthropic returned no text block") from e
-        return text, from_anthropic(response)
+            raise ProviderResponseError("Anthropic returned no text block",
+                                        usage=usage) from e
+        return text, usage
 
     def summarize_paper(self, abstract: str, full_text: str,
                         max_findings: int = 3) -> Tuple[Dict[str, Any], TokenUsage]:
         prompt = _build_summary_prompt(abstract, full_text, self.max_chars, max_findings)
         raw, usage = self.generate(prompt, json_schema=SUMMARY_SCHEMA)
-        return _coerce_summary(_extract_json(raw)), usage
+        return _parsed_or_billed(raw, usage), usage
 
 
 # ── The resolver ──────────────────────────────────────────────────────────────

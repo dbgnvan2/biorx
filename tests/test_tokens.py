@@ -8,6 +8,7 @@ Spec: docs/implementation_plan_2026-09-20_references_batch.md#M1.A
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -306,7 +307,7 @@ def test_m1b2_user_key_run_is_recorded_without_consuming_the_cap(tmp_path):
                             "user", TokenUsage(prompt=500, completion=50,
                                                total=550, counted=True))
     assert user_store.owner_usage_today(db, "u1") == 0      # cap untouched
-    totals = user_store.session_token_totals(db, "u1", "1970-01-01 00:00:00")
+    totals = user_store.session_token_totals(db, "u1", datetime(1970, 1, 1))
     assert totals["total"] == 550 and totals["counted_calls"] == 1
     db.close()
 
@@ -319,7 +320,7 @@ def test_m1b2_an_uncounted_call_is_logged_but_adds_nothing(tmp_path):
 
     db = _db(tmp_path)
     user_store.record_usage(db, "u1", "summary", "ollama", "qwen3.5:4b", "none")
-    totals = user_store.session_token_totals(db, "u1", "1970-01-01 00:00:00")
+    totals = user_store.session_token_totals(db, "u1", datetime(1970, 1, 1))
     assert totals["total"] == 0
     assert totals["counted_calls"] == 0 and totals["uncounted_calls"] == 1
     db.close()
@@ -339,6 +340,108 @@ def test_m1c1_totals_cover_only_this_user_and_this_window(tmp_path):
     db.conn.commit()
     user_store.record_usage(db, "u1", "summary", "d", "m", "user", counted)
 
-    totals = user_store.session_token_totals(db, "u1", "2020-01-01 00:00:00")
+    totals = user_store.session_token_totals(db, "u1", datetime(2020, 1, 1))
     assert totals["total"] == 110, "only u1's in-window call counts"
     db.close()
+
+
+def test_m1c1_since_is_formatted_to_match_how_sqlite_stores_created_at(tmp_path):
+    """Gate finding 4: created_at is written by CURRENT_TIMESTAMP as
+    "YYYY-MM-DD HH:MM:SS". An ISO-8601 string sorts above every stored value
+    ("T" > " "), so passing one would return zero for everything — a meter
+    reading 0 while the user was in fact spending. The function takes a
+    datetime so a caller cannot make that mistake, and converts tz-aware values
+    to UTC so a local-time stamp cannot shift the window.
+    """
+    from src import user_store
+
+    db = _db(tmp_path)
+    user_store.record_usage(db, "u1", "summary", "d", "m", "user",
+                            TokenUsage(prompt=10, completion=1, total=11, counted=True))
+
+    naive = user_store.session_token_totals(db, "u1", datetime(2020, 1, 1))
+    aware = user_store.session_token_totals(
+        db, "u1", datetime(2020, 1, 1, tzinfo=timezone.utc))
+    assert naive["total"] == aware["total"] == 11
+    assert " " in user_store._sqlite_timestamp(datetime(2026, 9, 20, 12, 0, 0))
+    assert "T" not in user_store._sqlite_timestamp(datetime(2026, 9, 20, 12, 0, 0))
+    db.close()
+
+
+# ── Gate findings: spend that used to go unrecorded ───────────────────────────
+
+def test_gate1_hosted_provider_keeps_the_usage_when_the_reply_will_not_parse(tmp_path):
+    """Gate finding 2: a hosted provider bills for a reply whose content turns
+    out to be unusable. The response reported what it cost; letting the parse
+    error escape bare threw that away, so a call that spent real money was
+    recorded as costing nothing.
+
+    This is the case M1.B.3 claimed to cover and only covered for Ollama.
+    """
+    from src.llm_providers import ProviderResponseError
+
+    billed = {"prompt_tokens": 6000, "completion_tokens": 200, "total_tokens": 6200}
+    response = _ds_response("this is not JSON at all", usage=billed)
+    with patch("src.llm_providers.requests.post", return_value=response):
+        with pytest.raises(ProviderResponseError) as caught:
+            DeepSeekClient(api_key="k").summarize_paper("a", "t")
+    assert caught.value.usage.counted is True
+    assert caught.value.usage.prompt == 6000
+
+
+def test_gate1_an_empty_summary_also_keeps_its_usage():
+    """The other unusable-reply branch: valid JSON, no content in it."""
+    from src.llm_providers import ProviderResponseError
+
+    billed = {"prompt_tokens": 900, "completion_tokens": 20, "total_tokens": 920}
+    empty = json.dumps({"key_findings": [], "methodology": "", "conclusions": ""})
+    with patch("src.llm_providers.requests.post",
+               return_value=_ds_response(empty, usage=billed)):
+        with pytest.raises(ProviderResponseError) as caught:
+            DeepSeekClient(api_key="k").summarize_paper("a", "t")
+    assert caught.value.usage.prompt == 900
+
+
+def test_gate1_anthropic_refusal_keeps_its_usage():
+    """A declined request is still billed for what it read."""
+    from src.llm_providers import ProviderResponseError
+
+    msg = _anthropic_message("", usage=MagicMock(
+        input_tokens=4000, output_tokens=5,
+        cache_creation_input_tokens=0, cache_read_input_tokens=0))
+    msg.stop_reason = "refusal"
+    sdk = MagicMock()
+    sdk.messages.create.return_value = msg
+    with patch.object(AnthropicClient, "_client", return_value=sdk):
+        with pytest.raises(ProviderResponseError) as caught:
+            AnthropicClient(api_key="k").summarize_paper("a", "t")
+    assert caught.value.usage.prompt == 4000
+
+
+def test_gate1_a_call_that_never_reached_the_model_carries_no_usage():
+    """The mirror case — an error raised before any request must not claim a
+    cost. UNCOUNTED, not a fabricated number."""
+    from src.llm_providers import NoLLMCredentialError
+
+    with pytest.raises(NoLLMCredentialError) as caught:
+        DeepSeekClient(api_key="").summarize_paper("a", "t")
+    assert caught.value.usage.counted is False
+
+
+def test_gate2_both_spending_routes_use_the_shared_recorder():
+    """Gate finding 1: the summaries route recorded tokens; its sibling the
+    discover route settled the owner's slot and recorded nothing, so discover
+    spend never reached the meter — and a user-key discover run wrote no row
+    at all.
+
+    Both now go through user_store.record_spend. A source check, because the
+    two routes drifting apart is precisely what happened and neither route's
+    own tests noticed (P5).
+    """
+    for path in ("web/routes_summaries.py", "web/routes_discover.py"):
+        source = (Path(__file__).parent.parent / path).read_text()
+        assert "user_store.record_spend(" in source, (
+            f"{path} does not use the shared recorder — it will drift again"
+        )
+        # The private per-route helper this replaced must not come back.
+        assert "def _record_spend" not in source

@@ -21,7 +21,7 @@ from src.llm_providers import LLMError, NoLLMCredentialError, ProviderResponseEr
 from .auth import current_user, get_context
 from .deps import AppContext
 from .routes_searches import record_failure
-from .routes_summaries import _resolve_for
+from .routes_summaries import USAGE_KIND, _resolve_for
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -117,18 +117,40 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
                 ) from e
 
             return {"terms": terms, "papers_found": len(papers), "keywords": keywords}
+        except BaseException as exc:
+            # generate() raises on an unusable reply (a bad response shape, a
+            # refusal, no text block) — so the assignment above never ran and
+            # job.token_usage is still UNCOUNTED, while the response itself
+            # reported what the billed call cost. Recover it here or the
+            # settlement below writes tokens_counted = 0 for a call that spent
+            # real money.
+            #
+            # This route calls generate() directly rather than through
+            # summarize_paper, so it does not pass through _parsed_or_billed
+            # and needs its own recovery — the same sibling-path gap as the
+            # first gate finding, one level down (re-gate finding 1).
+            if not job.token_usage.counted:
+                carried = getattr(exc, "usage", None)
+                if carried is not None:
+                    job.token_usage = carried
+            raise
         finally:
             # Settle the owner-key slot on every exit — including the early
             # return when no papers were found, which never calls the model.
             # Same rule as summaries: given back only if the provider was never
             # reached; a call that was made may have cost money.
             try:
-                if usage_id is not None:
-                    if provider_called:
-                        user_store.finalize_usage(ctx.db, usage_id, resolved.provider,
-                                                  resolved.model)
-                    else:
-                        user_store.release_usage(ctx.db, usage_id)
+                if provider_called:
+                    # What the call cost is recorded whichever key paid for it.
+                    # This used to settle only the owner's reserved slot and
+                    # record nothing at all for a user-key run, so discover
+                    # spend never reached the meter (gate finding 1).
+                    user_store.record_spend(ctx.db, user_id, USAGE_KIND,
+                                            resolved.provider, resolved.model,
+                                            resolved.key_source, usage_id,
+                                            job.token_usage)
+                elif usage_id is not None:
+                    user_store.release_usage(ctx.db, usage_id)
             finally:
                 # Always, even if settling the slot raised: a pooled thread
                 # must not keep its connection.

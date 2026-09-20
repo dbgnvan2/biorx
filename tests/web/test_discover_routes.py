@@ -48,9 +48,9 @@ class FakeOrchestrator:
         on_batch([SimpleNamespace(to_dict=lambda p=p: dict(p)) for p in self.papers])
 
 
-def _llm(reply):
+def _llm(reply, usage=UNCOUNTED):
     client = MagicMock()
-    client.generate.return_value = (reply, UNCOUNTED)
+    client.generate.return_value = (reply, usage)
     return client
 
 
@@ -64,11 +64,11 @@ def _await(client, job_id, timeout=5):
     raise AssertionError(f"discover job never settled: {body}")
 
 
-def _run(signed_in, ctx, orch, reply, body=None):
+def _run(signed_in, ctx, orch, reply, body=None, usage=UNCOUNTED):
     body = body or {"description": "How does maternal stress affect the infant?",
                     "api_key": "sk-user-inline-key", "provider": "anthropic"}
     with patch.object(ctx, "get_orchestrator", return_value=orch), \
-         patch("src.llm_providers.build_client", return_value=_llm(reply)):
+         patch("src.llm_providers.build_client", return_value=_llm(reply, usage)):
         start = signed_in.post("/api/discover-terms", json=body)
         assert start.status_code == 202, start.text
         return _await(signed_in, start.json()["job_id"])
@@ -148,6 +148,102 @@ def owner_key(ctx, monkeypatch):
 
 
 OWNER_BODY = {"description": "maternal stress"}
+
+
+def test_gate1_owner_discover_run_records_its_tokens(signed_in, ctx, owner_key):
+    """Gate finding 1: this route unpacked the token usage and then dropped it —
+    finalize_usage was called without it, so an owner-key discover call was
+    settled as tokens_counted = 0 while the numbers sat in memory."""
+    from src.tokens import TokenUsage
+
+    spent = TokenUsage(prompt=3000, completion=90, total=3090, counted=True)
+    body = _run(signed_in, ctx, FakeOrchestrator(), '{"terms": ["a"]}',
+                OWNER_BODY, usage=spent)
+    assert body["status"] == "done"
+
+    rows = [dict(r) for r in ctx.db.conn.execute(
+        "SELECT * FROM usage_events")]
+    assert len(rows) == 1, "the reserved slot is reused, not duplicated"
+    assert rows[0]["prompt_tokens"] == 3000
+    assert rows[0]["tokens_counted"] == 1
+    assert rows[0]["key_source"] == "owner"
+
+
+def test_gate1_user_key_discover_run_is_recorded_at_all(signed_in, ctx):
+    """The worse half of finding 1: a user-key discover run was never written
+    to usage_events, because the old block only ran when a slot had been
+    reserved — and a user on their own key reserves nothing. Their discover
+    spend was invisible forever."""
+    from src.tokens import TokenUsage
+
+    spent = TokenUsage(prompt=1500, completion=40, total=1540, counted=True)
+    body = _run(signed_in, ctx, FakeOrchestrator(), '{"terms": ["a"]}', usage=spent)
+    assert body["status"] == "done"
+
+    rows = [dict(r) for r in ctx.db.conn.execute(
+        "SELECT * FROM usage_events")]
+    assert len(rows) == 1, "a user-key run must still be logged"
+    assert rows[0]["key_source"] != "owner"
+    assert rows[0]["prompt_tokens"] == 1500
+
+
+@pytest.mark.parametrize("error_name", ["bad_shape", "refusal"])
+def test_regate1_discover_records_tokens_when_generate_itself_raises(
+        signed_in, ctx, owner_key, error_name):
+    """Re-gate finding 1: this route calls generate() directly, so it never
+    passes through _parsed_or_billed. When generate() raises on an unusable
+    reply, `job.token_usage = usage` never runs — yet the model was called and
+    billed, and the response reported the cost on the exception.
+
+    Without the recovery this records tokens_counted = 0 for a call that spent
+    real money: the same hole the first gate closed for summaries.
+    """
+    from src.llm_providers import ProviderResponseError
+    from src.tokens import TokenUsage
+
+    billed = TokenUsage(prompt=2500, completion=15, total=2515, counted=True)
+    blew_up = ProviderResponseError(f"provider {error_name}", usage=billed)
+    client = MagicMock()
+    client.generate.side_effect = blew_up
+
+    with patch.object(ctx, "get_orchestrator", return_value=FakeOrchestrator()), \
+         patch("src.llm_providers.build_client", return_value=client):
+        start = signed_in.post("/api/discover-terms", json=OWNER_BODY)
+        body = _await(signed_in, start.json()["job_id"])
+    assert body["status"] == "error"
+
+    rows = [dict(r) for r in ctx.db.conn.execute("SELECT * FROM usage_events")]
+    assert len(rows) == 1
+    assert rows[0]["prompt_tokens"] == 2500, (
+        "a billed discover call that raised must not be recorded as costing nothing"
+    )
+    assert rows[0]["tokens_counted"] == 1
+
+
+def test_regate1_a_successful_run_keeps_its_own_usage_not_the_exceptions(
+        signed_in, ctx, owner_key):
+    """The recovery must not overwrite a good reading. A reply that generate()
+    returned fine but parse_terms rejected already has its usage; the error
+    raised afterwards carries none, and the real numbers must survive."""
+    from src.tokens import TokenUsage
+
+    spent = TokenUsage(prompt=1200, completion=30, total=1230, counted=True)
+    body = _run(signed_in, ctx, FakeOrchestrator(), "not a list of terms at all",
+                OWNER_BODY, usage=spent)
+    assert body["status"] == "error"
+
+    rows = [dict(r) for r in ctx.db.conn.execute("SELECT * FROM usage_events")]
+    assert rows[0]["prompt_tokens"] == 1200
+
+
+def test_gate1_a_discover_run_that_never_called_the_model_records_nothing(
+        signed_in, ctx, owner_key):
+    """The search fails before the model is reached: slot released, no row."""
+    _run(signed_in, ctx, FakeOrchestrator(fail_with=RuntimeError("down")),
+         '{"terms": ["a"]}', OWNER_BODY)
+    n = ctx.db.conn.execute(
+        "SELECT COUNT(*) AS n FROM usage_events").fetchone()
+    assert n["n"] == 0
 
 
 def test_dt3_failed_search_gives_the_slot_back(signed_in, ctx, owner_key):

@@ -129,6 +129,17 @@ def get_llm_key(db, user_id: str) -> tuple:
 
 # ── Usage, for the owner-key spend cap ────────────────────────────────────────
 
+def _sqlite_timestamp(when: "datetime") -> str:
+    """A datetime in the exact shape SQLite's CURRENT_TIMESTAMP writes, in UTC.
+
+    created_at is stored naive-UTC. A tz-aware value is converted rather than
+    compared as-is, so a local-time cookie stamp cannot shift the window.
+    """
+    if when.tzinfo is not None:
+        when = when.astimezone(timezone.utc).replace(tzinfo=None)
+    return when.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def record_usage(db, user_id: str, kind: str, provider: str, model: str,
                  key_source: str, usage: Optional[TokenUsage] = None) -> int:
     """Record one billable action. Never stores a key or part of one.
@@ -209,20 +220,49 @@ def finalize_usage(db, usage_id: int, provider: str, model: str,
     db.conn.commit()
 
 
-def session_token_totals(db, user_id: str, since: str) -> Dict[str, Any]:
+def record_spend(db, user_id: str, kind: str, provider: str, model: str,
+                 key_source: str, usage_id: Optional[int],
+                 usage: Optional[TokenUsage] = None) -> None:
+    """Write what one billable call cost, whichever key paid for it (M1.B.2).
+
+    Lives here, not in a route, because there is more than one route that spends
+    tokens. The first version of this was a private helper in the summaries
+    route; the discover route kept its own settle-the-slot block and was left
+    recording nothing, so discover spend was invisible in the meter. A shared
+    function is what stops the two drifting again (P5).
+
+    An owner-key run (usage_id is not None) updates the row the cap already
+    reserved — a second row would be counted by the cap. A user-key run was
+    never reserved, so it inserts, and must not reserve: a user on their own
+    key is not capped.
+    """
+    if usage_id is not None:
+        finalize_usage(db, usage_id, provider, model, usage)
+    else:
+        record_usage(db, user_id, kind, provider, model, key_source, usage)
+
+
+def session_token_totals(db, user_id: str, since: "datetime") -> Dict[str, Any]:
     """Tokens this user has spent since `since` (an ISO-ish UTC timestamp).
 
     Returns counted totals plus how many calls could not be counted, so the
     caller can say "18.4k + 2 uncounted" instead of presenting a total that
     quietly omits them (M1.C.1, P2).
+
+    `since` is a datetime, not a string, on purpose. created_at is written by
+    SQLite's CURRENT_TIMESTAMP as "YYYY-MM-DD HH:MM:SS"; an ISO-8601 string
+    with a "T" separator compares greater than every stored value ("T" > " ")
+    and would silently return zero for everything. Formatting here removes the
+    caller's opportunity to get that wrong (gate finding 4).
     """
+    since_text = _sqlite_timestamp(since)
     row = db.conn.execute(
         "SELECT COALESCE(SUM(prompt_tokens), 0)     AS prompt, "
         "       COALESCE(SUM(completion_tokens), 0) AS completion, "
         "       COALESCE(SUM(tokens_counted), 0)    AS counted_calls, "
         "       COUNT(*)                            AS calls "
         "FROM usage_events WHERE user_id = ? AND created_at >= ?",
-        (user_id, since),
+        (user_id, since_text),
     ).fetchone()
     if row is None:                                   # pragma: no cover
         return {"prompt": 0, "completion": 0, "total": 0,
