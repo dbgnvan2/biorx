@@ -239,3 +239,88 @@ Required to flip to APPROVED:
 2. Split the unrelated `Maternal nueroticism.pdf` deletion and `filters.json`
    rewrite out of the fix commit (or record why they belong here).
 3. Re-run `venv/bin/python -m pytest tests/ -q` green, then re-sweep.
+
+---
+
+# SECOND RE-SWEEP — `622ee9f..e6ee9d0`
+
+- **Date:** 2026-09-20 (same session)
+- **Range:** `622ee9f..e6ee9d0` (1 commit, caller-supplied; prior fix commit `277fba6` reset and recommitted as `e6ee9d0`)
+- **Reviewer:** learning-qa failure-pattern sweep (cold second re-sweep)
+- **Test suite:** `venv/bin/python -m pytest tests/ -q` → **1144 passed, 1 skipped**
+
+RANGE:       622ee9f..e6ee9d0 (caller-supplied; single commit folding in every fix)
+COMMITS:     1 commit: e6ee9d0 fix(tokens): record billed spend on every path, not just the summary one
+APPLICABLE:  P5 (sibling calls), P36 (stage output dropped), P2 (silent drop),
+             P22 (stale branch), P19/P19-corollary (source-text assertions)
+CHECKED:     P2, P5, P19, P22, P36 — traced both routes and both hosted providers
+             end-to-end; read src/tokens.py, src/user_store.py, src/llm_providers.py,
+             src/llm.py, agents/summarization_agent.py, gui.py; enumerated every
+             .generate()/.summarize_paper()/resolve_client call site in web/, src/,
+             agents/.
+NOT COVERED: logic correctness outside the meter, full race analysis, auth, test
+             quality beyond the guard-direction note below.
+
+## The two fixes — verified
+
+1. **Re-sweep finding 1 FIXED (discover `generate()`-raise recovery).**
+   `web/routes_discover.py` now has `except BaseException as exc` (line 120) that
+   recovers `exc.usage` into `job.token_usage` when `not job.token_usage.counted`,
+   guarded by `if carried is not None`; the settlement `finally` reads the
+   recovered value. Two regression tests in `tests/web/test_discover_routes.py`:
+   - `test_regate1_discover_records_tokens_when_generate_itself_raises`
+     (parametrized `bad_shape`/`refusal`) — a generate() raise carrying usage
+     records `prompt_tokens == 2500` / `tokens_counted == 1`.
+   - `test_regate1_a_successful_run_keeps_its_own_usage_not_the_exceptions` — a
+     successful generate followed by a parse failure keeps `prompt_tokens == 1200`
+     rather than the (empty) exception's.
+   The two tests cover the guard in both directions: the first fails if the
+   recovery is removed, the second fails if the recovery is made unconditional
+   (it would overwrite the good reading with the exception's UNCOUNTED).
+
+2. **Hygiene note FIXED.** `git show --name-only e6ee9d0` lists only TODO.md, the
+   gate file, and token-accounting source + test files (8 files, no `*.pdf`, no
+   `filters.json`). `git status` shows `Maternal nueroticism.pdf` as ` D` and
+   `filters.json` as ` M` — unstaged working-tree changes, back out of the commit.
+
+## The specific questions — answered
+
+- **agents/summarization_agent.py and gui.py do NOT need the treatment.** Both
+  are the desktop/CLI path: single-user, the user's own key, no shared access
+  code, no owner-key spend cap. Neither opens `usage_events` — the agent writes
+  to `src/db.py` (papers/summaries) and only stashes `last_usage` for display;
+  `gui.py` discards `_usage` from its one `generate()` call (line 1358) because
+  there is no meter to log it against. M1.B is scoped to the web app's shared-key
+  meter; wiring the desktop into `usage_events` would be a new feature, not a gap.
+  `usage_events` is written only via `user_store.record_usage`/`finalize_usage`
+  (through `record_spend`), and the only two web spend sites — summaries and
+  discover — both call `record_spend`.
+
+- **record_spend is never called twice and never with the wrong key_source.**
+  Summary: the success path sets `recorded = True` right after the write and the
+  except branch is `elif not recorded`, so at most one write. Discover: settlement
+  lives in a `finally` that runs once per job. The only residual is the
+  pre-existing theoretical mid-write raise (record_spend raising inside itself),
+  unchanged from prior gates and non-durable under SQLite commit atomicity.
+  key_source is always `resolved.key_source`; `usage_id is not None ⟺
+  key_source == "owner"` via `billed_to_owner`, so the finalize-vs-insert branch
+  and the logged key_source can never disagree. A local-Ollama run
+  (`key_source="none"`) inserts a `none` row — counted in the meter, ignored by
+  the owner cap — which is the intended behaviour.
+
+- **The guard is correct in both directions.** Recover direction: `not
+  job.token_usage.counted` fires only when the reading is genuinely unknown.
+  Don't-overwrite direction: it skips when a good reading is already present.
+  `carried is not None` handles non-LLMError exceptions (no `.usage` attr → None
+  → skip); `LLMError.__init__` always sets `.usage` (defaulting to UNCOUNTED), so
+  an uncounted LLMError is a no-op assignment. `TokenUsage` is a frozen dataclass
+  with no `__bool__`/`__len__`, so the summary route's `getattr(exc, "usage",
+  None) or spent` is behaviourally identical to the discover guard (a UNCOUNTED
+  TokenUsage is truthy). No asymmetry that can misattribute.
+
+## Verdict: APPROVED
+
+The re-sweep MEDIUM is fixed with regression tests covering both guard
+directions, the commit is clean of the unrelated data-file changes, no other
+spend path is left uncovered, and the suite is green at 1144 passed / 1 skipped.
+No findings.
