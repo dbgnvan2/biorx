@@ -418,6 +418,17 @@ class Database:
         self._add_column_if_missing(cursor, "summaries", "text_source", "TEXT DEFAULT ''")
         self._add_column_if_missing(cursor, "users", "preferred_model", "TEXT DEFAULT ''")
 
+        # What each billable call cost (plan 2026-09-20 M1.B.1). Rows written
+        # before this migration keep tokens_counted = 0, which reads as "the
+        # tokens for this call are unknown" — the truthful answer for them, and
+        # the same answer given for a provider that reports nothing. It must
+        # never be read as "this call was free".
+        for col in ("prompt_tokens", "completion_tokens"):
+            self._add_column_if_missing(cursor, "usage_events", col,
+                                        "INTEGER DEFAULT 0")
+        self._add_column_if_missing(cursor, "usage_events", "tokens_counted",
+                                    "INTEGER DEFAULT 0")
+
         # Web accounts (docs/implementation_plan_2026-09-18_accounts.md): a
         # name + PIN that always return the same user; secrets stored hashed.
         for col, definition in (("login_name", "TEXT"), ("pin_hash", "TEXT"),

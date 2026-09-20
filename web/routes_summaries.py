@@ -172,6 +172,23 @@ def _paper_row_id(ctx: AppContext, paper: Dict[str, Any]) -> Optional[int]:
     return None
 
 
+def _record_spend(ctx: AppContext, user_id: str, resolved,
+                  usage_id: Optional[int], usage) -> None:
+    """Write what this call cost to the usage log (M1.B.2).
+
+    An owner-key run updates the row reserve_owner_usage already inserted; a
+    second row there would be counted by the cap, making one summary consume
+    two of the day's slots. A user-key run was never reserved, so it inserts —
+    and must not be reserved, because a user on their own key is not capped.
+    """
+    if usage_id is not None:
+        user_store.finalize_usage(ctx.db, usage_id, resolved.provider,
+                                  resolved.model, usage)
+    else:
+        user_store.record_usage(ctx.db, user_id, "summary", resolved.provider,
+                                resolved.model, resolved.key_source, usage)
+
+
 def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
                  usage_id: Optional[int] = None, find_by_title: Optional[bool] = None):
     def work(job: Job) -> Dict[str, Any]:
@@ -267,13 +284,7 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
                     source_text="full_text",
                     text_source=text_outcome.get("text_source", ""),
                 )
-            if usage_id is not None:
-                user_store.finalize_usage(ctx.db, usage_id, resolved.provider,
-                                          resolved.model)
-            else:
-                user_store.record_usage(ctx.db, user_id, "summary",
-                                        resolved.provider, resolved.model,
-                                        resolved.key_source)
+            _record_spend(ctx, user_id, resolved, usage_id, job.token_usage)
             return {
                 "paper_id": paper_id,
                 "provider": resolved.provider,
@@ -289,8 +300,14 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
             # provider was never reached — a failure after the call may still
             # have cost money, and a cap is a spend ceiling, not an attempt
             # counter.
-            if usage_id is not None and not provider_called:
-                user_store.release_usage(ctx.db, usage_id)
+            if not provider_called:
+                if usage_id is not None:
+                    user_store.release_usage(ctx.db, usage_id)
+            else:
+                # The model ran and was billed. The summary is lost; the record
+                # of what it cost must not be (M1.B.3) — otherwise the tokens a
+                # failed run spent are invisible in the meter.
+                _record_spend(ctx, user_id, resolved, usage_id, job.token_usage)
             raise
         finally:
             ctx.db.release()

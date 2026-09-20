@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 from .filtering import normalise_filter
 
 from .crypto import KeyEncryptionUnavailable, decrypt_key, encrypt_key, last4
+from .tokens import UNCOUNTED, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -129,12 +130,20 @@ def get_llm_key(db, user_id: str) -> tuple:
 # ── Usage, for the owner-key spend cap ────────────────────────────────────────
 
 def record_usage(db, user_id: str, kind: str, provider: str, model: str,
-                 key_source: str) -> int:
-    """Record one billable action. Never stores a key or part of one."""
+                 key_source: str, usage: Optional[TokenUsage] = None) -> int:
+    """Record one billable action. Never stores a key or part of one.
+
+    `usage` is what the provider said the call cost (M1.B.2). It is optional
+    because a caller that has no usage to report must not be forced to invent
+    one: omitted means unknown, and the row's tokens_counted stays 0.
+    """
+    usage = usage or UNCOUNTED
     cur = db.conn.execute(
-        "INSERT INTO usage_events (user_id, kind, provider, model, key_source) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (user_id, kind, provider, model, key_source),
+        "INSERT INTO usage_events (user_id, kind, provider, model, key_source, "
+        "                          prompt_tokens, completion_tokens, tokens_counted) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (user_id, kind, provider, model, key_source,
+         usage.prompt, usage.completion, int(usage.counted)),
     )
     db.conn.commit()
     return int(cur.lastrowid)
@@ -181,13 +190,52 @@ def release_usage(db, usage_id: int) -> None:
     db.conn.commit()
 
 
-def finalize_usage(db, usage_id: int, provider: str, model: str) -> None:
-    """Fill in which provider and model the reserved slot actually used."""
+def finalize_usage(db, usage_id: int, provider: str, model: str,
+                   usage: Optional[TokenUsage] = None) -> None:
+    """Fill in what the reserved slot actually used: provider, model, and what
+    the call cost (M1.B.2).
+
+    This updates the row `reserve_owner_usage` already inserted rather than
+    inserting a second one. A second row would be counted by the cap, so a
+    single summary would consume two of the day's slots.
+    """
+    usage = usage or UNCOUNTED
     db.conn.execute(
-        "UPDATE usage_events SET provider = ?, model = ? WHERE id = ?",
-        (provider, model, usage_id),
+        "UPDATE usage_events SET provider = ?, model = ?, prompt_tokens = ?, "
+        "       completion_tokens = ?, tokens_counted = ? WHERE id = ?",
+        (provider, model, usage.prompt, usage.completion,
+         int(usage.counted), usage_id),
     )
     db.conn.commit()
+
+
+def session_token_totals(db, user_id: str, since: str) -> Dict[str, Any]:
+    """Tokens this user has spent since `since` (an ISO-ish UTC timestamp).
+
+    Returns counted totals plus how many calls could not be counted, so the
+    caller can say "18.4k + 2 uncounted" instead of presenting a total that
+    quietly omits them (M1.C.1, P2).
+    """
+    row = db.conn.execute(
+        "SELECT COALESCE(SUM(prompt_tokens), 0)     AS prompt, "
+        "       COALESCE(SUM(completion_tokens), 0) AS completion, "
+        "       COALESCE(SUM(tokens_counted), 0)    AS counted_calls, "
+        "       COUNT(*)                            AS calls "
+        "FROM usage_events WHERE user_id = ? AND created_at >= ?",
+        (user_id, since),
+    ).fetchone()
+    if row is None:                                   # pragma: no cover
+        return {"prompt": 0, "completion": 0, "total": 0,
+                "counted_calls": 0, "uncounted_calls": 0}
+    prompt, completion = int(row["prompt"]), int(row["completion"])
+    counted_calls = int(row["counted_calls"])
+    return {
+        "prompt": prompt,
+        "completion": completion,
+        "total": prompt + completion,
+        "counted_calls": counted_calls,
+        "uncounted_calls": int(row["calls"]) - counted_calls,
+    }
 
 
 def owner_usage_today(db, user_id: str, kind: str = "summary") -> int:

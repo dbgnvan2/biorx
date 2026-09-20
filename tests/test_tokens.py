@@ -229,3 +229,116 @@ def test_m1a2_every_provider_client_returns_a_pair():
                 f"{cls.__name__}.{method} returns {annotation}, not a "
                 "(value, TokenUsage) pair"
             )
+
+
+# ── M1.B: the usage log records what each call cost ───────────────────────────
+
+def _db(tmp_path):
+    from src.db import Database
+    return Database(str(tmp_path / "t.db"))
+
+
+def _columns(db, table):
+    return {r[1] for r in db.conn.execute(f"PRAGMA table_info({table})")}
+
+
+def test_m1b1_migration_is_additive_and_idempotent(tmp_path):
+    """The columns arrive without disturbing rows written before them, and a
+    second startup does not fail or duplicate them. Railway restarts the app
+    on every deploy, so this runs against a populated database every time."""
+    from src.db import Database
+
+    path = str(tmp_path / "m.db")
+    db = Database(path)
+    # A row from "before" the migration: strip the new columns back off by
+    # writing one with only the original fields.
+    db.conn.execute(
+        "INSERT INTO usage_events (user_id, kind, provider, model, key_source) "
+        "VALUES ('u1', 'summary', 'deepseek', 'deepseek-flash', 'owner')")
+    db.conn.commit()
+    db.close()
+
+    db = Database(path)                       # migration runs again on open
+    cols = _columns(db, "usage_events")
+    assert {"prompt_tokens", "completion_tokens", "tokens_counted"} <= cols
+
+    rows = db.conn.execute("SELECT * FROM usage_events").fetchall()
+    assert len(rows) == 1, "the migration must not duplicate or drop rows"
+    old = dict(rows[0])
+    assert old["user_id"] == "u1" and old["key_source"] == "owner"
+    # The decisive point: a pre-migration row reads as UNCOUNTED, not as a
+    # call that cost nothing.
+    assert old["tokens_counted"] == 0
+    db.close()
+
+
+def test_m1b2_owner_run_updates_the_reserved_row_not_a_new_one(tmp_path):
+    """The cap reserves a row up front. Recording tokens must fill that row in.
+    Inserting a second would make one summary eat two of the day's slots."""
+    from src import user_store
+
+    db = _db(tmp_path)
+    usage_id = user_store.reserve_owner_usage(db, "u1", "summary", cap=3,
+                                              provider="deepseek", model="m")
+    assert usage_id is not None
+    before = user_store.owner_usage_today(db, "u1")
+
+    user_store.finalize_usage(db, usage_id, "deepseek", "deepseek-flash",
+                              TokenUsage(prompt=7000, completion=400,
+                                         total=7400, counted=True))
+
+    rows = db.conn.execute("SELECT * FROM usage_events").fetchall()
+    assert len(rows) == 1, "a second row would be double-counted by the cap"
+    assert dict(rows[0])["prompt_tokens"] == 7000
+    assert dict(rows[0])["tokens_counted"] == 1
+    assert user_store.owner_usage_today(db, "u1") == before == 1
+    db.close()
+
+
+def test_m1b2_user_key_run_is_recorded_without_consuming_the_cap(tmp_path):
+    """A user on their own key is not capped, but their spend must still show
+    in the meter. The row is written with key_source='user', which the cap's
+    count ignores."""
+    from src import user_store
+
+    db = _db(tmp_path)
+    user_store.record_usage(db, "u1", "summary", "deepseek", "deepseek-flash",
+                            "user", TokenUsage(prompt=500, completion=50,
+                                               total=550, counted=True))
+    assert user_store.owner_usage_today(db, "u1") == 0      # cap untouched
+    totals = user_store.session_token_totals(db, "u1", "1970-01-01 00:00:00")
+    assert totals["total"] == 550 and totals["counted_calls"] == 1
+    db.close()
+
+
+def test_m1b2_an_uncounted_call_is_logged_but_adds_nothing(tmp_path):
+    """An Ollama run that reported no counts is a real call with an unknown
+    cost. It appears in the log and in the uncounted tally, and contributes
+    zero to the total rather than being dropped from the record (P2)."""
+    from src import user_store
+
+    db = _db(tmp_path)
+    user_store.record_usage(db, "u1", "summary", "ollama", "qwen3.5:4b", "none")
+    totals = user_store.session_token_totals(db, "u1", "1970-01-01 00:00:00")
+    assert totals["total"] == 0
+    assert totals["counted_calls"] == 0 and totals["uncounted_calls"] == 1
+    db.close()
+
+
+def test_m1c1_totals_cover_only_this_user_and_this_window(tmp_path):
+    """Another user's spend is never in your meter, and neither is spend from
+    before the window."""
+    from src import user_store
+
+    db = _db(tmp_path)
+    counted = TokenUsage(prompt=100, completion=10, total=110, counted=True)
+    user_store.record_usage(db, "u1", "summary", "d", "m", "user", counted)
+    user_store.record_usage(db, "u2", "summary", "d", "m", "user", counted)
+    db.conn.execute("UPDATE usage_events SET created_at = '2000-01-01 00:00:00' "
+                    "WHERE user_id = 'u1'")
+    db.conn.commit()
+    user_store.record_usage(db, "u1", "summary", "d", "m", "user", counted)
+
+    totals = user_store.session_token_totals(db, "u1", "2020-01-01 00:00:00")
+    assert totals["total"] == 110, "only u1's in-window call counts"
+    db.close()

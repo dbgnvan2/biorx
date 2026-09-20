@@ -149,6 +149,60 @@ def test_a_provider_failure_lands_as_an_error_status_not_a_hang(ctx, signed_in,
     assert "provider exploded" in body["error"]
 
 
+def test_m1b3_a_failed_run_still_records_the_tokens_it_spent(ctx, signed_in,
+                                                            monkeypatch, with_full_text):
+    """M1.B.3: the model ran and was billed, then something downstream failed.
+    The summary is lost; the record of what it cost must not be, or a run that
+    spent real money is invisible in the meter.
+
+    The provider is made to return a good usage alongside a reply that cannot
+    be coerced into a summary — billed, then unusable.
+    """
+    from src import user_store
+    from src.tokens import TokenUsage
+
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-owner")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+
+    spent = TokenUsage(prompt=6000, completion=200, total=6200, counted=True)
+    client = MagicMock()
+    # A reply the model was billed for, which then blows up on use.
+    client.summarize_paper.return_value = (None, spent)
+    with patch("src.llm_providers.build_client", return_value=client):
+        job_id = signed_in.post("/api/summaries", json={"paper": PAPER}).json()["job_id"]
+        body = _await(signed_in, job_id)
+
+    assert body["status"] == "error"
+    rows = [dict(r) for r in ctx.db.conn.execute(
+        "SELECT * FROM usage_events WHERE kind = 'summary'")]
+    assert len(rows) == 1, "the reserved slot is reused, not duplicated"
+    assert rows[0]["prompt_tokens"] == 6000
+    assert rows[0]["tokens_counted"] == 1
+
+
+def test_m1b2_a_run_that_never_reached_the_provider_records_no_tokens(
+        ctx, signed_in, monkeypatch, with_full_text):
+    """The mirror case: nothing was spent, so the reserved slot goes back and
+    no token row survives. A cap is a spend ceiling, not an attempt counter."""
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-owner")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+
+    client = MagicMock()
+    # Fails while gathering the text, before the model is ever called.
+    with patch("src.llm_providers.build_client", return_value=client), \
+         patch("web.routes_summaries._extract_text",
+               side_effect=RuntimeError("could not read the paper")):
+        job_id = signed_in.post("/api/summaries", json={"paper": PAPER}).json()["job_id"]
+        _await(signed_in, job_id)
+    client.summarize_paper.assert_not_called()
+
+    rows = ctx.db.conn.execute(
+        "SELECT COUNT(*) AS n FROM usage_events WHERE kind = 'summary'").fetchone()
+    assert rows["n"] == 0
+
+
 def test_an_ollama_none_return_is_an_error_not_a_blank_summary(ctx, signed_in,
                                                                monkeypatch, with_full_text):
     """
