@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-09-20 — token accounting, and a session meter
+
+Gate: `docs/cycles/2026-09-20_token-capture-qa-gate.md` (REJECTED twice, then
+APPROVED). Plan: `docs/implementation_plan_2026-09-20_references_batch.md` (M1).
+
+### Added
+- **A token meter in the header** showing what this session has spent, e.g.
+  `18.4k tokens this session`. It refreshes whenever something calls a model,
+  including when that call fails. Calls whose provider reported no counts are
+  named separately (`18.4k tokens + 2 uncounted`) rather than folded in as zero:
+  a total that quietly omits them would read as complete when it is not.
+- `GET /api/usage/session`. The window starts at the session cookie's issue
+  time, so signing out and back in starts a fresh count, and no new server-side
+  state is needed.
+- BioRx now records what every model call costs. No provider kept the usage
+  block the APIs already return, so nothing downstream could report spend.
+  `usage_events` gains `prompt_tokens`, `completion_tokens` and
+  `tokens_counted` (additive migration; rows written before it read as
+  *unknown*, never as free).
+
+### Fixed
+- A summary or discover run that failed **after** the model was called recorded
+  no tokens. The call had been billed and was invisible in the log.
+- Discover runs on a user's own key were never written to the usage log at all.
+- Downloaded PDFs were named `paper-<rowid>.pdf`. They are now named after the
+  paper, matching the desktop app's convention.
+
+### Known limitation
+- Token counts are what the provider reports. Ollama omits them on some
+  versions; those runs show as uncounted rather than free.
+
 ## 2026-09-19 — Search panel: sticky tabs, Select Filter, Ad Hoc Search
 
 Gate: `docs/cycles/2026-09-19_ui-enhancements-qa-gate.md` (APPROVED).

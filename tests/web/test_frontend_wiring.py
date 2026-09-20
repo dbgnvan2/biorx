@@ -133,6 +133,7 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/session/lookup",
         "/api/me",
         "/api/me/llm-key",
+        "/api/usage/session",
         "/api/me/llm-model",
         "/api/filters",
         "/api/filters/{param}",
@@ -649,6 +650,88 @@ def test_rn1_labels_match_the_desktop():
     assert "<strong>Saved Filters</strong>" in html
     assert "<h2>Saved Filters</h2>" not in html
     assert "Saved searches" not in html
+
+
+@pytest.mark.parametrize("usage,expected", [
+    # Nothing spent yet: the meter shows nothing rather than a bare "0".
+    ({"total": 0, "counted_calls": 0, "uncounted_calls": 0}, ""),
+    ({"total": 947, "counted_calls": 1, "uncounted_calls": 0},
+     "947 tokens this session"),
+    ({"total": 18432, "counted_calls": 3, "uncounted_calls": 0},
+     "18.4k tokens this session"),
+    ({"total": 184320, "counted_calls": 9, "uncounted_calls": 0},
+     "184k tokens this session"),
+    ({"total": 2300000, "counted_calls": 40, "uncounted_calls": 0},
+     "2.3M tokens this session"),
+    # The point of the separate tally: the total is real but incomplete, and
+    # the meter says so rather than implying it covers everything (P2).
+    ({"total": 18432, "counted_calls": 3, "uncounted_calls": 2},
+     "18.4k tokens + 2 uncounted this session"),
+    # Only uncounted calls: there is no honest number to show, so it says that
+    # instead of "0 tokens", which would read as "you have spent nothing".
+    ({"total": 0, "counted_calls": 0, "uncounted_calls": 1},
+     "1 call, cost not reported this session"),
+    ({"total": 0, "counted_calls": 0, "uncounted_calls": 3},
+     "3 calls, cost not reported this session"),
+])
+def test_m1c2_meter_formatting(usage, expected):
+    import json
+    got = _node_eval([_js_block(r"function compactTokens\(n\) \{.*?\n\}"),
+                      _js_block(r"function tokenMeterText\(usage\) \{.*?\n\}")],
+                     f"tokenMeterText({json.dumps(usage)})")
+    assert got == expected
+
+
+def test_m1c2_meter_is_empty_when_the_server_says_nothing():
+    """A missing or failed reading shows nothing, never a stale or invented
+    figure."""
+    got = _node_eval([_js_block(r"function compactTokens\(n\) \{.*?\n\}"),
+                      _js_block(r"function tokenMeterText\(usage\) \{.*?\n\}")],
+                     "tokenMeterText(null)")
+    assert got == ""
+
+
+def test_m1c2_token_meter_is_in_the_header():
+    """M1.C.2: the meter lives in the header, before Sign out so it can never
+    push that button off a narrow screen."""
+    html = INDEX.read_text()
+    # Two <header> blocks exist: the sign-in gate's and the app's. The app's is
+    # the one carrying Sign out.
+    blocks = re.findall(r"<header>.*?</header>", html, re.DOTALL | re.MULTILINE)
+    app_headers = [b for b in blocks if 'id="sign-out"' in b]
+    assert len(app_headers) == 1, "could not identify the app header"
+    block = app_headers[0]
+    assert 'id="token-meter"' in block
+    assert block.index('id="token-meter"') < block.index('id="sign-out"')
+
+
+def test_m1c2_the_meter_is_refreshed_after_anything_that_spends():
+    """Every path that calls a model refreshes the meter, including the failure
+    paths — a billed call that failed is exactly the one a user would otherwise
+    never see. A source check: these are callbacks the node harness does not
+    run."""
+    code = _js_without_comments()
+    for fn, why in [("startSummary", "a summary spends tokens"),
+                    ("pollDiscover", "discover spends tokens, including on failure"),
+                    ("showApp", "a reload continues the same session"),
+                    ("signOut", "the next user must not inherit the figure")]:
+        body = re.search(rf"(async )?function {fn}\(.*?\n\}}", code, re.DOTALL)
+        assert body, f"{fn} not found"
+        if fn == "signOut":
+            assert '$("token-meter").textContent = ""' in body.group(0), why
+        else:
+            assert "refreshTokenMeter()" in body.group(0), why
+
+
+def test_m1c2_a_failed_meter_read_does_not_disturb_the_page():
+    """The meter is decoration on someone else's work. If it cannot be read the
+    page carries on silently — it must not raise, and must not put an error in
+    the notice bar over a number nobody asked for."""
+    code = _js_without_comments()
+    body = re.search(r"async function refreshTokenMeter\(\) \{.*?\n\}",
+                     code, re.DOTALL).group(0)
+    assert "catch" in body
+    assert "notice(" not in body, "a failed meter read must not shout at the user"
 
 
 def test_e2_manual_search_card_is_called_ad_hoc_search():

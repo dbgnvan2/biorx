@@ -26,7 +26,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (routes_discover, routes_filters, routes_references,
-               routes_searches, routes_session, routes_summaries)
+               routes_searches, routes_session, routes_summaries, routes_usage)
 from .deps import AppContext, build_context
 
 logger = logging.getLogger(__name__)
@@ -100,6 +100,7 @@ def create_app(ctx: AppContext = None) -> FastAPI:
     application.include_router(routes_summaries.router)
     application.include_router(routes_references.router)
     application.include_router(routes_discover.router)
+    application.include_router(routes_usage.router)
 
     def _codes_file_warning(c: AppContext) -> list:
         # Public route: a count only, never names or codes (they are in the log).

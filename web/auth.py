@@ -102,6 +102,29 @@ def read_session_nonce(ctx: AppContext, token: Optional[str]):
         return None
 
 
+def session_started_at(ctx: AppContext, token: Optional[str]):
+    """When this session's cookie was issued, as a UTC datetime, or None.
+
+    The signing token already carries its issue time — itsdangerous stamps every
+    one so it can enforce max_age. Reading it back is what makes "this session"
+    a real window without storing any new state: no server-side session table,
+    nothing to expire, and it cannot disagree with the cookie the browser holds.
+
+    None when the cookie is missing, expired or untrustworthy, which the caller
+    must treat as "no window", never as "since the beginning of time" — that
+    would show one user a total built from another's history after a sign-out.
+    """
+    if not token:
+        return None
+    try:
+        _, issued = _serializer(ctx.session_secret).loads(
+            token, max_age=SESSION_MAX_AGE_SECONDS, return_timestamp=True
+        )
+    except (BadSignature, SignatureExpired):
+        return None
+    return issued
+
+
 def get_context(request: Request) -> AppContext:
     return request.app.state.ctx
 

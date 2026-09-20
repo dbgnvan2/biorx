@@ -90,6 +90,13 @@ progress { width: 100%; height: 6px; }
 .modal-box { width: min(760px, 100%); max-height: none; margin: 0; }
 body.modal-open { overflow: hidden; }
 
+/* Session token meter (M1.C.2). Sits between the spacer and Sign out, so it
+   never pushes that button off a narrow screen; on a phone the header wraps
+   and the meter takes its own line rather than colliding with the tab bar. */
+#token-meter { white-space: nowrap; font-variant-numeric: tabular-nums; }
+#token-meter:empty { display: none; }
+#token-meter .uncounted { font-style: italic; }
+
 /* The tab bar stays put at the top of the viewport while a panel is scrolled
    (E2): the tabs never scroll out of reach. */
 .tab-bar {

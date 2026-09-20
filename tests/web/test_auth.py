@@ -26,7 +26,8 @@ PUBLIC = {
 # The exact number of authenticated operations. An exact count, not a floor:
 # a floor stays satisfied while the route table halves (learnings P29). Update
 # this deliberately when a route is added or removed.
-PROTECTED_ROUTE_COUNT = 32   # + GET /api/references/{id}/summaries (RL1)
+PROTECTED_ROUTE_COUNT = 33   # + GET /api/usage/session (M1.C.1): it reports
+                             # one user's spending, so it needs a session
 
 
 def test_wrong_access_code_is_rejected(client):

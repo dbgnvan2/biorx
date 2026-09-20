@@ -286,6 +286,9 @@ function showRecoveryCode(code) {
 async function signOut() {
   try { await api("DELETE", "/api/session"); }
   catch (e) { notice(`Could not sign out: ${e.message}`); return; }
+  // The next person to sign in on this browser starts a new session and a new
+  // window; leaving the old figure on screen would attribute it to them.
+  $("token-meter").textContent = "";
   await showGate("");
 }
 
@@ -296,6 +299,9 @@ function showApp() {
   loadSources();
   loadSearchFilters();
   restoreActiveTab();
+  // On a reload the session, and so the meter's window, carries on from before
+  // — the count is not reset by opening the page again (M1.C.2).
+  refreshTokenMeter();
 }
 
 /* ── Local key storage ───────────────────────────────────────────────────── */
@@ -448,6 +454,51 @@ async function removeKey() {
   if (serverError) problems.push(`the key stored on the server was not removed: ${serverError}`);
   if (problems.length) notice(`Key not fully removed — ${problems.join("; ")}.`);
   else notice("Key removed.", "ok");
+}
+
+/* M1.C.2: the meter's text. Pure, for the node-run test.
+
+   An uncounted call is a real call whose cost the provider did not report.
+   Folding it into the total as zero would make the number read as complete
+   when it is not, so it is named separately (P2). */
+function tokenMeterText(usage) {
+  if (!usage) return "";
+  const counted = usage.counted_calls || 0;
+  const uncounted = usage.uncounted_calls || 0;
+  if (!counted && !uncounted) return "";
+  const parts = [];
+  if (counted) parts.push(`${compactTokens(usage.total || 0)} tokens`);
+  if (uncounted) {
+    parts.push(counted ? `+ ${uncounted} uncounted`
+                       : `${uncounted} call${uncounted === 1 ? "" : "s"}, cost not reported`);
+  }
+  return parts.join(" ") + " this session";
+}
+
+/* 947 → "947", 18432 → "18.4k", 184320 → "184k", 2300000 → "2.3M".
+   One decimal below 100 of a unit, whole numbers above: at 18k the decimal
+   still tells you something, at 184k it is noise. Pure, for the node-run test. */
+function compactTokens(n) {
+  if (n < 1000) return String(n);
+  if (n < 1000000) {
+    const k = n / 1000;
+    return (k < 100 ? k.toFixed(1) : Math.round(k)) + "k";
+  }
+  const m = n / 1000000;
+  return (m < 100 ? m.toFixed(1) : Math.round(m)) + "M";
+}
+
+/* Read the meter from the server. Never throws: a meter that cannot be read is
+   hidden, and must not interrupt the work the user actually asked for. */
+async function refreshTokenMeter() {
+  let usage = null;
+  try { usage = await api("GET", "/api/usage/session"); }
+  catch (e) { return; }
+  const el = $("token-meter");
+  el.textContent = "";
+  const text = tokenMeterText(usage);
+  if (!text) return;
+  el.appendChild(document.createTextNode(text));
 }
 
 async function refreshMe() {
@@ -1161,6 +1212,8 @@ async function startSummary(paper, button) {
         }
       }
       refreshMe();
+      // A summary is the main thing that spends tokens (M1.C.2).
+      refreshTokenMeter();
     }
   }, POLL_MS);
 }
@@ -1746,6 +1799,9 @@ async function pollDiscover() {
     clearInterval(state.discoverPolling);
     state.discoverPolling = null;
     $("btn-discover").disabled = false;
+    // Discover calls the model too — on the failure paths as well, which is
+    // where a billed call is easiest to forget (M1.C.2).
+    refreshTokenMeter();
     const failed = (job.sources_failed || []).length ? " " + failedSourcesText(job) : "";
     if (job.status === "done" && job.result && job.result.papers_found === 0) {
       $("discover-terms-chips").textContent =
