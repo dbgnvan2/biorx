@@ -697,6 +697,40 @@ def test_pf1_default_list_name(label, expected):
     assert got == expected
 
 
+@pytest.mark.parametrize("title,doi,expected", [
+    ("Social Baseline Theory: The Social Regulation of Risk",
+     "10.1016/j.copsyc.2014.12.021",
+     "10.1016_j.copsyc.2014.12.021_Social_Baseline_Theory_The_Social_Regul.pdf"),
+    # No DOI: the title alone still names the file.
+    ("Loneliness and consumption", "", "Loneliness_and_consumption.pdf"),
+    # No title: the DOI alone does.
+    ("", "10.1234/abc", "10.1234_abc.pdf"),
+    # Neither: only then does the opaque id appear.
+    ("", "null", "paper-42.pdf"),
+    # Punctuation and runs of whitespace collapse; no leading/trailing "_".
+    ("  *Great* paper (2024)!  ", "", "Great_paper_2024.pdf"),
+])
+def test_dl1_downloaded_pdf_is_named_after_the_paper(title, doi, expected):
+    """A PDF arriving in the downloads folder must be identifiable. The name
+    follows the desktop app's convention so the same paper is called the same
+    thing whichever front end fetched it."""
+    # "null" is passed through as the JS literal, for the no-DOI-at-all case.
+    js_doi = "null" if doi == "null" else repr(doi)
+    got = _node_eval([_js_block(r"function pdfFileName\(title, doi, paperId\) \{.*?\n\}")],
+                     f"pdfFileName({title!r}, {js_doi}, 42)")
+    assert got == expected
+
+
+def test_dl1_the_download_uses_that_name():
+    """The opaque paper-<id>.pdf name must not survive anywhere in the
+    downloader: a source-level check, since the loop is not node-runnable."""
+    code = _js_without_comments()
+    body = re.search(r"async function downloadRefPdfs\(selectedOnly\) \{.*?\n\}",
+                     code, re.DOTALL).group(0)
+    assert "a.download = pdfFileName(paper.title, paper.doi, paperId)" in body
+    assert "`paper-${paperId}.pdf`" not in body
+
+
 def test_sp6_references_tab_has_the_pdf_export():
     assert 'id="btn-ref-export-summaries"' in INDEX.read_text()
     assert "/api/references/{param}/summaries.pdf" in _api_paths_called_by_js()

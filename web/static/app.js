@@ -1964,6 +1964,24 @@ async function removeRefSelected() {
   }
 }
 
+/* The name a downloaded PDF lands under in the browser's downloads folder.
+   Mirrors the desktop app's convention (src/pdf_handler._get_safe_filename) so
+   the same paper is called the same thing whichever front end fetched it:
+   <doi>_<title>.pdf, with "/" in the DOI replaced. ASCII-only on purpose —
+   a downloads folder is not the place to discover an encoding problem. Falls
+   back to the paper id only when there is neither a DOI nor a title.
+   Pure, for the node-run test. */
+function pdfFileName(title, doi, paperId) {
+  const safeDoi = doi ? String(doi).replace(/\//g, "_").slice(0, 50) : "";
+  const safeTitle = String(title || "")
+    .slice(0, 40)
+    .replace(/[^\w\s-]/g, "")
+    .replace(/[-\s]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  const stem = [safeDoi, safeTitle].filter(Boolean).join("_");
+  return `${stem || `paper-${paperId}`}.pdf`;
+}
+
 async function downloadRefPdfs(selectedOnly) {
   if (!state.activeListId) return;
   const itemIds = selectedOnly
@@ -1978,8 +1996,9 @@ async function downloadRefPdfs(selectedOnly) {
   for (const itemId of itemIds) {
     const item = state.refItems.find(i => String(i.item_id) === String(itemId));
     if (!item) { failures.push(`item ${itemId}: no longer in the list`); continue; }
-    const title = ((item.paper || item).title || `paper ${itemId}`).slice(0, 60);
-    const paperId = (item.paper || item).paper_id;
+    const paper = item.paper || item;
+    const title = (paper.title || `paper ${itemId}`).slice(0, 60);
+    const paperId = paper.paper_id;
     try {
       const resp = await api("GET", `/api/references/${state.activeListId}/pdf/${paperId}`, undefined, { raw: true });
       if (resp.status === 401) return;      // api() has shown the sign-in page
@@ -1988,7 +2007,7 @@ async function downloadRefPdfs(selectedOnly) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `paper-${paperId}.pdf`;
+        a.download = pdfFileName(paper.title, paper.doi, paperId);
         a.click();
         // Revoking in the same tick can cancel the download in some browsers.
         setTimeout(() => URL.revokeObjectURL(url), 10000);
