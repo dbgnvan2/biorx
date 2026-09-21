@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -144,3 +144,94 @@ def from_ollama(data: Any) -> TokenUsage:
         _whole(data.get("eval_count")),
         "Ollama",
     )
+
+
+# ── Estimating a batch before it runs (M5) ────────────────────────────────────
+#
+# These produce a RANGE, and every caller must present it as an estimate. The
+# upper bound is not a guess: max_text_chars caps what is ever sent to the
+# model, so a summary cannot exceed it however long the paper is. The lower
+# bound is a short paper. What the estimate cannot know is which of the two a
+# given paper turns out to be — hence a range rather than a figure.
+
+
+def _settings(config: Mapping) -> Mapping:
+    """The token_estimate block, or {} — callers fall back per key (P4)."""
+    got = (config or {}).get("token_estimate")
+    return got if isinstance(got, Mapping) else {}
+
+
+def _setting(config: Mapping, key: str, fallback):
+    value = _settings(config).get(key, fallback)
+    return value if isinstance(value, (int, float)) and value >= 0 else fallback
+
+
+def rate_for(config: Mapping, model: str) -> Optional[Mapping]:
+    """USD per 1M tokens for a model, or None when none is configured.
+
+    None means "no price is known", and the caller must show token counts
+    without a dollar figure. Substituting another model's rate, or a zero,
+    would put a number on screen that nobody can stand behind.
+    """
+    rates = _settings(config).get("rates")
+    if not isinstance(rates, Mapping):
+        return None
+    entry = rates.get(model)
+    if not isinstance(entry, Mapping):
+        return None
+    if not isinstance(entry.get("input"), (int, float)):
+        return None
+    if not isinstance(entry.get("output"), (int, float)):
+        return None
+    return entry
+
+
+def _dollars(config: Mapping, model: str, prompt: int, completion: int) -> Optional[float]:
+    rate = rate_for(config, model)
+    if rate is None:
+        return None
+    return (prompt * rate["input"] + completion * rate["output"]) / 1_000_000
+
+
+def estimate_summary_tokens(n_papers: int, config: Mapping,
+                            model: str = "") -> Dict[str, Any]:
+    """What summarizing `n_papers` is likely to cost (M5.A.1).
+
+    Returns low/high token totals, and low/high dollars when the model has a
+    configured rate. `exact` is False: this is an estimate and every caller
+    must say so.
+    """
+    if n_papers <= 0:
+        return {"papers": 0, "low": 0, "high": 0, "exact": False,
+                "dollars_low": None, "dollars_high": None, "model": model}
+
+    per_token = _setting(config, "chars_per_token", 4) or 4
+    low_chars = _setting(config, "text_chars_low", 3000)
+    high_chars = _setting(config, "max_text_chars", 0) or (config or {}).get(
+        "max_text_chars", 12000)
+    overhead = _setting(config, "prompt_overhead_tokens", 200)
+    out_low = _setting(config, "completion_tokens_low", 150)
+    out_high = _setting(config, "completion_tokens_high", 600)
+
+    prompt_low = int(low_chars / per_token) + int(overhead)
+    prompt_high = int(high_chars / per_token) + int(overhead)
+
+    low = n_papers * (prompt_low + int(out_low))
+    high = n_papers * (prompt_high + int(out_high))
+    return {
+        "papers": n_papers,
+        "low": low,
+        "high": high,
+        "exact": False,
+        "dollars_low": _dollars(config, model, n_papers * prompt_low,
+                                n_papers * int(out_low)),
+        "dollars_high": _dollars(config, model, n_papers * prompt_high,
+                                 n_papers * int(out_high)),
+        "model": model,
+    }
+
+
+def estimate_text_tokens(text: str, config: Mapping) -> int:
+    """Tokens in text that is already in hand — no guessing about its length."""
+    per_token = _setting(config, "chars_per_token", 4) or 4
+    return int(len(text or "") / per_token)

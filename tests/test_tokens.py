@@ -445,3 +445,124 @@ def test_gate2_both_spending_routes_use_the_shared_recorder():
         )
         # The private per-route helper this replaced must not come back.
         assert "def _record_spend" not in source
+
+
+# ── M5: estimating a batch before it runs ─────────────────────────────────────
+
+def _config(**overrides):
+    base = {
+        "max_text_chars": 12000,
+        "token_estimate": {
+            "chars_per_token": 4,
+            "text_chars_low": 3000,
+            "prompt_overhead_tokens": 200,
+            "completion_tokens_low": 150,
+            "completion_tokens_high": 600,
+            "rates": {"claude-sonnet-5": {"input": 2.0, "output": 10.0}},
+        },
+    }
+    base["token_estimate"].update(overrides)
+    return base
+
+
+def test_m5a1_estimate_scales_and_is_a_range():
+    from src.tokens import estimate_summary_tokens
+
+    one = estimate_summary_tokens(1, _config(), "claude-sonnet-5")
+    ten = estimate_summary_tokens(10, _config(), "claude-sonnet-5")
+
+    assert one["low"] < one["high"], "an estimate that is a single number is a lie"
+    assert one["exact"] is False, "callers must be able to see this is an estimate"
+    assert ten["low"] == one["low"] * 10
+    assert ten["high"] == one["high"] * 10
+
+
+def test_m5a1_the_upper_bound_is_the_hard_text_cap():
+    """The high end is not a guess about long papers: max_text_chars is the cap
+    on what is ever sent, so no summary can exceed it. Raising the cap must
+    raise the estimate, or the estimate stops describing the system."""
+    from src.tokens import estimate_summary_tokens
+
+    normal = estimate_summary_tokens(1, _config(), "claude-sonnet-5")
+    bigger = dict(_config())
+    bigger["max_text_chars"] = 24000
+    raised = estimate_summary_tokens(1, bigger, "claude-sonnet-5")
+    assert raised["high"] > normal["high"]
+
+
+def test_m5a1_zero_papers_estimates_nothing():
+    from src.tokens import estimate_summary_tokens
+
+    got = estimate_summary_tokens(0, _config(), "claude-sonnet-5")
+    assert got["low"] == got["high"] == 0
+    assert got["dollars_low"] is None
+
+
+def test_m5a1_a_model_with_no_configured_rate_shows_no_price():
+    """The decisive honesty check. Falling back to another model's rate, or to
+    zero, would put a dollar figure on screen that nobody can stand behind —
+    worse than showing token counts alone."""
+    from src.tokens import estimate_summary_tokens
+
+    got = estimate_summary_tokens(5, _config(), "deepseek-flash")
+    assert got["low"] > 0, "token counts are still shown"
+    assert got["dollars_low"] is None and got["dollars_high"] is None
+
+
+@pytest.mark.parametrize("rates", [
+    None, {}, {"claude-sonnet-5": None}, {"claude-sonnet-5": {"input": 2.0}},
+    {"claude-sonnet-5": {"input": "two", "output": 10.0}},
+])
+def test_m5a1_a_malformed_rate_is_no_rate(rates):
+    """A half-written rate in the config must not become half a price."""
+    from src.tokens import rate_for
+
+    assert rate_for(_config(rates=rates), "claude-sonnet-5") is None
+
+
+def test_m5a1_rates_come_from_config_not_source():
+    """P4: prices are external facts that go stale. A rate table written into
+    Python is one nobody will find when it changes.
+
+    The check is for a literal rate table — a price keyed by "input"/"output" —
+    not for provider names, which appear legitimately in docstrings describing
+    each dialect.
+    """
+    source = (Path(__file__).parent.parent / "src" / "tokens.py").read_text()
+    literal_rate = re.search(r'["\'](?:input|output)["\']\s*:\s*[\d.]+', source)
+    assert literal_rate is None, (
+        f"a price literal is in the estimator source: {literal_rate.group(0)}"
+    )
+    # And the config is where they actually live.
+    config = (Path(__file__).parent.parent / "llm_config.yaml").read_text()
+    assert "rates:" in config and "input:" in config
+
+
+def test_m5a1_dollars_follow_the_configured_rate():
+    """The arithmetic, against a rate whose value is known here."""
+    from src.tokens import estimate_summary_tokens
+
+    got = estimate_summary_tokens(1, _config(), "claude-sonnet-5")
+    # low: 3000/4 + 200 = 950 prompt, 150 completion
+    assert got["low"] == 1100
+    expected = (950 * 2.0 + 150 * 10.0) / 1_000_000
+    assert abs(got["dollars_low"] - expected) < 1e-9
+
+
+def test_m5a2_text_already_in_hand_is_measured_not_guessed():
+    """A review runs on stored text, so its size is known — no range needed."""
+    from src.tokens import estimate_text_tokens
+
+    assert estimate_text_tokens("x" * 4000, _config()) == 1000
+    assert estimate_text_tokens("", _config()) == 0
+    assert estimate_text_tokens(None, _config()) == 0
+
+
+def test_m5a1_missing_config_falls_back_rather_than_crashing():
+    """A deployment with no token_estimate block still gets an estimate (P4
+    fallbacks), and still no invented price."""
+    from src.tokens import estimate_summary_tokens
+
+    got = estimate_summary_tokens(3, {}, "claude-sonnet-5")
+    assert got["low"] > 0 and got["high"] > got["low"]
+    assert got["dollars_low"] is None

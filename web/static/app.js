@@ -2191,6 +2191,178 @@ async function saveRefList() {
     : `Saved ${state.refItems.length} paper(s) as ${format.toUpperCase()}.`;
 }
 
+/* M5.A.3/M5.A.4: what the confirm dialog says about cost. An estimate is
+   always labelled as one, and a model with no configured rate shows token
+   counts with no dollar figure rather than an invented price. Pure, for the
+   node-run test. */
+function spendEstimateText(est) {
+  if (!est || !est.papers) return "";
+  const tokens = `${compactTokens(est.low)}–${compactTokens(est.high)} tokens`;
+  const money = (est.dollars_low != null && est.dollars_high != null)
+    ? `, roughly ${formatMoney(est.dollars_low)}–${formatMoney(est.dollars_high)}`
+    : ", cost depends on your provider's rates";
+  return `Estimated ${tokens}${money}. This is an estimate, not a quote.`;
+}
+
+/* $0.0272 → "$0.03"; $0.0004 → "less than $0.01". Pure, for the node-run test. */
+function formatMoney(amount) {
+  if (amount < 0.01) return "less than $0.01";
+  return "$" + amount.toFixed(2);
+}
+
+/* Who pays, and what is left of a shared allowance. Pure, for the node-run
+   test — the user must know whose money this is before pressing Go ahead. */
+function spendKeyText(est) {
+  if (!est) return "";
+  if (est.billed_to_owner) {
+    return `Billed to the shared key (${est.provider}). ` +
+           `${est.cap_remaining} of today's allowance left.`;
+  }
+  if (est.key_source === "user") return `Billed to your own ${est.provider} key.`;
+  return `Running on ${est.provider}, which costs nothing.`;
+}
+
+/* FR: the cap will stop the run part-way. Said before it starts, not after.
+   Pure, for the node-run test. */
+function capWarningText(est) {
+  if (!est || !est.billed_to_owner || est.cap_remaining == null) return "";
+  if (est.cap_remaining >= est.papers) return "";
+  if (est.cap_remaining === 0) {
+    return "Today's allowance on the shared key is used up. Add your own API " +
+           "key in Settings, or try again tomorrow.";
+  }
+  return `Only ${est.cap_remaining} of these ${est.papers} can run today on ` +
+         `the shared key. The rest will be left for tomorrow.`;
+}
+
+/* Show the spend dialog and resolve true only if the user agrees. Nothing is
+   sent before that (M5.A.3). */
+function confirmSpend(title, est) {
+  $("spend-title").textContent = title;
+  $("spend-count").textContent = `${est.papers} paper(s) selected.`;
+  $("spend-estimate").textContent = spendEstimateText(est);
+  $("spend-key").textContent = spendKeyText(est);
+  const warning = capWarningText(est);
+  $("spend-cap").textContent = warning;
+  $("spend-cap").classList.toggle("hidden", !warning);
+  $("spend-go").disabled = est.billed_to_owner && est.cap_remaining === 0;
+
+  $("spend-modal").classList.remove("hidden");
+  document.body.classList.add("modal-open");
+  return new Promise((resolve) => {
+    const close = (answer) => {
+      $("spend-modal").classList.add("hidden");
+      document.body.classList.remove("modal-open");
+      $("spend-go").onclick = null;
+      $("spend-cancel").onclick = null;
+      resolve(answer);
+    };
+    $("spend-go").onclick = () => close(true);
+    $("spend-cancel").onclick = () => close(false);
+  });
+}
+
+/* M3: summarize every ticked paper, one at a time through the same per-paper
+   job the single Summarize button uses. No batch endpoint: the owner-key cap
+   is reserved per paper by that route, and a second copy of the cap logic is
+   how caps get bypassed.
+
+   Papers that already have a summary are skipped, and the skip is reported.
+   One failure does not abandon the rest (P1), and the run says what it did:
+   "N of M", never a bare "done". */
+async function summarizeChecked() {
+  if (!state.activeListId) return;
+  const ticked = Array.from(
+    $("ref-papers-body").querySelectorAll("input[data-item-id]:checked"))
+    .map(cb => String(cb.dataset.itemId));
+  if (!ticked.length) { notice("Tick some papers first."); return; }
+
+  const papers = ticked
+    .map(id => state.refItems.find(i => String(i.item_id) === id))
+    .filter(Boolean)
+    .map(i => i.paper || i);
+
+  let est;
+  try { est = await api("GET", `/api/usage/estimate?papers=${papers.length}`); }
+  catch (e) { notice(`Could not work out the cost: ${e.message}`); return; }
+  if (!await confirmSpend("Summarize checked papers", est)) return;
+
+  const status = $("ref-dl-status");
+  status.classList.remove("hidden");
+  let done = 0, skipped = 0, stoppedByCap = false;
+  const failures = [];
+
+  for (const [index, paper] of papers.entries()) {
+    status.textContent = `Summarizing ${index + 1} of ${papers.length}…`;
+    try {
+      const stored = await api("POST", "/api/summaries/lookup", { paper });
+      if (stored && stored.source_text !== "abstract") { skipped++; continue; }
+    } catch (e) {
+      if (e.status !== 404) { failures.push(`${shortTitle(paper)}: ${e.message}`); continue; }
+    }
+    const outcome = await summarizeOnePaper(paper);
+    if (outcome.cap) { stoppedByCap = true; break; }
+    if (outcome.ok) done++;
+    else failures.push(`${shortTitle(paper)}: ${outcome.error}`);
+  }
+
+  refreshTokenMeter();
+  await selectRefList(state.activeListId);
+  status.textContent = batchSummaryReport(
+    { total: papers.length, done, skipped, stoppedByCap, failures });
+  if (failures.length) notice(status.textContent, "warn");
+}
+
+function shortTitle(paper) {
+  return (paper.title || "untitled").slice(0, 60);
+}
+
+/* P2: the run reports what it did and what it did not, never a bare "done".
+   Pure, for the node-run test. */
+function batchSummaryReport({ total, done, skipped, stoppedByCap, failures }) {
+  const parts = [`Summarized ${done} of ${total}`];
+  if (skipped) parts.push(`${skipped} already had a summary`);
+  if (failures.length) parts.push(`${failures.length} failed`);
+  let text = parts.join("; ") + ".";
+  if (stoppedByCap) {
+    text += " Today's allowance on the shared key ran out, so the rest were " +
+            "not run.";
+  }
+  if (failures.length) text += " " + failures.slice(0, 3).join("; ");
+  return text;
+}
+
+/* One paper, start to finish. Resolves {ok} / {error} / {cap} — the cap is its
+   own outcome because it means "stop", not "this one failed". */
+async function summarizeOnePaper(paper) {
+  const local = localSettings();
+  const body = { paper, find_by_title: findByTitle() };
+  if (local.key) {
+    body.api_key = local.key;
+    body.provider = local.provider || state.me.provider;
+    body.model = local.model || "";
+  }
+  let job;
+  try { job = await api("POST", "/api/summaries", body); }
+  catch (e) {
+    if (e.status === 429) return { cap: true };
+    return { error: e.message };
+  }
+  for (;;) {
+    await new Promise(r => setTimeout(r, POLL_MS));
+    let status;
+    try { status = await api("GET", `/api/summaries/${job.job_id}`); }
+    catch (e) {
+      if ([401, 404, 410].includes(e.status)) return { error: e.message };
+      continue;                       // a blip is not a failed summary (P1)
+    }
+    if (status.status === "done") return { ok: true };
+    if (["error", "cancelled"].includes(status.status)) {
+      return { error: status.error || status.status };
+    }
+  }
+}
+
 /* The open list's name, for the download filename. */
 function refListName() {
   const list = (state.refLists || []).find(
@@ -2292,6 +2464,7 @@ function wire() {
   $("btn-ref-dl-selected").addEventListener("click", () => downloadRefPdfs(true));
   $("btn-ref-dl-all").addEventListener("click", () => downloadRefPdfs(false));
   $("btn-ref-save-list").addEventListener("click", saveRefList);
+  $("btn-ref-summarize-checked").addEventListener("click", summarizeChecked);
   $("select-all-refs").addEventListener("change",
     (e) => toggleSelectAllRefs(e.target.checked));
   $("btn-ref-export-summaries").addEventListener("click", exportRefSummariesPdf);

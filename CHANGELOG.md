@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-20 — Summarize checked, with a cost estimate first
+
+Plan: `docs/implementation_plan_2026-09-20_references_batch.md` (M3, M5).
+
+### Added
+- **Summarize checked** on the Saved References tab. Papers are summarized one
+  at a time through the same per-paper path the single Summarize button uses,
+  so the shared-key daily allowance is claimed per paper exactly as before.
+- **A confirm dialog before anything is spent**, showing how many papers, an
+  estimated token range, whose key pays, and how much of today's shared
+  allowance is left. Nothing is sent until you agree.
+- `GET /api/usage/estimate`.
+
+### Notes
+- The estimate is a range and says so. Its upper bound is not a guess:
+  `max_text_chars` caps what is ever sent to the model, so no summary can
+  exceed it. What the estimate cannot know is which end a given paper falls at.
+- A dollar figure appears only for models with a rate in `llm_config.yaml`.
+  Anthropic's rates ship; DeepSeek's are left for you to fill in from their
+  pricing page, because a wrong price is worse than no price. Token counts show
+  either way.
+- Papers that already have a summary are skipped and counted. One failure does
+  not abandon the rest. A run that the allowance stops part-way says so, and
+  the report is always "N of M", never a bare "done".
+
 ## 2026-09-20 — Saved References: Select All, and Save as CSV/RTF/PDF
 
 Plan: `docs/implementation_plan_2026-09-20_references_batch.md` (M2, M6).

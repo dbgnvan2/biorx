@@ -139,3 +139,66 @@ def test_m1c1_an_unreadable_cookie_reports_zero_not_a_lifetime_total(signed_in, 
     body = signed_in.get("/api/usage/session").json()
     assert body["total"] == 0
     assert body["session_start"] is None
+
+
+# ── M5: the estimate endpoint ─────────────────────────────────────────────────
+
+def test_m5a3_estimate_requires_a_signed_in_user(client):
+    assert client.get("/api/usage/estimate?papers=3").status_code == 401
+
+
+def test_m5a3_estimate_reports_a_range_and_who_pays(signed_in, ctx, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-owner")
+    monkeypatch.setenv("SUMMARY_DAILY_CAP_PER_USER", "25")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+
+    body = signed_in.get("/api/usage/estimate?papers=8").json()
+    assert body["papers"] == 8
+    assert body["low"] < body["high"], "an estimate must be a range"
+    assert body["exact"] is False
+    assert body["billed_to_owner"] is True
+    assert body["cap_remaining"] == 25
+
+
+def test_m5a3_the_cap_remaining_falls_as_it_is_used(signed_in, ctx, monkeypatch):
+    """The dialog's allowance figure must reflect what has already been spent
+    today, or it promises room that is not there."""
+    from src import user_store
+
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-owner")
+    monkeypatch.setenv("SUMMARY_DAILY_CAP_PER_USER", "5")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    user_id = signed_in.get("/api/me").json()["user_id"]
+
+    user_store.reserve_owner_usage(ctx.db, user_id, "summary", 5, "deepseek", "m")
+    user_store.reserve_owner_usage(ctx.db, user_id, "summary", 5, "deepseek", "m")
+
+    body = signed_in.get("/api/usage/estimate?papers=8").json()
+    assert body["cap_remaining"] == 3
+
+
+def test_m5a3_a_user_on_their_own_key_is_not_capped(signed_in, ctx, monkeypatch,
+                                                    enc_secret):
+    """A user paying for their own calls has no allowance to report."""
+    from src import user_store
+
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    user_id = signed_in.get("/api/me").json()["user_id"]
+    user_store.set_llm_key(ctx.db, user_id, "deepseek", "sk-their-own-key")
+
+    body = signed_in.get("/api/usage/estimate?papers=8").json()
+    assert body["billed_to_owner"] is False
+    assert body["cap_remaining"] is None
+    assert body["key_source"] == "user"
+
+
+def test_m5a1_zero_papers_estimates_nothing(signed_in, ctx, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-owner")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+
+    body = signed_in.get("/api/usage/estimate?papers=0").json()
+    assert body["low"] == 0 and body["high"] == 0

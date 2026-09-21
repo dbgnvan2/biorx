@@ -134,6 +134,7 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/me",
         "/api/me/llm-key",
         "/api/usage/session",
+        "/api/usage/estimate",
         "/api/references/{param}/save",
         "/api/me/llm-model",
         "/api/filters",
@@ -812,6 +813,158 @@ def test_m2a1_select_all_is_in_the_references_table_header():
                       html, re.DOTALL)
     assert panel, "the References panel was not found"
     assert 'id="select-all-refs"' in panel.group(0)
+
+
+# ── M3/M5: Summarize checked, and the confirm dialog ──────────────────────────
+
+_EST_BLOCKS = [
+    r"function compactTokens\(n\) \{.*?\n\}",
+    r"function formatMoney\(amount\) \{.*?\n\}",
+    r"function spendEstimateText\(est\) \{.*?\n\}",
+    r"function spendKeyText\(est\) \{.*?\n\}",
+    r"function capWarningText\(est\) \{.*?\n\}",
+]
+
+
+def _est_eval(expr):
+    return _node_eval([_js_block(b) for b in _EST_BLOCKS], expr)
+
+
+def test_m5a4_the_estimate_is_always_labelled_an_estimate():
+    """M5.A.4: an estimate presented as a fact is the failure this exists to
+    prevent."""
+    import json
+    est = {"papers": 8, "low": 8800, "high": 30400,
+           "dollars_low": 0.0272, "dollars_high": 0.0992}
+    got = _est_eval(f"spendEstimateText({json.dumps(est)})")
+    assert "8.8k–30.4k tokens" in got
+    assert "estimate, not a quote" in got
+    assert "$0.03" in got and "$0.10" in got
+
+
+def test_m5a1_no_configured_rate_means_no_dollar_figure():
+    """The dialog shows token counts and says where the price would come from,
+    rather than printing a number nobody can stand behind."""
+    import json
+    est = {"papers": 8, "low": 8800, "high": 30400,
+           "dollars_low": None, "dollars_high": None}
+    got = _est_eval(f"spendEstimateText({json.dumps(est)})")
+    assert "8.8k–30.4k tokens" in got
+    assert "$" not in got
+    assert "depends on your provider" in got
+
+
+def test_m5a3_tiny_amounts_are_not_rounded_to_zero():
+    """"$0.00" reads as free. It is not."""
+    assert _est_eval("formatMoney(0.0004)") == "less than $0.01"
+    assert _est_eval("formatMoney(0.0272)") == "$0.03"
+
+
+@pytest.mark.parametrize("est,expected", [
+    ({"billed_to_owner": True, "provider": "deepseek", "cap_remaining": 20},
+     "Billed to the shared key (deepseek). 20 of today's allowance left."),
+    ({"billed_to_owner": False, "key_source": "user", "provider": "anthropic"},
+     "Billed to your own anthropic key."),
+    ({"billed_to_owner": False, "key_source": "none", "provider": "ollama"},
+     "Running on ollama, which costs nothing."),
+])
+def test_m5a3_dialog_states_whose_key_pays(est, expected):
+    """Before spending, the user must know whose money it is."""
+    import json
+    assert _est_eval(f"spendKeyText({json.dumps(est)})") == expected
+
+
+@pytest.mark.parametrize("remaining,papers,expect", [
+    (20, 8, ""),                                   # room for all of them
+    (3, 8, "Only 3 of these 8"),                   # will stop part-way
+    (0, 8, "allowance on the shared key is used up"),
+])
+def test_m5a3_the_cap_is_announced_before_the_run_not_after(remaining, papers, expect):
+    """P2 before the fact: if the allowance will stop the run part-way, say so
+    while the user can still choose, not in the summary afterwards."""
+    import json
+    est = {"billed_to_owner": True, "cap_remaining": remaining, "papers": papers}
+    got = _est_eval(f"capWarningText({json.dumps(est)})")
+    assert expect in got
+    if not expect:
+        assert got == ""
+
+
+def test_m5a3_no_request_leaves_before_the_user_confirms():
+    """The decisive check: the estimate is fetched, then nothing is spent until
+    confirmSpend resolves true."""
+    code = _js_without_comments()
+    body = re.search(r"async function summarizeChecked\(\) \{.*?\n\}",
+                     code, re.DOTALL).group(0)
+    confirm_at = body.index("confirmSpend")
+    post_at = body.index('api("POST"') if 'api("POST"' in body else len(body)
+    assert confirm_at < post_at, "a request is made before the user confirms"
+    assert "if (!await confirmSpend" in body
+
+
+def test_m3a1_the_batch_uses_the_per_paper_route():
+    """No batch endpoint: the owner-key cap is reserved per paper by
+    POST /api/summaries, and a second copy of that logic is how caps get
+    bypassed."""
+    code = _js_without_comments()
+    one = re.search(r"async function summarizeOnePaper\(paper\) \{.*?\n\}",
+                    code, re.DOTALL).group(0)
+    assert 'api("POST", "/api/summaries"' in one
+    assert "/api/summaries/batch" not in code
+
+
+def test_m3a1_a_cap_refusal_stops_the_batch_rather_than_failing_one_paper():
+    """429 means the allowance is gone — carrying on would just collect
+    refusals."""
+    code = _js_without_comments()
+    one = re.search(r"async function summarizeOnePaper\(paper\) \{.*?\n\}",
+                    code, re.DOTALL).group(0)
+    assert "e.status === 429" in one and "cap: true" in one
+    batch = re.search(r"async function summarizeChecked\(\) \{.*?\n\}",
+                      code, re.DOTALL).group(0)
+    assert "outcome.cap" in batch and "break" in batch
+
+
+def test_m3a3_a_polling_blip_does_not_fail_the_summary():
+    """P1: one failed status check is not a failed summary; only a definite
+    answer ends it."""
+    code = _js_without_comments()
+    one = re.search(r"async function summarizeOnePaper\(paper\) \{.*?\n\}",
+                    code, re.DOTALL).group(0)
+    assert "[401, 404, 410].includes(e.status)" in one
+    assert "continue" in one
+
+
+@pytest.mark.parametrize("state,expected", [
+    ({"total": 5, "done": 5, "skipped": 0, "stoppedByCap": False, "failures": []},
+     "Summarized 5 of 5."),
+    ({"total": 5, "done": 3, "skipped": 2, "stoppedByCap": False, "failures": []},
+     "Summarized 3 of 5; 2 already had a summary."),
+    ({"total": 5, "done": 2, "skipped": 0, "stoppedByCap": True, "failures": []},
+     "Summarized 2 of 5. Today's allowance on the shared key ran out, so the "
+     "rest were not run."),
+])
+def test_m3a2_the_run_reports_what_it_did_and_did_not_do(state, expected):
+    """P2: never a bare "done". Skips, failures and a cap stop are all named."""
+    import json
+    got = _node_eval([_js_block(r"function batchSummaryReport\(\{ total, done, skipped, stoppedByCap, failures \}\) \{.*?\n\}")],
+                     f"batchSummaryReport({json.dumps(state)})")
+    assert got == expected
+
+
+def test_m3a2_failures_are_named_not_just_counted():
+    import json
+    got = _node_eval([_js_block(r"function batchSummaryReport\(\{ total, done, skipped, stoppedByCap, failures \}\) \{.*?\n\}")],
+                     'batchSummaryReport({total: 3, done: 1, skipped: 0, '
+                     'stoppedByCap: false, failures: ["A paper: no full text"]})')
+    assert "1 failed" in got and "A paper: no full text" in got
+
+
+def test_m3a1_summarize_checked_is_on_the_references_tab():
+    html = INDEX.read_text()
+    assert 'id="btn-ref-summarize-checked"' in html
+    assert ">Summarize checked<" in html
+    assert 'id="spend-modal"' in html
 
 
 # ── M6: Save Reference List, with a format choice ─────────────────────────────

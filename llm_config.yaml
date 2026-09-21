@@ -58,6 +58,36 @@ providers:
 # amount dropped is logged (standards L7, learnings P9).
 max_text_chars: 12000
 
+# Estimating what a batch will cost BEFORE running it (plan 2026-09-20 M5).
+# Everything here is an estimate shown to the user, never a billing figure.
+token_estimate:
+  # Characters per token. ~4 for English prose; scientific text with many
+  # symbols runs a little denser, which is part of why a range is shown.
+  chars_per_token: 4
+  # The extracted text of a paper, in characters. The high end is not a guess:
+  # max_text_chars above is the hard cap on what is ever sent to the model, so
+  # no summary can exceed it. The low end is a short letter or brief report.
+  text_chars_low: 3000
+  # What the instructions add to every summary prompt, on top of the paper.
+  prompt_overhead_tokens: 200
+  # What a summary comes back as.
+  completion_tokens_low: 150
+  completion_tokens_high: 600
+  # USD per 1,000,000 tokens, by model. A model with no entry here shows token
+  # counts and no dollar figure, rather than a made-up price.
+  #
+  # These are external prices that go stale. Check them against the provider's
+  # pricing page and update the date when you do.
+  rates:
+    # Anthropic, from the published price list, checked 2026-09-20.
+    claude-opus-5:    {input: 5.00,  output: 25.00}
+    claude-sonnet-5:  {input: 2.00,  output: 10.00}
+    claude-haiku-4-5: {input: 1.00,  output: 5.00}
+    # DeepSeek: add your rate from platform.deepseek.com/pricing. Left out on
+    # purpose — a wrong price is worse than no price, and BioRx will show the
+    # token counts either way.
+    # deepseek-flash: {input: 0.00, output: 0.00}
+
 # Summaries billed to the OWNER's key, per user per UTC day. A user on their own
 # key is not capped. The access code is shared, so this is the ceiling on what a
 # leaked code can spend.
