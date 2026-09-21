@@ -83,10 +83,16 @@ token_estimate:
     claude-opus-5:    {input: 5.00,  output: 25.00}
     claude-sonnet-5:  {input: 2.00,  output: 10.00}
     claude-haiku-4-5: {input: 1.00,  output: 5.00}
-    # DeepSeek: add your rate from platform.deepseek.com/pricing. Left out on
-    # purpose — a wrong price is worse than no price, and BioRx will show the
-    # token counts either way.
-    # deepseek-flash: {input: 0.00, output: 0.00}
+    # DeepSeek, from api-docs.deepseek.com/quick_start/pricing, checked
+    # 2026-09-21. These are the PEAK rates. DeepSeek charges half off-peak
+    # (peak is 01:00-04:00 and 06:00-10:00 UTC, Mon-Fri), so an estimate made
+    # with these is an upper bound on the price and a run may cost less —
+    # which is the direction an estimate should err.
+    #
+    # Cache-hit input is far cheaper ($0.006/1M peak), but BioRx does not use
+    # prompt caching, so the cache-miss rate is the one that applies.
+    deepseek-flash:   {input: 0.30,  output: 1.20}
+    deepseek-v4-pro:  {input: 1.32,  output: 3.96}
 
 # Summaries billed to the OWNER's key, per user per UTC day. A user on their own
 # key is not capped. The access code is shared, so this is the ceiling on what a

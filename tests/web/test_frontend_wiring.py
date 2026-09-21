@@ -935,9 +935,36 @@ def test_m3a3_a_polling_blip_does_not_fail_the_summary():
     assert "continue" in one
 
 
+def test_live1_a_sub_cent_range_does_not_read_as_nonsense():
+    """Found by running a real batch: both ends under a cent format the same,
+    and "roughly less than $0.01–less than $0.01" is gibberish. One figure when
+    they agree."""
+    import json
+    est = {"papers": 3, "low": 3300, "high": 11400,
+           "dollars_low": 0.0014, "dollars_high": 0.005}
+    got = _est_eval(f"spendEstimateText({json.dumps(est)})")
+    assert "less than $0.01–less than $0.01" not in got
+    assert "roughly less than $0.01." in got or "roughly less than $0.01," in got
+
+
+def test_live1_a_real_range_still_shows_both_ends():
+    """The collapse must not swallow a range that genuinely spans."""
+    import json
+    est = {"papers": 300, "low": 330000, "high": 1140000,
+           "dollars_low": 0.14, "dollars_high": 0.50}
+    got = _est_eval(f"spendEstimateText({json.dumps(est)})")
+    assert "$0.14–$0.50" in got
+
+
 @pytest.mark.parametrize("state,expected", [
     ({"total": 5, "done": 5, "skipped": 0, "stoppedByCap": False, "failures": []},
      "Summarized 5 of 5."),
+    # Found by running a real batch: 3 papers, but the model only read one —
+    # the other two had no free full text, so the abstract was kept and no
+    # model ran. Reporting "3 of 3" claimed work that never happened.
+    ({"total": 3, "done": 1, "abstractOnly": 2, "skipped": 0,
+      "stoppedByCap": False, "failures": []},
+     "Summarized 1 of 3; 2 kept as abstract only (no full text found)."),
     ({"total": 5, "done": 3, "skipped": 2, "stoppedByCap": False, "failures": []},
      "Summarized 3 of 5; 2 already had a summary."),
     ({"total": 5, "done": 2, "skipped": 0, "stoppedByCap": True, "failures": []},
@@ -947,14 +974,28 @@ def test_m3a3_a_polling_blip_does_not_fail_the_summary():
 def test_m3a2_the_run_reports_what_it_did_and_did_not_do(state, expected):
     """P2: never a bare "done". Skips, failures and a cap stop are all named."""
     import json
-    got = _node_eval([_js_block(r"function batchSummaryReport\(\{ total, done, skipped, stoppedByCap, failures \}\) \{.*?\n\}")],
+    got = _node_eval([_js_block(r"function batchSummaryReport\(\{ total, done, abstractOnly = 0, skipped,\n.*?\n\}")],
                      f"batchSummaryReport({json.dumps(state)})")
     assert got == expected
 
 
+def test_live1_an_abstract_only_run_is_not_counted_as_summarized():
+    """The decisive check for the reporting bug: the model never read these
+    papers, so they must not be inside the "summarized" figure."""
+    code = _js_without_comments()
+    one = re.search(r"async function summarizeOnePaper\(paper\) \{.*?\n\}",
+                    code, re.DOTALL).group(0)
+    assert 'source_text === "abstract"' in one, (
+        "the batch cannot tell a model summary from a kept abstract"
+    )
+    batch = re.search(r"async function summarizeChecked\(\) \{.*?\n\}",
+                      code, re.DOTALL).group(0)
+    assert "abstractOnly" in batch
+
+
 def test_m3a2_failures_are_named_not_just_counted():
     import json
-    got = _node_eval([_js_block(r"function batchSummaryReport\(\{ total, done, skipped, stoppedByCap, failures \}\) \{.*?\n\}")],
+    got = _node_eval([_js_block(r"function batchSummaryReport\(\{ total, done, abstractOnly = 0, skipped,\n.*?\n\}")],
                      'batchSummaryReport({total: 3, done: 1, skipped: 0, '
                      'stoppedByCap: false, failures: ["A paper: no full text"]})')
     assert "1 failed" in got and "A paper: no full text" in got

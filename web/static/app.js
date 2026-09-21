@@ -2198,9 +2198,14 @@ async function saveRefList() {
 function spendEstimateText(est) {
   if (!est || !est.papers) return "";
   const tokens = `${compactTokens(est.low)}–${compactTokens(est.high)} tokens`;
-  const money = (est.dollars_low != null && est.dollars_high != null)
-    ? `, roughly ${formatMoney(est.dollars_low)}–${formatMoney(est.dollars_high)}`
-    : ", cost depends on your provider's rates";
+  let money = ", cost depends on your provider's rates";
+  if (est.dollars_low != null && est.dollars_high != null) {
+    const low = formatMoney(est.dollars_low);
+    const high = formatMoney(est.dollars_high);
+    // Both ends under a cent format the same, and "less than $0.01–less than
+    // $0.01" is nonsense. One figure when they agree.
+    money = low === high ? `, roughly ${low}` : `, roughly ${low}–${high}`;
+  }
   return `Estimated ${tokens}${money}. This is an estimate, not a quote.`;
 }
 
@@ -2289,7 +2294,7 @@ async function summarizeChecked() {
 
   const status = $("ref-dl-status");
   status.classList.remove("hidden");
-  let done = 0, skipped = 0, stoppedByCap = false;
+  let done = 0, abstractOnly = 0, skipped = 0, stoppedByCap = false;
   const failures = [];
 
   for (const [index, paper] of papers.entries()) {
@@ -2302,14 +2307,15 @@ async function summarizeChecked() {
     }
     const outcome = await summarizeOnePaper(paper);
     if (outcome.cap) { stoppedByCap = true; break; }
-    if (outcome.ok) done++;
+    if (outcome.ok && outcome.abstractOnly) abstractOnly++;
+    else if (outcome.ok) done++;
     else failures.push(`${shortTitle(paper)}: ${outcome.error}`);
   }
 
   refreshTokenMeter();
   await selectRefList(state.activeListId);
   status.textContent = batchSummaryReport(
-    { total: papers.length, done, skipped, stoppedByCap, failures });
+    { total: papers.length, done, abstractOnly, skipped, stoppedByCap, failures });
   if (failures.length) notice(status.textContent, "warn");
 }
 
@@ -2319,8 +2325,13 @@ function shortTitle(paper) {
 
 /* P2: the run reports what it did and what it did not, never a bare "done".
    Pure, for the node-run test. */
-function batchSummaryReport({ total, done, skipped, stoppedByCap, failures }) {
+function batchSummaryReport({ total, done, abstractOnly = 0, skipped,
+                             stoppedByCap, failures }) {
   const parts = [`Summarized ${done} of ${total}`];
+  if (abstractOnly) {
+    // Named, not folded into the total: the model never read these papers.
+    parts.push(`${abstractOnly} kept as abstract only (no full text found)`);
+  }
   if (skipped) parts.push(`${skipped} already had a summary`);
   if (failures.length) parts.push(`${failures.length} failed`);
   let text = parts.join("; ") + ".";
@@ -2356,7 +2367,13 @@ async function summarizeOnePaper(paper) {
       if ([401, 404, 410].includes(e.status)) return { error: e.message };
       continue;                       // a blip is not a failed summary (P1)
     }
-    if (status.status === "done") return { ok: true };
+    if (status.status === "done") {
+      // FT1: with no full text found the abstract is kept and no model runs.
+      // Counting that as "summarized" would tell the user three papers were
+      // summarized when the model only read one.
+      const result = status.result || {};
+      return { ok: true, abstractOnly: result.source_text === "abstract" };
+    }
     if (["error", "cancelled"].includes(status.status)) {
       return { error: status.error || status.status };
     }

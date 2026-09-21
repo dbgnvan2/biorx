@@ -24,6 +24,12 @@ Plan: `docs/implementation_plan_2026-09-20_references_batch.md` (M3, M5).
 - Papers that already have a summary are skipped and counted. One failure does
   not abandon the rest. A run that the allowance stops part-way says so, and
   the report is always "N of M", never a bare "done".
+- A paper with no free full text has its abstract kept and no model is called.
+  Those are reported separately — "Summarized 1 of 3; 2 kept as abstract only"
+  — because counting them as summarized would claim work the model never did.
+- DeepSeek's rates are now in `llm_config.yaml`, from their published pricing
+  page (checked 2026-09-21). They are the peak rates; DeepSeek charges half
+  off-peak, so the estimate is an upper bound on the price.
 
 ## 2026-09-20 — Saved References: Select All, and Save as CSV/RTF/PDF
 
