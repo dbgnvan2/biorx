@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-09-21 — Review checked papers
+
+Gate: `docs/cycles/2026-09-21_batch-summarize-qa-gate.md` (REJECTED, fixed).
+Plan: `docs/implementation_plan_2026-09-20_references_batch.md` (M4).
+
+### Added
+- **Review checked** on the Saved References tab: one synthesis across the
+  ticked papers — shared themes, disagreements, gaps — in a single model call.
+- The review says what it was able to read: "Based on 2 full-text summaries and
+  4 abstracts." A paper with neither is named as not covered, and so is any
+  paper dropped because the combined text was too long to send.
+- Reviews are stored and survive a reload. A new review does not replace the
+  last, so a synthesis can be compared with one made before more papers were
+  summarized.
+
+### Notes
+- A review reads only stored text and fetches nothing, so its cost is known
+  before it runs rather than estimated.
+- A review draws on the same daily allowance as a summary — it cannot sidestep
+  the cap by being a different kind of call.
+- A list with no summaries and no abstracts is refused without calling the
+  model: a review of nothing would be invention.
+
+### Fixed
+- The cost dialog could name the wrong payer. A key held only in the browser
+  was resolved as the shared key, so the dialog showed an allowance that did
+  not apply and could refuse a run the user's own key would have paid for.
+  The estimate now resolves credentials through the same function the spend
+  path uses.
+- A stuck server turned a batch into a silent forever-loop; it now gives up and
+  says so, as the single Summarize button already did.
+- A second click could start a concurrent batch and bill twice on a user's own
+  key.
+
 ## 2026-09-20 — Summarize checked, with a cost estimate first
 
 Plan: `docs/implementation_plan_2026-09-20_references_batch.md` (M3, M5).

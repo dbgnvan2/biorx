@@ -1886,7 +1886,10 @@ async function selectRefList(listId) {
     state.refSummaries = [];
     renderRefItems();
   } catch (e) { notice(e.message); return; }
+  // A review made earlier survives a reload and a change of list (M4.A.3).
+  $("ref-review").classList.add("hidden");
   await refreshRefSummaries(listId);
+  await loadStoredReview(listId);
 }
 
 /* RL1: which papers in the open list already have a stored summary. */
@@ -2191,6 +2194,19 @@ async function saveRefList() {
     : `Saved ${state.refItems.length} paper(s) as ${format.toUpperCase()}.`;
 }
 
+/* The estimate request, carrying whatever credential the run itself would
+   use. Built in one place so the estimate and the run cannot disagree. */
+function estimateBody(papers) {
+  const local = localSettings();
+  const body = { papers };
+  if (local.key) {
+    body.api_key = local.key;
+    body.provider = local.provider || (state.me && state.me.provider) || "";
+    body.model = local.model || "";
+  }
+  return body;
+}
+
 /* M5.A.3/M5.A.4: what the confirm dialog says about cost. An estimate is
    always labelled as one, and a model with no configured rate shows token
    counts with no dollar figure rather than an invented price. Pure, for the
@@ -2277,6 +2293,10 @@ function confirmSpend(title, est) {
    "N of M", never a bare "done". */
 async function summarizeChecked() {
   if (!state.activeListId) return;
+  // A second click would start a concurrent batch; on a user's own uncapped
+  // key the papers still in flight would run and bill twice. startSummary has
+  // its own dedup set for the same reason (gate 2026-09-21 finding 4).
+  if (state.batchRunning) return;
   const ticked = Array.from(
     $("ref-papers-body").querySelectorAll("input[data-item-id]:checked"))
     .map(cb => String(cb.dataset.itemId));
@@ -2287,15 +2307,21 @@ async function summarizeChecked() {
     .filter(Boolean)
     .map(i => i.paper || i);
 
+  // The estimate must resolve the SAME credentials the run will use, or the
+  // dialog names the wrong payer — a key held only in localStorage looked like
+  // the shared key (gate 2026-09-21 finding 1). Sent as a POST body so the key
+  // never reaches a URL.
   let est;
-  try { est = await api("GET", `/api/usage/estimate?papers=${papers.length}`); }
+  try { est = await api("POST", "/api/usage/estimate", estimateBody(papers.length)); }
   catch (e) { notice(`Could not work out the cost: ${e.message}`); return; }
   if (!await confirmSpend("Summarize checked papers", est)) return;
 
   const status = $("ref-dl-status");
   status.classList.remove("hidden");
+  setBatchRunning(true);
   let done = 0, abstractOnly = 0, skipped = 0, stoppedByCap = false;
   const failures = [];
+  try {
 
   for (const [index, paper] of papers.entries()) {
     status.textContent = `Summarizing ${index + 1} of ${papers.length}…`;
@@ -2312,11 +2338,25 @@ async function summarizeChecked() {
     else failures.push(`${shortTitle(paper)}: ${outcome.error}`);
   }
 
+  } finally {
+    // Released even if a paper threw, or the button stays dead for the session.
+    setBatchRunning(false);
+  }
+
   refreshTokenMeter();
   await selectRefList(state.activeListId);
   status.textContent = batchSummaryReport(
     { total: papers.length, done, abstractOnly, skipped, stoppedByCap, failures });
   if (failures.length) notice(status.textContent, "warn");
+}
+
+/* One batch at a time, and the buttons show it. */
+function setBatchRunning(running) {
+  state.batchRunning = running;
+  for (const id of ["btn-ref-summarize-checked", "btn-ref-review-checked"]) {
+    const button = $(id);
+    if (button) button.disabled = running;
+  }
 }
 
 function shortTitle(paper) {
@@ -2359,14 +2399,27 @@ async function summarizeOnePaper(paper) {
     if (e.status === 429) return { cap: true };
     return { error: e.message };
   }
+  let blips = 0;
   for (;;) {
     await new Promise(r => setTimeout(r, POLL_MS));
     let status;
     try { status = await api("GET", `/api/summaries/${job.job_id}`); }
     catch (e) {
-      if ([401, 404, 410].includes(e.status)) return { error: e.message };
+      // Same rule as startSummary: only an unreachable server is retried, and
+      // it is announced. Retrying every error turned a stuck server into a
+      // silent forever-loop where the single button would have reported it
+      // (gate 2026-09-21 finding 3).
+      if (e.status !== 0) return { error: e.message };
+      blips += 1;
+      if (blips === 3) {
+        notice("Can't reach the server — still waiting for the summaries.", "warn");
+      }
+      if (blips >= POLL_GIVE_UP) {
+        return { error: "lost track of this summary — the server stopped answering" };
+      }
       continue;                       // a blip is not a failed summary (P1)
     }
+    blips = 0;
     if (status.status === "done") {
       // FT1: with no full text found the abstract is kept and no model runs.
       // Counting that as "summarized" would tell the user three papers were
@@ -2377,6 +2430,144 @@ async function summarizeOnePaper(paper) {
     if (["error", "cancelled"].includes(status.status)) {
       return { error: status.error || status.status };
     }
+  }
+}
+
+/* M4: one synthesis across the ticked papers. The preview says what would be
+   read and what it would cost before anything is sent — near-exact, because
+   the prompt is built from text already stored (M5.A.2). */
+async function reviewChecked() {
+  if (!state.activeListId) return;
+  if (state.batchRunning) return;
+  const ticked = Array.from(
+    $("ref-papers-body").querySelectorAll("input[data-item-id]:checked"))
+    .map(cb => String(cb.dataset.itemId));
+
+  // The "?" stays in the literal so the path is still readable as
+  // /api/references/{id}/review-preview by anything parsing this source.
+  const query = ticked.length ? `item_ids=${encodeURIComponent(ticked.join(","))}` : "";
+  let preview;
+  try {
+    preview = await api("GET",
+      `/api/references/${state.activeListId}/review-preview?${query}`);
+  } catch (e) { notice(`Could not work out what to review: ${e.message}`); return; }
+
+  if (!preview.papers) {
+    notice("None of these papers have a summary or an abstract stored, so " +
+           "there is nothing to review yet.", "warn");
+    return;
+  }
+  // Who pays comes from the same resolution the run uses, for the same reason.
+  let payer = {};
+  try { payer = await api("POST", "/api/usage/estimate", estimateBody(0)); }
+  catch (e) { /* the preview still shows what would be read */ }
+  if (!await confirmSpend("Review checked papers",
+                          reviewEstimate(preview, payer))) return;
+
+  const status = $("ref-dl-status");
+  status.classList.remove("hidden");
+  status.textContent = `Reviewing ${preview.papers} paper(s)…`;
+  setBatchRunning(true);
+
+  const local = localSettings();
+  const body = { list_id: state.activeListId };
+  if (ticked.length) body.item_ids = ticked.join(",");
+  if (local.key) {
+    body.api_key = local.key;
+    body.provider = local.provider || state.me.provider;
+    body.model = local.model || "";
+  }
+
+  let job;
+  try { job = await api("POST", "/api/reviews", body); }
+  catch (e) {
+    status.textContent = `Review failed: ${e.message}`;
+    setBatchRunning(false);
+    return;
+  }
+
+  for (;;) {
+    await new Promise(r => setTimeout(r, POLL_MS));
+    let poll;
+    try { poll = await api("GET", `/api/reviews/${job.job_id}`); }
+    catch (e) {
+      if (e.status !== 0) {
+        status.textContent = `Review failed: ${e.message}`;
+        setBatchRunning(false);
+        return;
+      }
+      continue;                      // unreachable server: a blip (P1)
+    }
+    if (poll.phase) status.textContent = poll.phase;
+    if (poll.status === "done") {
+      renderReview(poll.result);
+      status.textContent = `Reviewed ${preview.papers} paper(s).`;
+      break;
+    }
+    if (["error", "cancelled"].includes(poll.status)) {
+      status.textContent = `Review failed: ${poll.error || poll.status}`;
+      break;
+    }
+  }
+  setBatchRunning(false);
+  refreshTokenMeter();
+}
+
+/* The preview in the shape confirmSpend expects. The token count is measured,
+   not estimated, so both ends of the "range" are the same figure — which
+   spendEstimateText already collapses. Pure, for the node-run test. */
+function reviewEstimate(preview, payer = {}) {
+  return {
+    papers: preview.papers,
+    low: preview.prompt_tokens,
+    high: preview.prompt_tokens,
+    exact: true,
+    dollars_low: null,
+    dollars_high: null,
+    provider: payer.provider || "",
+    key_source: payer.key_source || "",
+    billed_to_owner: !!payer.billed_to_owner,
+    cap_remaining: payer.cap_remaining,
+  };
+}
+
+/* Show a review, with what it was able to read. The basis note is not
+   decoration: a reader who cannot see that four of six papers were abstracts
+   will take the synthesis as better grounded than it is. */
+function renderReview(review) {
+  if (!review || !review.review_text) {
+    $("ref-review").classList.add("hidden");
+    return;
+  }
+  $("ref-review").classList.remove("hidden");
+  $("ref-review-text").textContent = review.review_text;
+  $("ref-review-basis").textContent = review.basis_note || "";
+  $("ref-review-when").textContent = review.created_at
+    ? `Made ${review.created_at.slice(0, 10)} · ${review.model_version || ""}`
+    : "";
+
+  const text = leftOutText(review.left_out || []);
+  $("ref-review-left-out").textContent = text;
+  $("ref-review-left-out").classList.toggle("hidden", !text);
+}
+
+/* P2: papers the review could not cover are named, not quietly absent.
+   Pure, for the node-run test. */
+function leftOutText(leftOut) {
+  if (!leftOut.length) return "";
+  const names = leftOut.slice(0, 3).map(p => p.title).join("; ");
+  const more = leftOut.length > 3 ? `, and ${leftOut.length - 3} more` : "";
+  return `Not covered by this review: ${names}${more}. ` +
+         `(${leftOut[0].reason})`;
+}
+
+/* Load any stored review when a list is opened, so it survives a reload. */
+async function loadStoredReview(listId) {
+  try {
+    const stored = await api("GET", `/api/references/${listId}/review`);
+    if (state.activeListId === listId) renderReview(stored);
+  } catch (e) {
+    $("ref-review").classList.add("hidden");   // 404 = never reviewed
   }
 }
 
@@ -2482,6 +2673,7 @@ function wire() {
   $("btn-ref-dl-all").addEventListener("click", () => downloadRefPdfs(false));
   $("btn-ref-save-list").addEventListener("click", saveRefList);
   $("btn-ref-summarize-checked").addEventListener("click", summarizeChecked);
+  $("btn-ref-review-checked").addEventListener("click", reviewChecked);
   $("select-all-refs").addEventListener("change",
     (e) => toggleSelectAllRefs(e.target.checked));
   $("btn-ref-export-summaries").addEventListener("click", exportRefSummariesPdf);

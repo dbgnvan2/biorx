@@ -324,6 +324,7 @@
           <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">
             <span id="ref-checked-count" class="muted small">0 selected</span>
             <button id="btn-ref-summarize-checked" class="small">Summarize checked</button>
+            <button id="btn-ref-review-checked" class="small">Review checked</button>
             <button id="btn-ref-remove-selected" class="small">Remove selected</button>
             <span class="spacer"></span>
             <button id="btn-ref-dl-selected" class="small">⬇ Download selected PDFs</button>
@@ -338,6 +339,19 @@
             <button id="btn-ref-export-summaries" class="small">Save summaries (PDF)</button>
           </div>
           <div id="ref-dl-status" class="muted small hidden" style="margin-top:4px"></div>
+
+          <!-- The synthesis across the checked papers (M4). What it was able
+               to read is shown with it, never only stored. -->
+          <div id="ref-review" class="hidden" style="margin-top:14px">
+            <hr>
+            <div class="row" style="align-items:center">
+              <h3 style="margin:8px 0;flex:1">Review</h3>
+              <span id="ref-review-when" class="muted small"></span>
+            </div>
+            <p id="ref-review-basis" class="muted small" style="margin:0 0 8px"></p>
+            <div id="ref-review-left-out" class="banner warn hidden small"></div>
+            <div id="ref-review-text" class="summary"></div>
+          </div>
         </div>
 
       </div>

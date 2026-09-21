@@ -144,7 +144,8 @@ def test_m1c1_an_unreadable_cookie_reports_zero_not_a_lifetime_total(signed_in, 
 # ── M5: the estimate endpoint ─────────────────────────────────────────────────
 
 def test_m5a3_estimate_requires_a_signed_in_user(client):
-    assert client.get("/api/usage/estimate?papers=3").status_code == 401
+    assert client.post("/api/usage/estimate",
+                       json={"papers": 3}).status_code == 401
 
 
 def test_m5a3_estimate_reports_a_range_and_who_pays(signed_in, ctx, monkeypatch):
@@ -153,7 +154,7 @@ def test_m5a3_estimate_reports_a_range_and_who_pays(signed_in, ctx, monkeypatch)
     monkeypatch.setenv("SUMMARY_DAILY_CAP_PER_USER", "25")
     ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
 
-    body = signed_in.get("/api/usage/estimate?papers=8").json()
+    body = signed_in.post("/api/usage/estimate", json={"papers": 8}).json()
     assert body["papers"] == 8
     assert body["low"] < body["high"], "an estimate must be a range"
     assert body["exact"] is False
@@ -175,7 +176,7 @@ def test_m5a3_the_cap_remaining_falls_as_it_is_used(signed_in, ctx, monkeypatch)
     user_store.reserve_owner_usage(ctx.db, user_id, "summary", 5, "deepseek", "m")
     user_store.reserve_owner_usage(ctx.db, user_id, "summary", 5, "deepseek", "m")
 
-    body = signed_in.get("/api/usage/estimate?papers=8").json()
+    body = signed_in.post("/api/usage/estimate", json={"papers": 8}).json()
     assert body["cap_remaining"] == 3
 
 
@@ -189,7 +190,7 @@ def test_m5a3_a_user_on_their_own_key_is_not_capped(signed_in, ctx, monkeypatch,
     user_id = signed_in.get("/api/me").json()["user_id"]
     user_store.set_llm_key(ctx.db, user_id, "deepseek", "sk-their-own-key")
 
-    body = signed_in.get("/api/usage/estimate?papers=8").json()
+    body = signed_in.post("/api/usage/estimate", json={"papers": 8}).json()
     assert body["billed_to_owner"] is False
     assert body["cap_remaining"] is None
     assert body["key_source"] == "user"
@@ -200,5 +201,73 @@ def test_m5a1_zero_papers_estimates_nothing(signed_in, ctx, monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-owner")
     ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
 
-    body = signed_in.get("/api/usage/estimate?papers=0").json()
+    body = signed_in.post("/api/usage/estimate", json={"papers": 0}).json()
     assert body["low"] == 0 and body["high"] == 0
+
+
+def test_gate1_a_localstorage_only_key_is_reported_as_the_users_own(
+        signed_in, ctx, monkeypatch):
+    """Gate 2026-09-21 finding 1. A key held only in the browser is a supported
+    mode, and the spend path bills it — but the estimate resolved credentials
+    with its own copy of the logic that only looked at the server-stored key,
+    so the dialog said "billed to the shared key", showed an allowance that did
+    not apply, and could refuse a run the user's own key would have paid for.
+
+    A spend dialog that names the wrong payer is worse than no dialog.
+    """
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-owner")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+
+    body = signed_in.post("/api/usage/estimate", json={
+        "papers": 5, "api_key": "sk-in-the-browser-only",
+        "provider": "anthropic", "model": "claude-sonnet-5"}).json()
+
+    assert body["billed_to_owner"] is False, "an inline key was billed to the owner"
+    assert body["key_source"] == "user"
+    assert body["cap_remaining"] is None, "an allowance was shown that does not apply"
+    assert body["provider"] == "anthropic"
+    # And the price follows the model that will actually run.
+    assert body["dollars_low"] is not None
+
+
+def test_gate1_the_estimate_and_the_spend_path_resolve_the_same_way(signed_in, ctx,
+                                                                   monkeypatch):
+    """The structural guarantee behind the fix: one function, not two copies."""
+    import inspect
+
+    from web import routes_summaries, routes_usage
+
+    assert hasattr(routes_summaries, "resolve_credentials")
+    estimate_src = inspect.getsource(routes_usage.estimate)
+    assert "resolve_credentials(" in estimate_src
+    # The private second copy must not come back.
+    assert not hasattr(routes_usage, "_user_credentials")
+
+
+def test_gate2_no_credential_anywhere_is_answered_not_a_500(signed_in, ctx,
+                                                            monkeypatch):
+    """Gate finding 2: the estimate 500-ed where its sibling gives a clean
+    answer. It reports the situation instead."""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+
+    r = signed_in.post("/api/usage/estimate", json={"papers": 3})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["key_source"] == "missing"
+    assert body["billed_to_owner"] is False
+    assert body["low"] > 0, "the token counts are still useful without a key"
+
+
+def test_gate1_the_inline_key_never_travels_in_a_url():
+    """It would reach access logs and browser history. A POST body, like the
+    sibling routes that take the same field."""
+    from web import routes_usage
+
+    routes = [r for r in routes_usage.router.routes
+              if getattr(r, "path", "") == "/api/usage/estimate"]
+    assert routes, "the estimate route is missing"
+    assert set(routes[0].methods) == {"POST"}

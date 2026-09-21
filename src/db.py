@@ -377,6 +377,27 @@ class Database:
             )
         """)
 
+        # Cross-paper reviews (plan 2026-09-20 M4). One per list per run; a
+        # new review does not replace the last, so a synthesis can be compared
+        # with an earlier one after more papers were summarized.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_reviews (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id       TEXT NOT NULL,
+                list_id       INTEGER NOT NULL
+                                  REFERENCES user_reference_lists(id) ON DELETE CASCADE,
+                review_text   TEXT NOT NULL,
+                basis_note    TEXT DEFAULT '',
+                contributors  TEXT DEFAULT '[]',
+                left_out      TEXT DEFAULT '[]',
+                model_version TEXT DEFAULT '',
+                created_at    TEXT NOT NULL
+                                  DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_reviews_list "
+                       "ON user_reviews(user_id, list_id, created_at)")
+
         self.conn.commit()
         self._run_migrations(cursor)
         self.conn.commit()

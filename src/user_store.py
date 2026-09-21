@@ -220,6 +220,48 @@ def finalize_usage(db, usage_id: int, provider: str, model: str,
     db.conn.commit()
 
 
+def save_review(db, user_id: str, list_id: int, review_text: str,
+                basis_note: str, contributors: List[Dict[str, Any]],
+                left_out: List[Dict[str, Any]], model_version: str) -> int:
+    """Store one cross-paper review (M4.A.3).
+
+    What it was based on is stored with it, not derived later: the papers in a
+    list change, so a review read next month must still say what it read when
+    it was written.
+    """
+    cur = db.conn.execute(
+        "INSERT INTO user_reviews (user_id, list_id, review_text, basis_note, "
+        "                          contributors, left_out, model_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (user_id, list_id, review_text, basis_note,
+         json.dumps(contributors), json.dumps(left_out), model_version),
+    )
+    db.conn.commit()
+    return int(cur.lastrowid)
+
+
+def latest_review(db, user_id: str, list_id: int) -> Optional[Dict[str, Any]]:
+    """The most recent review of this list belonging to this user, or None.
+
+    user_id is in the WHERE clause, not checked afterwards: another account's
+    review must be invisible, not merely unrendered.
+    """
+    row = db.conn.execute(
+        "SELECT * FROM user_reviews WHERE user_id = ? AND list_id = ? "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        (user_id, list_id),
+    ).fetchone()
+    if row is None:
+        return None
+    out = dict(row)
+    for key in ("contributors", "left_out"):
+        try:
+            out[key] = json.loads(out.get(key) or "[]")
+        except ValueError:
+            out[key] = []
+    return out
+
+
 def record_spend(db, user_id: str, kind: str, provider: str, model: str,
                  key_source: str, usage_id: Optional[int],
                  usage: Optional[TokenUsage] = None) -> None:

@@ -57,23 +57,23 @@ class SummaryRequest(BaseModel):
 USAGE_KIND = "summary"
 
 
-def _resolve_for(ctx: AppContext, user_id: str,
-                 inline_key: str = "", inline_provider: str = "",
-                 inline_model: str = ""):
-    """Resolve this user's LLM client, honouring the owner-key spend cap.
+def resolve_credentials(ctx: AppContext, user_id: str, inline_key: str = "",
+                        inline_provider: str = "", inline_model: str = ""):
+    """Which client would run for this user, reserving nothing.
 
-    The cap exists because the access code is shared: without it, anyone holding
-    the code can spend the owner's credential without limit. A user on their own
-    key is not capped.
-
-    inline_key, when provided, is used directly without touching the database.
-    It is never stored — it travels from the browser's localStorage per-request.
+    Split out of _resolve_for so anything that needs to know who would pay —
+    the pre-spend estimate, above all — asks the same question the spend path
+    asks. A second copy of this logic answered it differently for a key held
+    only in localStorage: the estimate named the wrong payer, showed an
+    allowance that did not apply, and could refuse a run the user's own key
+    would have paid for (gate 2026-09-21 finding 1). A surface that lies about
+    who is being charged is the one thing a spend dialog must never do.
     """
     if inline_key.strip():
         # Inline path: key comes from localStorage, no server storage required.
-        resolved = resolve_client(user_provider=inline_provider, user_key=inline_key.strip(),
-                                  user_model=inline_model, config=ctx.llm_config)
-        return resolved, None
+        return resolve_client(user_provider=inline_provider,
+                              user_key=inline_key.strip(),
+                              user_model=inline_model, config=ctx.llm_config)
 
     try:
         provider, key = user_store.get_llm_key(ctx.db, user_id)
@@ -86,11 +86,27 @@ def _resolve_for(ctx: AppContext, user_id: str,
         ) from e
 
     user_data = user_store.get_user(ctx.db, user_id) or {}
-    preferred_model = user_data.get("preferred_model") or ""
+    return resolve_client(user_provider=provider, user_key=key,
+                          user_model=user_data.get("preferred_model") or "",
+                          config=ctx.llm_config)
 
-    resolved = resolve_client(user_provider=provider, user_key=key,
-                              user_model=preferred_model,
-                              config=ctx.llm_config)
+
+def _resolve_for(ctx: AppContext, user_id: str,
+                 inline_key: str = "", inline_provider: str = "",
+                 inline_model: str = ""):
+    """Resolve this user's LLM client, honouring the owner-key spend cap.
+
+    The cap exists because the access code is shared: without it, anyone holding
+    the code can spend the owner's credential without limit. A user on their own
+    key is not capped.
+
+    inline_key, when provided, is used directly without touching the database.
+    It is never stored — it travels from the browser's localStorage per-request.
+    """
+    resolved = resolve_credentials(ctx, user_id, inline_key, inline_provider,
+                                   inline_model)
+    if not resolved.billed_to_owner:
+        return resolved, None
 
     usage_id = None
     if resolved.billed_to_owner:

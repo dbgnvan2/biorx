@@ -94,6 +94,11 @@ token_estimate:
     deepseek-flash:   {input: 0.30,  output: 1.20}
     deepseek-v4-pro:  {input: 1.32,  output: 3.96}
 
+# A cross-paper review sends every selected paper's stored summary in one
+# prompt, so a large selection can exceed the model's context window. What the
+# cap drops is reported with the review rather than silently omitted.
+review_max_prompt_chars: 40000
+
 # Summaries billed to the OWNER's key, per user per UTC day. A user on their own
 # key is not capped. The access code is shared, so this is the ceiling on what a
 # leaked code can spend.

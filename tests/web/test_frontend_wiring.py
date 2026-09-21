@@ -135,6 +135,10 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/me/llm-key",
         "/api/usage/session",
         "/api/usage/estimate",
+        "/api/reviews",
+        "/api/reviews/{param}",
+        "/api/references/{param}/review",
+        "/api/references/{param}/review-preview",
         "/api/references/{param}/save",
         "/api/me/llm-model",
         "/api/filters",
@@ -891,15 +895,33 @@ def test_m5a3_the_cap_is_announced_before_the_run_not_after(remaining, papers, e
 
 
 def test_m5a3_no_request_leaves_before_the_user_confirms():
-    """The decisive check: the estimate is fetched, then nothing is spent until
-    confirmSpend resolves true."""
+    """Nothing that SPENDS happens until confirmSpend resolves true.
+
+    The estimate is itself a POST now (the inline key must not travel in a
+    URL), so the check is on the spend call specifically rather than on any
+    POST — the estimate costs nothing and has to run first to fill the dialog.
+    """
     code = _js_without_comments()
     body = re.search(r"async function summarizeChecked\(\) \{.*?\n\}",
                      code, re.DOTALL).group(0)
-    confirm_at = body.index("confirmSpend")
-    post_at = body.index('api("POST"') if 'api("POST"' in body else len(body)
-    assert confirm_at < post_at, "a request is made before the user confirms"
     assert "if (!await confirmSpend" in body
+    confirm_at = body.index("confirmSpend")
+    # summarizeOnePaper is what actually calls the model.
+    assert body.index("summarizeOnePaper(") > confirm_at, (
+        "the model is called before the user confirms"
+    )
+    # And the estimate, which is what fills the dialog, runs before it.
+    assert body.index('"/api/usage/estimate"') < confirm_at
+
+
+def test_m5a3_the_review_also_confirms_before_it_spends():
+    """Its sibling must hold the same line — this is the class of bug that has
+    bitten this batch four times."""
+    code = _js_without_comments()
+    body = re.search(r"async function reviewChecked\(\) \{.*?\n\}",
+                     code, re.DOTALL).group(0)
+    assert "if (!await confirmSpend" in body
+    assert body.index('"/api/reviews"') > body.index("confirmSpend")
 
 
 def test_m3a1_the_batch_uses_the_per_paper_route():
@@ -926,13 +948,56 @@ def test_m3a1_a_cap_refusal_stops_the_batch_rather_than_failing_one_paper():
 
 
 def test_m3a3_a_polling_blip_does_not_fail_the_summary():
-    """P1: one failed status check is not a failed summary; only a definite
-    answer ends it."""
+    """P1: an unreachable server is a blip, not a failed summary.
+
+    The rule now matches startSummary's: only status 0 (no answer at all) is
+    retried. Retrying every error — including a persistent 500 — turned a stuck
+    server into a silent forever-loop, where the single Summarize button would
+    have reported the failure (gate 2026-09-21 finding 3).
+    """
     code = _js_without_comments()
     one = re.search(r"async function summarizeOnePaper\(paper\) \{.*?\n\}",
                     code, re.DOTALL).group(0)
-    assert "[401, 404, 410].includes(e.status)" in one
+    assert "e.status !== 0" in one, "a non-blip error must end the summary"
     assert "continue" in one
+    assert "POLL_GIVE_UP" in one, "an unreachable server must be given up on"
+    assert "Can't reach the server" in one, "a long blip must be announced"
+
+
+def test_gate3_the_batch_poll_matches_the_single_summary_poll():
+    """Both poll the same endpoint for the same job. Where they disagree, one
+    of them is wrong — and it was the batch."""
+    code = _js_without_comments()
+    single = re.search(r"async function startSummary\(paper, button\) \{.*?\n\}",
+                       code, re.DOTALL).group(0)
+    batch = re.search(r"async function summarizeOnePaper\(paper\) \{.*?\n\}",
+                      code, re.DOTALL).group(0)
+    # Both must treat "no answer at all" as the only retryable case. They spell
+    # the condition in opposite directions (=== 0 retries, !== 0 gives up), so
+    # the check is that each names status 0 and announces a long outage —
+    # asserting one spelling would just freeze today's phrasing.
+    for name, body in (("startSummary", single), ("summarizeOnePaper", batch)):
+        assert "status === 0" in body or "status !== 0" in body, (
+            f"{name} does not distinguish an unreachable server from an error"
+        )
+        assert "Can't reach the server" in body, (
+            f"{name} retries silently instead of announcing a long outage"
+        )
+
+
+def test_gate4_a_second_click_cannot_start_a_concurrent_batch():
+    """On a user's own uncapped key, papers still in flight would run and bill
+    twice (gate 2026-09-21 finding 4)."""
+    code = _js_without_comments()
+    for fn in ("summarizeChecked", "reviewChecked"):
+        body = re.search(rf"async function {fn}\(\) \{{.*?\n\}}",
+                         code, re.DOTALL).group(0)
+        assert "state.batchRunning" in body, f"{fn} has no double-submit guard"
+    assert "function setBatchRunning(running)" in code
+    # Released in a finally, or the buttons stay dead for the session.
+    batch = re.search(r"async function summarizeChecked\(\) \{.*?\n\}",
+                      code, re.DOTALL).group(0)
+    assert "finally" in batch and "setBatchRunning(false)" in batch
 
 
 def test_live1_a_sub_cent_range_does_not_read_as_nonsense():

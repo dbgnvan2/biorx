@@ -26,7 +26,11 @@ PUBLIC = {
 # The exact number of authenticated operations. An exact count, not a floor:
 # a floor stays satisfied while the route table halves (learnings P29). Update
 # this deliberately when a route is added or removed.
-PROTECTED_ROUTE_COUNT = 35   # + GET /api/usage/estimate (M5): it reads this
+PROTECTED_ROUTE_COUNT = 39   # + the four review routes (M4): POST /api/reviews,
+                             # GET /api/reviews/{job}, and the stored-review and
+                             # preview routes — all read or spend on one user's
+                             # own list, so all need a session
+                             # + GET /api/usage/estimate (M5): it reads this
                              # user's cap allowance, so it needs a session
                              # + GET /api/usage/session (M1.C.1): it reports
                              # one user's spending, so it needs a session

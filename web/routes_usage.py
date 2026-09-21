@@ -15,15 +15,15 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Cookie, Depends
+from pydantic import BaseModel, Field
 
 from src import tokens, user_store
-from src.crypto import KeyEncryptionUnavailable
 from src.llm_config import summary_daily_cap
-from src.llm_providers import resolve_client
+from src.llm_providers import LLMError
 
 from .auth import current_user, get_context, session_started_at
 from .deps import AppContext
-from .routes_summaries import USAGE_KIND
+from .routes_summaries import USAGE_KIND, resolve_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +56,20 @@ def session_usage(ctx: AppContext = Depends(get_context),
     return dict(totals, session_start=started.isoformat())
 
 
-@router.get("/api/usage/estimate")
-def estimate(papers: int = 0,
+class EstimateRequest(BaseModel):
+    """The same inline-credential fields POST /api/summaries takes.
+
+    A POST, not a GET with query parameters: the inline key must never appear
+    in a URL, where it would reach access logs and browser history.
+    """
+    papers: int = Field(default=0, ge=0, le=10000)
+    api_key: str = Field(default="", max_length=500)
+    provider: str = Field(default="", max_length=50)
+    model: str = Field(default="", max_length=200)
+
+
+@router.post("/api/usage/estimate")
+def estimate(body: EstimateRequest,
              ctx: AppContext = Depends(get_context),
              user_id: str = Depends(current_user)):
     """What summarizing `papers` papers is likely to cost (M5.A.1, M5.A.3).
@@ -67,17 +79,27 @@ def estimate(papers: int = 0,
     is which a given paper turns out to be. `exact` is False and the caller must
     label it an estimate.
 
-    Also reports which key would pay and, on the shared key, how much of today's
-    allowance is left, so the confirm dialog can say who is being charged before
-    anything is spent.
+    Credentials resolve through the same function the spend path uses, so the
+    dialog cannot name a different payer than the one who will actually be
+    billed (gate 2026-09-21 finding 1).
     """
-    resolved = resolve_client(*_user_credentials(ctx, user_id), config=ctx.llm_config)
+    try:
+        resolved = resolve_credentials(ctx, user_id, body.api_key.strip(),
+                                       body.provider, body.model)
+    except LLMError as e:
+        # No usable credential anywhere. The sibling POST /api/summaries
+        # answers this properly when the user commits; the estimate reports it
+        # rather than 500-ing (gate finding 2).
+        logger.info("Estimate asked for with no usable credential: %s", e)
+        return dict(tokens.estimate_summary_tokens(body.papers, ctx.llm_config, ""),
+                    provider="", key_source="missing", billed_to_owner=False,
+                    cap_remaining=None)
 
-    figures = tokens.estimate_summary_tokens(max(0, papers), ctx.llm_config,
+    figures = tokens.estimate_summary_tokens(body.papers, ctx.llm_config,
                                              resolved.model)
-    cap = summary_daily_cap(ctx.llm_config)
     remaining = None
     if resolved.billed_to_owner:
+        cap = summary_daily_cap(ctx.llm_config)
         remaining = max(0, cap - user_store.owner_usage_today(
             ctx.db, user_id, USAGE_KIND))
 
@@ -86,21 +108,3 @@ def estimate(papers: int = 0,
                 key_source=resolved.key_source,
                 billed_to_owner=resolved.billed_to_owner,
                 cap_remaining=remaining)
-
-
-def _user_credentials(ctx: AppContext, user_id: str):
-    """(provider, key, model) for this user, or blanks when none is stored.
-
-    A key that will not decrypt is treated as absent here rather than raising:
-    this endpoint only estimates, and POST /api/summaries answers that problem
-    properly, with the right status, before anything is spent. Only that one
-    failure is caught — a broad except here would hide a real database error
-    behind a plausible-looking estimate (P2).
-    """
-    try:
-        provider, key = user_store.get_llm_key(ctx.db, user_id)
-    except KeyEncryptionUnavailable:
-        logger.info("Estimating with no user key: the stored one cannot be read")
-        provider, key = "", ""
-    user = user_store.get_user(ctx.db, user_id) or {}
-    return provider, key, user.get("preferred_model") or ""
