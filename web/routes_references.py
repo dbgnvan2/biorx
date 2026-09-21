@@ -51,14 +51,6 @@ def _get_item_or_404(ctx: AppContext, list_id: int, item_id: int) -> Dict[str, A
     return row
 
 
-def _safe_filename(name: str) -> str:
-    """A list name reduced to characters safe in a Content-Disposition header.
-    ASCII only: headers are Latin-1, and str.isalnum() also accepts letters
-    such as "中" that cannot be encoded there."""
-    return "".join(c if (c.isascii() and c.isalnum()) or c in "-_ " else "_"
-                   for c in (name or "references"))
-
-
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @router.get("/api/references")
@@ -129,6 +121,12 @@ def save_list(list_id: int, format: str = "csv",
     wanted = _parse_item_ids(item_ids)
     if wanted is not None:
         items = [i for i in items if i.get("item_id") in wanted]
+        if not items:
+            # The same answer its sibling export_summaries_pdf gives. Rendering
+            # an empty document instead would be a second opinion on the same
+            # question, which is how the two drift apart (P5).
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="None of the ticked papers are in this list.")
 
     try:
         body, media_type, extension = reference_export.render(
@@ -244,7 +242,7 @@ def export_summaries_pdf(list_id: int,
         if row:
             summaries[pid] = row
     data = build_summaries_pdf(ref_list.get("name", ""), items, summaries)
-    safe_name = _safe_filename(ref_list.get("name", "references"))
+    safe_name = reference_export.safe_filename(ref_list.get("name", "references"))
     return Response(
         content=data,
         media_type="application/pdf",

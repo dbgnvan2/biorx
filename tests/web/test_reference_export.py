@@ -231,3 +231,32 @@ def test_m6a2_a_real_rtf_reader_parses_it():
     # Both papers, and the heading.
     assert "Attachment sweep" in text
     assert "Social Baseline Theory" in text
+
+
+def test_m6a2_the_tricky_escapes_survive_a_real_reader():
+    r"""Gate finding 3: the structural tests cover the negative-\uN range and
+    surrogate pairs, but those are exactly the two paths worth checking against
+    a real reader rather than against my own arithmetic.
+
+    U+8BED is above 0x7FFF, so it goes out as a negative \uN; U+1F600 is
+    astral and goes out as a surrogate pair.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    textutil = shutil.which("textutil")
+    if not textutil:
+        pytest.skip("textutil is macOS-only; the escaping rules are covered above")
+
+    items = [{"item_id": 1, "paper": {
+        "title": "语 and \U0001F600 in one title",
+        "authors": "", "pub_date": "", "doi": "", "source": "", "url": ""}}]
+    with tempfile.NamedTemporaryFile("w", suffix=".rtf", delete=False) as fh:
+        fh.write(reference_export.to_rtf(items, _pdf_url, "Tricky"))
+        path = fh.name
+    result = subprocess.run([textutil, "-convert", "txt", "-stdout", path],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "语" in result.stdout, "a negative-range \\uN did not survive"
+    assert "\U0001F600" in result.stdout, "an astral surrogate pair did not survive"

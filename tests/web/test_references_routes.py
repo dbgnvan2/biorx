@@ -136,6 +136,49 @@ def test_m6a1_save_is_per_user(app, signed_in, other_client, ctx):
         assert r.status_code == 404, fmt
 
 
+def test_gate2_an_empty_subset_is_refused_the_same_way_by_both_routes(signed_in, ctx):
+    """Gate finding 2: /save and /summaries.pdf both take item_ids. They must
+    answer an item_ids that matches nothing the same way, or the two have
+    second opinions on the same question — which is how siblings drift (P5)."""
+    list_id = signed_in.post("/api/references", json={"name": "Empty"}).json()["id"]
+    _add(signed_in, ctx, list_id, PAPER)
+
+    save = signed_in.get(f"/api/references/{list_id}/save?format=csv&item_ids=99999")
+    pdf = signed_in.get(f"/api/references/{list_id}/summaries.pdf?item_ids=99999")
+    assert save.status_code == pdf.status_code == 400
+    assert save.json()["detail"] == pdf.json()["detail"]
+
+
+def test_gate1_every_download_route_names_its_file_the_same_way(signed_in, ctx):
+    """Gate finding 1: the filename predicate had two implementations that had
+    already diverged. One function now, so a name cannot come out differently
+    depending on which button was pressed."""
+    root = Path(__file__).parent.parent.parent
+    for module in ("web/routes_references.py", "web/routes_searches.py"):
+        source = (root / module).read_text()
+        assert "def _safe_filename" not in source, f"{module}: the duplicate came back"
+        assert "_safe_filename(" not in source, (
+            f"{module} still calls the private copy — there were four consumers, "
+            "not two"
+        )
+
+    # A name carrying the characters the sanitizer exists for. The summaries
+    # PDF deliberately appends " - summaries" to tell the two files apart, so
+    # the check is that every route sanitizes the name the same way, not that
+    # the filenames are identical.
+    list_id = signed_in.post("/api/references",
+                             json={"name": "Σ Odd/Name: 2026"}).json()["id"]
+    _add(signed_in, ctx, list_id, PAPER)
+    for path in (f"/api/references/{list_id}/save?format=csv",
+                 f"/api/references/{list_id}/export.csv",
+                 f"/api/references/{list_id}/summaries.pdf"):
+        r = signed_in.get(path)
+        assert r.status_code == 200, path
+        name = r.headers["content-disposition"].split("filename=")[1].strip('"')
+        assert name.startswith("_ Odd_Name_ 2026"), f"{path} sanitized differently: {name}"
+        assert name.isascii(), f"{path} put a non-Latin-1 character in a header"
+
+
 def test_m6a1_the_old_csv_endpoint_still_works(signed_in, ctx):
     """It is a plain URL someone may have bookmarked, and it now renders
     through the same code as /save, so the two cannot drift."""

@@ -406,7 +406,7 @@ def search_summaries_pdf(job_id: str, body: SummariesPdfBody,
     items, summaries = _job_summaries(ctx, job, body.paper_ids)
     title = body.title.strip() or "Search results"
     data = build_summaries_pdf(title, items, summaries)
-    from .routes_references import _safe_filename
-    safe = _safe_filename(title)
+    from src.reference_export import safe_filename
+    safe = safe_filename(title)
     return Response(content=data, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{safe} - summaries.pdf"'})
