@@ -1507,6 +1507,8 @@ function selectFilter(filterId) {
   Array.from($("filter-list").children).forEach(li => {
     li.classList.toggle("active", Number(li.dataset.filterId) === filterId);
   });
+  // The chips show which terms are in THIS filter, so they follow the editor.
+  renderDiscoverChipState();
 }
 
 /* A text group has three comma-separated term fields, matching the desktop
@@ -1625,6 +1627,7 @@ async function newFilter() {
   renderTextGroups([{}]);
   renderSourcePicker($("filter-sources-picker"), state.sources, defaultSourceIds());
   $("filter-name").focus();
+  renderDiscoverChipState();
 }
 
 async function saveFilter() {
@@ -1822,22 +1825,121 @@ function renderDiscoverChips(terms) {
   const container = $("discover-terms-chips");
   container.textContent = "";
   if (!terms.length) { container.textContent = "No terms suggested."; return; }
+
+  const hint = document.createElement("p");
+  hint.className = "muted small";
+  hint.style.margin = "0 0 4px";
+  hint.textContent = "Click a term to make a new filter named after it. " +
+                     "Right-click a term to add it as another group in the " +
+                     "filter you have open.";
+  container.appendChild(hint);
+
   for (const term of terms) {
     const chip = document.createElement("button");
-    chip.className = "tag";
+    chip.className = "tag discover-chip";
     chip.style.cursor = "pointer";
     chip.style.margin = "2px";
+    chip.dataset.term = term;
     chip.textContent = term;
-    chip.addEventListener("click", () => insertDiscoverTerm(term));
+    chip.title = "Click: new filter · Right-click: add as a group";
+    chip.addEventListener("click", () => createFilterFromTerm(term));
+    chip.addEventListener("contextmenu", (e) => {
+      e.preventDefault();                 // the browser's menu, not ours
+      addTermAsGroup(term);
+    });
     container.appendChild(chip);
   }
+  renderDiscoverChipState();
 }
 
-function insertDiscoverTerm(term) {
-  const groups = $("filter-text-groups").querySelectorAll('.text-group input[data-field="both"]');
-  if (groups.length) {
-    const last = groups[groups.length - 1];
-    last.value = last.value ? last.value + ", " + term : term;
+/* Is this term already a search term anywhere in these groups? Case-
+   insensitive, and it looks inside comma lists too, so a term typed into a
+   group by hand is recognised. Pure, for the node-run test. */
+function groupsHaveTerm(groups, term) {
+  const key = term.trim().toLowerCase();
+  return groups.some(g => String(g.both || "").split(",")
+    .some(t => t.trim().toLowerCase() === key));
+}
+
+/* The groups with this term added as a group of its own — OR with the rest.
+   Empty groups are dropped: a group with no conditions matches every paper,
+   so one left beside the others would make the filter match everything.
+   Pure, for the node-run test. */
+function groupsWithTerm(groups, term) {
+  const kept = groups.filter(g => (g.title || g.abstract || g.both || "").trim());
+  return [...kept, { title: "", abstract: "", both: term.trim() }];
+}
+
+/* A name no existing filter already has.
+
+   POST /api/filters is an upsert on the name, so a new filter given a taken
+   name silently REPLACES that filter. Clicking "inflammaging" when a filter
+   called "inflammaging" exists would otherwise overwrite it; instead the new
+   one is "inflammaging (2)". Case-insensitive. Pure, for the node-run test. */
+function freeFilterName(base, takenNames) {
+  const taken = new Set((takenNames || []).map(n => String(n).trim().toLowerCase()));
+  let name = (base || "").trim().slice(0, 80) || "Discovered term";
+  while (taken.has(name.toLowerCase())) name = nextListName(name);
+  return name;
+}
+
+/* Click: a new filter, named after the term, searching for it. */
+async function createFilterFromTerm(term) {
+  if (state.discoverSaving) return;       // one save at a time
+  await newFilter();
+  const name = freeFilterName(term, (state.filters || []).map(f => f.name));
+  $("filter-name").value = name;
+  renderTextGroups(groupsWithTerm([], term));
+  await saveTermFilter(`Created filter "${name}".`);
+}
+
+/* Right-click: the term becomes another group in the filter that is open.
+   With no saved filter open there is nothing to add to, so it starts one —
+   doing nothing at all was the old behaviour, and it looked broken. */
+async function addTermAsGroup(term) {
+  if (state.discoverSaving) return;
+  if (!state.activeFilterId) { await createFilterFromTerm(term); return; }
+
+  const groups = collectTextGroups();
+  if (groupsHaveTerm(groups, term)) {
+    notice(`"${term}" is already in "${$("filter-name").value}".`, "warn");
+    return;
+  }
+  renderTextGroups(groupsWithTerm(groups, term));
+  await saveTermFilter(`Added "${term}" to "${$("filter-name").value}" as a new group.`);
+}
+
+/* Save the filter in the editor: create it if new, update it if not. */
+async function saveTermFilter(message) {
+  const name = $("filter-name").value.trim();
+  const body = { name, enabled: $("filter-enabled").checked, filter: buildFilterDict() };
+  state.discoverSaving = true;
+  try {
+    if (state.activeFilterId) {
+      await api("PUT", `/api/filters/${state.activeFilterId}`, body);
+    } else {
+      const created = await api("POST", "/api/filters", body);
+      state.activeFilterId = created.id;
+    }
+  } catch (e) {
+    notice(`Could not save the filter: ${e.message}`);
+    return;
+  } finally {
+    state.discoverSaving = false;
+  }
+  notice(message, "ok");
+  await reloadFilterList();
+  await loadSearchFilters();              // runnable from Search straight away
+  renderDiscoverChipState();
+}
+
+/* Mark each chip that is already a term in the open filter. */
+function renderDiscoverChipState() {
+  const groups = state.activeFilterId ? collectTextGroups() : [];
+  for (const chip of $("discover-terms-chips").querySelectorAll(".discover-chip")) {
+    const on = groupsHaveTerm(groups, chip.dataset.term);
+    chip.classList.toggle("chip-on", on);
+    chip.setAttribute("aria-pressed", on ? "true" : "false");
   }
 }
 

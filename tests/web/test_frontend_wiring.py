@@ -819,6 +819,123 @@ def test_m2a1_select_all_is_in_the_references_table_header():
     assert 'id="select-all-refs"' in panel.group(0)
 
 
+# ── Discover chips: click to create a filter, right-click to add a group ──────
+
+_CHIP_BLOCKS = [
+    r"function nextListName\(name\) \{.*?\n\}",
+    r"function groupsHaveTerm\(groups, term\) \{.*?\n\}",
+    r"function groupsWithTerm\(groups, term\) \{.*?\n\}",
+    r"function freeFilterName\(base, takenNames\) \{.*?\n\}",
+]
+
+
+def _chip_eval(expr):
+    return _node_eval([_js_block(b) for b in _CHIP_BLOCKS], expr)
+
+
+def test_dc1_a_new_filter_is_named_after_the_term():
+    assert _chip_eval('freeFilterName("inflammaging", ["Loneliness"])') == "inflammaging"
+
+
+@pytest.mark.parametrize("taken,expected", [
+    (["inflammaging"], "inflammaging (2)"),
+    (["inflammaging", "inflammaging (2)"], "inflammaging (3)"),
+    # Case-insensitive, so near-duplicates do not pile up side by side.
+    (["Inflammaging"], "inflammaging (2)"),
+])
+def test_dc1_a_taken_name_is_never_reused(taken, expected):
+    """The decisive safety check. POST /api/filters is an upsert on the name:
+    a new filter given a taken name silently REPLACES the existing one. So
+    clicking "inflammaging" when that filter exists must make a new one, never
+    overwrite the user's."""
+    import json
+    got = _chip_eval(f'freeFilterName("inflammaging", {json.dumps(taken)})')
+    assert got == expected
+
+
+def test_dc1_the_upsert_hazard_is_real():
+    """Pins the reason freeFilterName exists. If the API stops upserting on
+    name, this fails and the guard can be reconsidered — until then, a name
+    collision is data loss."""
+    source = (Path(__file__).parent.parent.parent / "src" / "user_store.py").read_text()
+    upsert = re.search(r"def upsert_filter\(.*?\n\n\n", source, re.DOTALL).group(0)
+    assert "ON CONFLICT(user_id, name) DO UPDATE" in upsert
+
+
+def test_dc2_right_click_adds_the_term_as_its_own_group():
+    """A new group, OR with the others — not appended into an existing group's
+    field, where it would change what that group means."""
+    got = _chip_eval(
+        'groupsWithTerm([{title: "", abstract: "", both: "inflammaging"}], '
+        '"immunosenescence")')
+    assert got == [
+        {"title": "", "abstract": "", "both": "inflammaging"},
+        {"title": "", "abstract": "", "both": "immunosenescence"},
+    ]
+
+
+def test_dc2_an_empty_group_is_never_left_beside_the_new_one():
+    """A group with no conditions matches EVERY paper (src/filtering.py
+    text_group_matches has nothing to fail), and groups are OR'd — so one
+    stray empty group makes the whole filter match everything. A fresh editor
+    starts with exactly one empty group."""
+    got = _chip_eval('groupsWithTerm([{}, {title: "", abstract: "", both: ""}], "x")')
+    assert got == [{"title": "", "abstract": "", "both": "x"}]
+
+
+def test_dc2_a_group_with_only_a_title_condition_is_kept():
+    """Not every non-empty group has a "both" field set."""
+    got = _chip_eval('groupsWithTerm([{title: "sleep", abstract: "", both: ""}], "x")')
+    assert len(got) == 2 and got[0]["title"] == "sleep"
+
+
+@pytest.mark.parametrize("groups,term,expected", [
+    ([{"both": "inflammaging"}], "inflammaging", True),
+    ([{"both": "Inflammaging"}], "inflammaging", True),          # case-insensitive
+    ([{"both": "aging, inflammaging"}], "inflammaging", True),   # typed by hand
+    ([{"both": "inflammaging disease"}], "inflammaging", False), # a different term
+    ([{"title": "inflammaging"}], "inflammaging", False),        # not a both-term
+    ([], "inflammaging", False),
+])
+def test_dc2_a_term_already_in_the_filter_is_recognised(groups, term, expected):
+    """So right-clicking it twice does not add a duplicate group."""
+    import json
+    assert _chip_eval(f"groupsHaveTerm({json.dumps(groups)}, {term!r})") is expected
+
+
+def test_dc2_right_click_is_wired_and_the_browser_menu_suppressed():
+    """contextmenu is the right-click event; without preventDefault the
+    browser's own menu covers the page on every right-click."""
+    code = _js_without_comments()
+    body = re.search(r"function renderDiscoverChips\(terms\) \{.*?\n\}",
+                     code, re.DOTALL).group(0)
+    assert 'addEventListener("click", () => createFilterFromTerm(term))' in body
+    assert 'addEventListener("contextmenu"' in body
+    assert "e.preventDefault()" in body
+    assert "addTermAsGroup(term)" in body
+
+
+def test_dc2_right_click_with_no_filter_open_starts_one():
+    """The old handler did nothing at all when no group existed, which looked
+    broken. Doing nothing silently is the one outcome ruled out."""
+    code = _js_without_comments()
+    body = re.search(r"async function addTermAsGroup\(term\) \{.*?\n\}",
+                     code, re.DOTALL).group(0)
+    assert "if (!state.activeFilterId)" in body
+    assert "createFilterFromTerm(term)" in body
+
+
+def test_dc3_the_new_filter_is_saved_and_runnable_at_once():
+    """Created means saved: it appears in Saved Filters and Select Filter
+    without a separate Save press that could be forgotten."""
+    code = _js_without_comments()
+    body = re.search(r"async function saveTermFilter\(message\) \{.*?\n\}",
+                     code, re.DOTALL).group(0)
+    assert 'api("POST", "/api/filters"' in body
+    assert "api(\"PUT\"" in body or 'api("PUT"' in body
+    assert "reloadFilterList()" in body and "loadSearchFilters()" in body
+
+
 # ── M3/M5: Summarize checked, and the confirm dialog ──────────────────────────
 
 _EST_BLOCKS = [

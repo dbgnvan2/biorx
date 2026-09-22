@@ -122,3 +122,9 @@ body.modal-open { overflow: hidden; }
 .summaries-list .title { font-weight: 600; }
 .summaries-list .finding { font-size: 12px; color: var(--muted); }
 .tag.has-summary { background: var(--accent-soft, #e8f0fe); cursor: pointer; }
+
+/* Discover chips (Filters tab). A chip already in the open filter is filled,
+   so it is clear which suggestions are in use. */
+.discover-chip { border: 1px solid transparent; font: inherit; font-size: 12px; }
+.discover-chip:hover { border-color: var(--accent); }
+.discover-chip.chip-on { background: var(--accent); color: #fff; }

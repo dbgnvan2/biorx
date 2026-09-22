@@ -11,6 +11,22 @@
   rendered height past 52px, the "notice behind the bar" defect reproduces and
   the test stays green. A real-browser visual check is the only true fix.
 
+## Found while building the Discover chips (2026-09-21) — flagged, not fixed
+
+- **Save and Save as… can silently overwrite a filter.** `POST /api/filters` is an
+  upsert on the name (`user_store.upsert_filter`: `ON CONFLICT(user_id, name) DO
+  UPDATE`). Press + New, type the name of a filter you already have, press Save,
+  and the existing filter is replaced with no warning. Save as… does the same.
+  The Discover chips guard their own path by choosing a free name; the two
+  editor buttons do not. The proper fix is a server-side refusal (409) for a
+  create whose name is taken, which changes existing save semantics.
+- **The notice banner shifts the page down the first time it appears.** It sits
+  in the document flow, so the first chip click moves every chip below it ~40px.
+  It never auto-hides, so this happens once per page, not on every click.
+- **Right-click has no touch equivalent on iOS Safari**, which does not fire
+  `contextmenu` on long-press. Android Chrome does. On an iPhone, adding a term
+  as a second group means typing it into the editor.
+
 ## From the token-capture gate (`docs/cycles/2026-09-20_token-capture-qa-gate.md`)
 
 Findings 1-4 were fixed in the same session (see the re-gate). One item is

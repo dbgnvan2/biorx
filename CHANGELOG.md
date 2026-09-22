@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-21 — build filters straight from suggested terms
+
+### Added
+- **Click a suggested term** under Discover Search Terms to create a new filter
+  named after it, searching for that term. It is saved at once and appears in
+  Saved Filters and in Select Filter on the Search tab.
+- **Right-click a term** to add it to the open filter as a new group. Groups are
+  OR'd, so the filter matches papers containing any of its terms. With no
+  filter open, a right-click starts one.
+- Terms already in the open filter are highlighted.
+
+### Fixed
+- Clicking a suggested term did nothing on a fresh Filters tab: it only worked
+  when a text group already existed, and when it did work it appended into
+  whatever filter happened to be loaded.
+
+### Notes
+- A new filter never takes a name you already use. Saving a filter under an
+  existing name replaces that filter, so clicking "inflammaging" twice makes
+  "inflammaging" and "inflammaging (2)" rather than overwriting the first.
+
 ## 2026-09-21 — Review checked papers
 
 Gate: `docs/cycles/2026-09-21_batch-summarize-qa-gate.md` (REJECTED, fixed).
