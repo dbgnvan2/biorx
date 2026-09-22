@@ -11,6 +11,28 @@
   rendered height past 52px, the "notice behind the bar" defect reproduces and
   the test stays green. A real-browser visual check is the only true fix.
 
+## Found by the first real review run (2026-09-21) — not yet fixed
+
+A review of six papers (one full-text summary, five abstracts) on DeepSeek.
+Every quotation in the output was verbatim from its sources and every specific
+fact traced to one; "Dutch" and "WASO" were faithful rewordings of "in the
+Netherlands" and "wake after sleep onset". The two problems are in the cost
+dialog, not the review:
+
+- **The review estimate leaves out the model's reply.** The dialog said 3.0k
+  tokens; the run used 3,926 (2,357 in, 1,569 out). `reviewEstimate` counts the
+  prompt only, while the summary estimator adds `completion_tokens_low/high`. A
+  synthesis writes a long reply, so this under-states by about 30%. The same
+  sibling-drift class as the four gate rejections: output was accounted for on
+  one path and not the other.
+- **The review dialog shows no price when one is known.** It says "cost depends
+  on your provider's rates" even with a DeepSeek rate configured, because
+  `reviewEstimate` sets the dollar fields to null rather than pricing the
+  measured prompt at the payer's rate. The summary dialog does price it.
+
+Fix both together: give the review estimate a completion allowance from config
+and price it through `tokens.rate_for`, as the summary estimate does.
+
 ## From the review-and-chips gate (`docs/cycles/2026-09-21_review-and-chips-qa-gate.md`) — APPROVED, deferred
 
 The three findings were fixed. The re-sweep recorded three older problems in the
