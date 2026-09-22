@@ -186,3 +186,82 @@ Required to flip to APPROVED:
    allowance shows no "Only N of M can run" warning.
 4. Re-run `venv/bin/python -m pytest tests/ -q` green, then re-sweep the fix commits
    as their own range.
+
+---
+
+## RE-SWEEP
+
+RANGE:       062f101..abc9ccf (1 fix commit)
+COMMITS:     abc9ccf fix(reviews): gate findings — a preview that spent the
+             allowance, and two more drifts
+SUITE:       `venv/bin/python -m pytest tests/ -q` → **1319 passed, 1 skipped**
+VERDICT:     **APPROVED**
+
+All three findings are fixed and verified, and the in-scope sibling class
+(reserving-vs-resolving, poll give-up, allowance-vs-papers) is resolved. The
+four required-to-flip items are each satisfied.
+
+**Finding 1 (HIGH) — FIXED, no longer leaks a slot.** `review_preview`
+resolves no credentials at all; the page learns who pays from
+`POST /api/usage/estimate`, which uses the non-reserving `resolve_credentials`.
+`test_regate1_a_preview_reserves_no_allowance_on_the_shared_key` runs *with*
+`DEEPSEEK_API_KEY` set, makes 5 previews (> the whole cap), asserts
+`usage_events` stays empty and `owner_usage_today == 0`, then proves a real
+review still returns 202. This exercises the exact path the earlier test
+missed. Verified pass.
+
+**Finding 2 (MEDIUM) — FIXED.** One `pollJobUntilSettled` now serves both
+`summarizeOnePaper` and `reviewChecked`; it counts blips, announces at three,
+and gives up at `POLL_GIVE_UP`. `reviewChecked` releases `setBatchRunning(false)`
+in a `finally`, and there is exactly one such release (no hand-written exits).
+The endpoint-inventory scan was taught the `pollJobUntilSettled(...)` call shape
+so `/api/reviews/{id}` is visible to it again. `test_gate3_*` and
+`test_gate2_*` all pass.
+
+**Finding 3 (MEDIUM) — FIXED.** `capWarningText` compares `cap_remaining`
+against `est.calls` when present, falling back to `est.papers`. `reviewEstimate`
+sets `calls: 1`; a summary batch still counts one call per paper (the fallback
+is correct — the estimate endpoint returns no `calls`, so summaries compare
+papers, which is one-call-per-paper). `spendEstimateText` collapses an equal
+low/high token figure to a single figure. All `test_regate3_*` pass.
+
+The four specific checks:
+
+- **Non-spending `_resolve_for` caller / `reserve_owner_usage` outside
+  `_resolve_for`:** none. An independent ast scan of `web/*.py` finds exactly
+  three `_resolve_for(` call sites — `start_summary`, `discover_terms`,
+  `start_review` — every one of which also calls `ctx.jobs.submit(`.
+  `reserve_owner_usage` is called only from inside `_resolve_for` (plus tests).
+- **All pollers follow the same rule?** The two *batch* flows do — both go
+  through `pollJobUntilSettled`. The older `setInterval` pollers do **not**
+  (see the non-blocking note below); they are pre-existing and were not part of
+  the three findings.
+- **Allowance compared against papers where it should be calls:** no remaining
+  instance. `capWarningText` is the only site, now correct; discover never
+  reaches `confirmSpend`/`capWarningText`.
+- **Ast test sound?** Yes. It scans every `web/*.py` function, and would flag
+  any function containing `_resolve_for(` without `ctx.jobs.submit(`. Verified
+  against the current tree (3 sites, all submit) and against the original leak
+  (re-adding `_resolve_for` to `review_preview`, which submits nothing, would
+  make it an offender). Not vacuous. Minor limitation, not a defect: it does
+  not assert `_resolve_for` is still used at all, so a rename would pass with
+  zero offenders — but the reserving path is pinned by other tests.
+
+Non-blocking, pre-existing (recorded so they are not silently dropped — the
+user's "surface maps to reality" standard; recommend a follow-up round, not a
+reopen of this one):
+
+1. `startSummary` (the single-paper summary poll, `web/static/app.js:1161`) still
+   never gives up on an unreachable server: it counts `netFailures`, announces at
+   three, but has no `POLL_GIVE_UP` branch, so the button stays disabled and the
+   interval leaks until a reload. This is a *weaker* instance than the rejected
+   finding 2 — it warns and blocks one button, not a silent loop blocking both
+   batch buttons — and it predates this batch.
+2. `pollDiscover` (`web/static/app.js:1791`) does the opposite: any error,
+   including `status 0`, clears the poll and re-enables the Discover button,
+   treating a transient blip as terminal on a spend path (the server job is
+   still running and its slot reserved, so a re-click can double-submit). P1.
+3. The new `pollJobUntilSettled` docstring says its rule is "matching
+   startSummary … given up on at POLL_GIVE_UP" — that attribution is false for
+   `startSummary`, which has no give-up. The shared poller's own behaviour is
+   correct; only the comment's claim about its reference is inaccurate.

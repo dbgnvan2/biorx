@@ -11,6 +11,25 @@
   rendered height past 52px, the "notice behind the bar" defect reproduces and
   the test stays green. A real-browser visual check is the only true fix.
 
+## From the review-and-chips gate (`docs/cycles/2026-09-21_review-and-chips-qa-gate.md`) — APPROVED, deferred
+
+The three findings were fixed. The re-sweep recorded three older problems in the
+pollers that were not part of this batch. Left for the next round rather than
+patched after approval, so what was pushed is exactly what was reviewed.
+
+- **The single Summarize button never gives up on an unreachable server.**
+  `startSummary` (web/static/app.js) counts network failures and announces after
+  three, but has no `POLL_GIVE_UP` branch: the button stays disabled and the
+  interval runs until a reload. Move it onto `pollJobUntilSettled`.
+- **Discover treats a network blip as the end of the job.** `pollDiscover`
+  clears the poll and re-enables the button on any error, including status 0.
+  The server job is still running with its allowance slot reserved, so a
+  re-click can run it twice. The opposite mistake to the one above (P1).
+- **A comment in my own code is false.** `pollJobUntilSettled`'s docstring says
+  its rules match `startSummary`'s "given up on at POLL_GIVE_UP". startSummary
+  has no give-up. It becomes true once the first item is done; fix the two
+  together.
+
 ## Found while building the Discover chips (2026-09-21) — flagged, not fixed
 
 - **Save and Save as… can silently overwrite a filter.** `POST /api/filters` is an
