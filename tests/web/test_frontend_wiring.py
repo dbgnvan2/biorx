@@ -42,10 +42,19 @@ def _ids_used_by_js() -> set:
 
 
 def _api_paths_called_by_js() -> set:
-    """Literal API paths the client calls, with parameters normalised."""
+    """Literal API paths the client calls, with parameters normalised.
+
+    Two call shapes: api("METHOD", `path`) directly, and
+    pollJobUntilSettled(`path`), the shared poller every batch job goes
+    through. When the review poller moved onto it, /api/reviews/{id} dropped
+    out of this scan — a refactor had quietly blinded the guard (P25). A new
+    call shape belongs here, not in a weaker expectation.
+    """
     source = APP_JS.read_text()
+    raws = re.findall(r'api\(\s*"[A-Z]+"\s*,\s*[`"]([^`"]+)[`"]', source)
+    raws += re.findall(r'pollJobUntilSettled\(\s*[`"]([^`"]+)[`"]', source)
     paths = set()
-    for raw in re.findall(r'api\(\s*"[A-Z]+"\s*,\s*[`"]([^`"]+)[`"]', source):
+    for raw in raws:
         path = raw.split("?")[0]
         path = re.sub(r"\$\{[^}]+\}", "{param}", path)
         paths.add(path)
@@ -1011,6 +1020,53 @@ def test_m5a3_the_cap_is_announced_before_the_run_not_after(remaining, papers, e
         assert got == ""
 
 
+@pytest.mark.parametrize("remaining,expect", [
+    (3, ""),                                            # one call; 3 left: fine
+    (1, ""),                                            # exactly enough
+    (0, "allowance on the shared key is used up"),      # truly none left
+])
+def test_regate3_a_review_is_one_call_whatever_it_reads(remaining, expect):
+    """Gate 2026-09-21 finding 3. The allowance counts model CALLS. A review
+    makes one call however many papers it reads, so with 3 calls left and 10
+    papers ticked it must NOT say "Only 3 of these 10 can run" — that told the
+    user the review would be cut short when the one call reads all ten."""
+    import json
+    est = {"billed_to_owner": True, "cap_remaining": remaining,
+           "papers": 10, "calls": 1}
+    got = _est_eval(f"capWarningText({json.dumps(est)})")
+    assert "Only" not in got, "a per-paper warning shown for a single-call review"
+    assert expect in got
+    if not expect:
+        assert got == ""
+
+
+def test_regate3_a_summary_batch_still_counts_one_call_per_paper():
+    """The fix must not break the case that was right: a summary batch does
+    make one call per paper, so a short allowance does cut it short."""
+    import json
+    est = {"billed_to_owner": True, "cap_remaining": 3, "papers": 10}
+    got = _est_eval(f"capWarningText({json.dumps(est)})")
+    assert "Only 3 of these 10" in got
+
+
+def test_regate3_the_review_estimate_declares_a_single_call():
+    got = _node_eval([_js_block(r"function reviewEstimate\(preview, payer = \{\}\) \{.*?\n\}")],
+                     "reviewEstimate({papers: 10, prompt_tokens: 2100}).calls")
+    assert got == 1
+
+
+def test_regate3_a_measured_token_figure_is_not_shown_as_a_range():
+    """A review's prompt is built from stored text, so its size is known and
+    both ends are equal. "2.1k–2.1k tokens" dresses a figure as a range — the
+    same collapse the money line already had."""
+    import json
+    est = {"papers": 10, "low": 2100, "high": 2100,
+           "dollars_low": None, "dollars_high": None}
+    got = _est_eval(f"spendEstimateText({json.dumps(est)})")
+    assert "2.1k–2.1k" not in got
+    assert "Estimated 2.1k tokens" in got
+
+
 def test_m5a3_no_request_leaves_before_the_user_confirms():
     """Nothing that SPENDS happens until confirmSpend resolves true.
 
@@ -1064,42 +1120,87 @@ def test_m3a1_a_cap_refusal_stops_the_batch_rather_than_failing_one_paper():
     assert "outcome.cap" in batch and "break" in batch
 
 
-def test_m3a3_a_polling_blip_does_not_fail_the_summary():
-    """P1: an unreachable server is a blip, not a failed summary.
+def test_m3a3_a_polling_blip_does_not_fail_the_job():
+    """P1: an unreachable server is a blip, not a failed job — and it is
+    announced and eventually given up on, never retried silently forever."""
+    code = _js_without_comments()
+    poller = re.search(r"async function pollJobUntilSettled\(path, onPhase\) \{.*?\n\}",
+                       code, re.DOTALL).group(0)
+    assert "e.status !== 0" in poller, "a non-blip error must end the job"
+    assert "continue" in poller
+    assert "POLL_GIVE_UP" in poller, "an unreachable server must be given up on"
+    assert "Can't reach the server" in poller, "a long outage must be announced"
 
-    The rule now matches startSummary's: only status 0 (no answer at all) is
-    retried. Retrying every error — including a persistent 500 — turned a stuck
-    server into a silent forever-loop, where the single Summarize button would
-    have reported the failure (gate 2026-09-21 finding 3).
+
+# Every function that polls a batch job. Adding one means adding it here — the
+# point of listing them is that a new poller cannot be missed the way the
+# review poller was (gate 2026-09-21: the previous version of this test named
+# two pollers and never read the third, added in the same commit).
+_BATCH_POLLERS = ("summarizeOnePaper", "reviewChecked")
+
+
+@pytest.mark.parametrize("fn", _BATCH_POLLERS)
+def test_gate3_every_batch_poller_uses_the_shared_poller(fn):
+    """One implementation, not copies. Each copy drifted: the summary batch
+    learned to give up on a dead server and the review poller, written in the
+    same commit, did not."""
+    code = _js_without_comments()
+    body = re.search(rf"async function {fn}\([^)]*\) \{{.*?\n\}}",
+                     code, re.DOTALL).group(0)
+    assert "pollJobUntilSettled(" in body, f"{fn} polls with its own loop"
+    assert "for (;;)" not in body, f"{fn} still has a hand-written poll loop"
+
+
+def test_gate3_no_other_function_hand_rolls_a_batch_poll():
+    """Catches a poller missing from the list above rather than trusting it.
+
+    The mark of a hand-written async poll is awaiting a POLL_MS timer inside a
+    loop. It must appear once, in the shared poller. (A bare "for (;;)" is not
+    the signal: saveResults loops on a name prompt, which is not a poll — the
+    first version of this test flagged it.) The older setInterval pollers —
+    startSummary, pollSearch, pollDiscover — are a different mechanism and are
+    matched against the shared rules by the test below.
     """
     code = _js_without_comments()
-    one = re.search(r"async function summarizeOnePaper\(paper\) \{.*?\n\}",
-                    code, re.DOTALL).group(0)
-    assert "e.status !== 0" in one, "a non-blip error must end the summary"
-    assert "continue" in one
-    assert "POLL_GIVE_UP" in one, "an unreachable server must be given up on"
-    assert "Can't reach the server" in one, "a long blip must be announced"
+    waits = [m.start() for m in re.finditer(
+        r"await new Promise\(r => setTimeout\(r, POLL_MS\)\)", code)]
+    poller = re.search(r"async function pollJobUntilSettled\(path, onPhase\) \{.*?\n\}",
+                       code, re.DOTALL)
+    outside = [i for i in waits if not poller.start() <= i < poller.end()]
+    assert waits, "the pattern stopped matching — this test would pass vacuously"
+    assert not outside, (
+        f"{len(outside)} hand-written poll loop(s) outside pollJobUntilSettled"
+    )
 
 
-def test_gate3_the_batch_poll_matches_the_single_summary_poll():
-    """Both poll the same endpoint for the same job. Where they disagree, one
-    of them is wrong — and it was the batch."""
+def test_gate3_the_shared_poller_matches_the_single_summary_poll():
+    """startSummary is the older, interval-based poller. Where it and the
+    shared one disagree on what a blip is, one of them is wrong."""
     code = _js_without_comments()
     single = re.search(r"async function startSummary\(paper, button\) \{.*?\n\}",
                        code, re.DOTALL).group(0)
-    batch = re.search(r"async function summarizeOnePaper\(paper\) \{.*?\n\}",
-                      code, re.DOTALL).group(0)
-    # Both must treat "no answer at all" as the only retryable case. They spell
-    # the condition in opposite directions (=== 0 retries, !== 0 gives up), so
-    # the check is that each names status 0 and announces a long outage —
-    # asserting one spelling would just freeze today's phrasing.
-    for name, body in (("startSummary", single), ("summarizeOnePaper", batch)):
+    shared = re.search(r"async function pollJobUntilSettled\(path, onPhase\) \{.*?\n\}",
+                       code, re.DOTALL).group(0)
+    for name, body in (("startSummary", single), ("pollJobUntilSettled", shared)):
         assert "status === 0" in body or "status !== 0" in body, (
-            f"{name} does not distinguish an unreachable server from an error"
-        )
+            f"{name} does not distinguish an unreachable server from an error")
         assert "Can't reach the server" in body, (
-            f"{name} retries silently instead of announcing a long outage"
-        )
+            f"{name} retries silently instead of announcing a long outage")
+
+
+def test_gate2_the_review_releases_the_batch_guard_on_every_path():
+    """The guard used to be released by hand at each exit, and a poll that
+    never exited reached none of them — both buttons stayed disabled until a
+    reload. A finally releases it whatever happens."""
+    code = _js_without_comments()
+    body = re.search(r"async function reviewChecked\(\) \{.*?\n\}",
+                     code, re.DOTALL).group(0)
+    finally_at = body.index("finally")
+    assert "setBatchRunning(false)" in body[finally_at:], (
+        "the guard is not released in a finally")
+    assert body.count("setBatchRunning(false)") == 1, (
+        "released by hand as well as in the finally — the hand-written exits "
+        "are what drifted")
 
 
 def test_gate4_a_second_click_cannot_start_a_concurrent_batch():

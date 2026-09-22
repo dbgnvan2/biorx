@@ -197,19 +197,15 @@ def review_preview(list_id: int, item_ids: Optional[str] = None,
     _, gathered = _gather_for(ctx, list_id, _parse_item_ids(item_ids))
     built = review_builder.build_prompt(gathered, _max_prompt_chars(ctx.llm_config))
 
-    resolved_model = ""
-    try:
-        resolved, _ = _resolve_for(ctx, user_id)
-        resolved_model = resolved.model
-    except (HTTPException, LLMError):
-        # No credential (LLMError), or the daily allowance is gone
-        # (HTTPException 429). Either way the preview still reports what would
-        # be read — that is the whole point of asking before spending — and
-        # POST /api/reviews answers the credential problem properly, with the
-        # right status, when the user actually commits.
-        logger.info("Review preview with no usable credential; reporting the "
-                    "selection without a model name")
-
+    # No credentials are resolved here at all. This used to call _resolve_for
+    # — the RESERVING variant — only to read a model name, and threw the
+    # reservation away: on the ordinary shared-key deployment every click on
+    # Review checked consumed a slot of the day's allowance before the user
+    # confirmed, and enough previews would refuse a real review (gate
+    # 2026-09-21 finding 1, HIGH). It also reported the owner's model to a
+    # user whose own key sat in the browser. The page asks POST
+    # /api/usage/estimate who pays, which resolves without reserving; the
+    # preview only says what would be read.
     prompt_tokens = tokens.estimate_text_tokens(built["prompt"], ctx.llm_config)
     return {
         "papers": len(built["included"]),
@@ -217,5 +213,4 @@ def review_preview(list_id: int, item_ids: Optional[str] = None,
         "contributors": built["included"],
         "left_out": list(built["dropped"]) + list(built["excluded"]),
         "prompt_tokens": prompt_tokens,
-        "model": resolved_model,
     }

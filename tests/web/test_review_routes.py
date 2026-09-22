@@ -233,6 +233,62 @@ def test_m4_an_empty_reply_is_an_error_not_a_blank_review(signed_in, ctx):
 
 # ── The preview: what it would read, before spending ──────────────────────────
 
+def test_regate1_a_preview_reserves_no_allowance_on_the_shared_key(
+        signed_in, ctx, monkeypatch):
+    """Gate 2026-09-21 finding 1 (HIGH). The preview used the RESERVING
+    credential check only to read a model name, and threw the reservation away,
+    so on the ordinary shared-key deployment every click on Review checked
+    consumed a slot of the day's allowance before the user confirmed.
+
+    This must run WITH an owner key set. The earlier test ran without one, so
+    the check raised before reserving anything and its "no rows" assertion
+    passed without ever exercising the path that leaked.
+    """
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-owner")
+    monkeypatch.setenv("SUMMARY_DAILY_CAP_PER_USER", "3")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    user_id = signed_in.get("/api/me").json()["user_id"]
+    list_id, _ = _list_with(signed_in, ctx, PAPER, SECOND)
+
+    for _ in range(5):                       # more previews than the whole cap
+        r = signed_in.get(f"/api/references/{list_id}/review-preview")
+        assert r.status_code == 200
+
+    assert ctx.db.conn.execute(
+        "SELECT COUNT(*) AS n FROM usage_events").fetchone()["n"] == 0
+    assert user_store.owner_usage_today(ctx.db, user_id) == 0
+
+    # And the allowance is intact: a real review still runs after them.
+    with patch("src.llm_providers.build_client", return_value=_llm()):
+        start = signed_in.post("/api/reviews", json={"list_id": list_id})
+    assert start.status_code == 202, "previews ate the allowance a review needed"
+
+
+def test_regate1_the_reserving_check_is_only_used_where_money_is_spent():
+    """The class, not the instance. _resolve_for reserves an allowance slot, so
+    it belongs only in a route that then submits a job that spends. Anything
+    that only needs to know who would pay uses resolve_credentials, which
+    reserves nothing. Scans every route module, so a new caller is caught."""
+    import ast
+
+    web = Path(__file__).parent.parent.parent / "web"
+    offenders = []
+    for module in sorted(web.glob("*.py")):
+        tree = ast.parse(module.read_text())
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            src = ast.get_source_segment(module.read_text(), fn) or ""
+            if fn.name == "_resolve_for" or "_resolve_for(" not in src:
+                continue
+            if "ctx.jobs.submit(" not in src:
+                offenders.append(f"{module.name}:{fn.name}")
+    assert not offenders, (
+        f"reserving credential check called where nothing is spent: {offenders}"
+    )
+
+
 def test_m5a2_the_preview_costs_nothing_and_calls_nothing(signed_in, ctx):
     list_id, _ = _list_with(signed_in, ctx, PAPER, SECOND)
     client = _llm()

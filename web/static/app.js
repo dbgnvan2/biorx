@@ -2315,7 +2315,11 @@ function estimateBody(papers) {
    node-run test. */
 function spendEstimateText(est) {
   if (!est || !est.papers) return "";
-  const tokens = `${compactTokens(est.low)}–${compactTokens(est.high)} tokens`;
+  // A review's prompt is built from stored text, so its size is measured and
+  // both ends are the same — "2.1k–2.1k" would present a figure as a range.
+  // Same collapse as the money line below.
+  const low = compactTokens(est.low), high = compactTokens(est.high);
+  const tokens = `${low === high ? low : `${low}–${high}`} tokens`;
   let money = ", cost depends on your provider's rates";
   if (est.dollars_low != null && est.dollars_high != null) {
     const low = formatMoney(est.dollars_low);
@@ -2349,7 +2353,13 @@ function spendKeyText(est) {
    Pure, for the node-run test. */
 function capWarningText(est) {
   if (!est || !est.billed_to_owner || est.cap_remaining == null) return "";
-  if (est.cap_remaining >= est.papers) return "";
+  // What the allowance is counted in is model CALLS, not papers. A summary
+  // batch makes one call per paper; a review makes one call however many
+  // papers it reads. Comparing against papers told a user with 3 calls left
+  // that only 3 of 10 papers could be reviewed, when the one call would read
+  // all ten (gate 2026-09-21 finding 3).
+  const needed = est.calls != null ? est.calls : est.papers;
+  if (est.cap_remaining >= needed) return "";
   if (est.cap_remaining === 0) {
     return "Today's allowance on the shared key is used up. Add your own API " +
            "key in Settings, or try again tomorrow.";
@@ -2501,34 +2511,46 @@ async function summarizeOnePaper(paper) {
     if (e.status === 429) return { cap: true };
     return { error: e.message };
   }
+  const settled = await pollJobUntilSettled(`/api/summaries/${job.job_id}`);
+  if (settled.error) return { error: settled.error };
+  // FT1: with no full text found the abstract is kept and no model runs.
+  // Counting that as "summarized" would tell the user three papers were
+  // summarized when the model only read one.
+  const result = settled.status.result || {};
+  return { ok: true, abstractOnly: result.source_text === "abstract" };
+}
+
+/* Poll a background job until it settles. ONE implementation for every batch
+   poller, because each hand-written copy drifted: the summary batch was fixed
+   to give up on an unreachable server, and the review poller added in the
+   same commit was not, so a stuck server became a silent forever-loop that
+   also left both batch buttons disabled until a reload (gate 2026-09-21,
+   twice). A third copy would drift the same way.
+
+   The rule, matching startSummary: only status 0 — no answer at all — is a
+   blip worth retrying (P1). It is announced after three, and given up on at
+   POLL_GIVE_UP. Any other error ends the job.
+
+   Resolves { done, status } or { error }. Never rejects, so a caller's
+   finally always runs. */
+async function pollJobUntilSettled(path, onPhase) {
   let blips = 0;
   for (;;) {
     await new Promise(r => setTimeout(r, POLL_MS));
     let status;
-    try { status = await api("GET", `/api/summaries/${job.job_id}`); }
+    try { status = await api("GET", path); }
     catch (e) {
-      // Same rule as startSummary: only an unreachable server is retried, and
-      // it is announced. Retrying every error turned a stuck server into a
-      // silent forever-loop where the single button would have reported it
-      // (gate 2026-09-21 finding 3).
       if (e.status !== 0) return { error: e.message };
       blips += 1;
-      if (blips === 3) {
-        notice("Can't reach the server — still waiting for the summaries.", "warn");
-      }
+      if (blips === 3) notice("Can't reach the server — still waiting.", "warn");
       if (blips >= POLL_GIVE_UP) {
-        return { error: "lost track of this summary — the server stopped answering" };
+        return { error: "lost track of this — the server stopped answering" };
       }
-      continue;                       // a blip is not a failed summary (P1)
+      continue;
     }
     blips = 0;
-    if (status.status === "done") {
-      // FT1: with no full text found the abstract is kept and no model runs.
-      // Counting that as "summarized" would tell the user three papers were
-      // summarized when the model only read one.
-      const result = status.result || {};
-      return { ok: true, abstractOnly: result.source_text === "abstract" };
-    }
+    if (onPhase && status.phase) onPhase(status.phase);
+    if (status.status === "done") return { done: true, status };
     if (["error", "cancelled"].includes(status.status)) {
       return { error: status.error || status.status };
     }
@@ -2569,7 +2591,6 @@ async function reviewChecked() {
   const status = $("ref-dl-status");
   status.classList.remove("hidden");
   status.textContent = `Reviewing ${preview.papers} paper(s)…`;
-  setBatchRunning(true);
 
   const local = localSettings();
   const body = { list_id: state.activeListId };
@@ -2580,39 +2601,27 @@ async function reviewChecked() {
     body.model = local.model || "";
   }
 
-  let job;
-  try { job = await api("POST", "/api/reviews", body); }
-  catch (e) {
-    status.textContent = `Review failed: ${e.message}`;
-    setBatchRunning(false);
-    return;
-  }
+  // Released in the finally on every path. The guard used to be released by
+  // hand at each exit, and a forever-looping poll never reached any of them,
+  // leaving both batch buttons disabled until a reload (gate finding 2).
+  setBatchRunning(true);
+  try {
+    let job;
+    try { job = await api("POST", "/api/reviews", body); }
+    catch (e) { status.textContent = `Review failed: ${e.message}`; return; }
 
-  for (;;) {
-    await new Promise(r => setTimeout(r, POLL_MS));
-    let poll;
-    try { poll = await api("GET", `/api/reviews/${job.job_id}`); }
-    catch (e) {
-      if (e.status !== 0) {
-        status.textContent = `Review failed: ${e.message}`;
-        setBatchRunning(false);
-        return;
-      }
-      continue;                      // unreachable server: a blip (P1)
+    const settled = await pollJobUntilSettled(
+      `/api/reviews/${job.job_id}`, (phase) => { status.textContent = phase; });
+    if (settled.error) {
+      status.textContent = `Review failed: ${settled.error}`;
+      return;
     }
-    if (poll.phase) status.textContent = poll.phase;
-    if (poll.status === "done") {
-      renderReview(poll.result);
-      status.textContent = `Reviewed ${preview.papers} paper(s).`;
-      break;
-    }
-    if (["error", "cancelled"].includes(poll.status)) {
-      status.textContent = `Review failed: ${poll.error || poll.status}`;
-      break;
-    }
+    renderReview(settled.status.result);
+    status.textContent = `Reviewed ${preview.papers} paper(s).`;
+  } finally {
+    setBatchRunning(false);
+    refreshTokenMeter();
   }
-  setBatchRunning(false);
-  refreshTokenMeter();
 }
 
 /* The preview in the shape confirmSpend expects. The token count is measured,
@@ -2621,6 +2630,7 @@ async function reviewChecked() {
 function reviewEstimate(preview, payer = {}) {
   return {
     papers: preview.papers,
+    calls: 1,                  // one synthesis, one call, one slot
     low: preview.prompt_tokens,
     high: preview.prompt_tokens,
     exact: true,
