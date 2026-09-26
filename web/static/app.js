@@ -1636,7 +1636,11 @@ async function saveFilter() {
   const body = { name, enabled: $("filter-enabled").checked, filter: buildFilterDict() };
   try {
     if (state.activeFilterId) {
-      await api("PUT", `/api/filters/${state.activeFilterId}`, body);
+      // A rename is saved as a new row and the old one deleted, so the id
+      // changes. Keep the one the server returns, or the next save PUTs to a
+      // deleted id and 404s.
+      const saved = await api("PUT", `/api/filters/${state.activeFilterId}`, body);
+      state.activeFilterId = saved.id;
     } else {
       const created = await api("POST", "/api/filters", body);
       state.activeFilterId = created.id;
@@ -1829,9 +1833,10 @@ function renderDiscoverChips(terms) {
   const hint = document.createElement("p");
   hint.className = "muted small";
   hint.style.margin = "0 0 4px";
-  hint.textContent = "Click a term to make a new filter named after it. " +
-                     "Right-click a term to add it as another group in the " +
-                     "filter you have open.";
+  hint.textContent = "Click a term to add it as a new group in the filter " +
+                     "you have open; the term is added to the filter's name. " +
+                     "With no filter open, the first click starts one. " +
+                     "Right-click a term to start a new filter from it.";
   container.appendChild(hint);
 
   for (const term of terms) {
@@ -1841,11 +1846,11 @@ function renderDiscoverChips(terms) {
     chip.style.margin = "2px";
     chip.dataset.term = term;
     chip.textContent = term;
-    chip.title = "Click: new filter · Right-click: add as a group";
-    chip.addEventListener("click", () => createFilterFromTerm(term));
+    chip.title = "Click: add as a group · Right-click: new filter";
+    chip.addEventListener("click", () => addTermAsGroup(term));
     chip.addEventListener("contextmenu", (e) => {
       e.preventDefault();                 // the browser's menu, not ours
-      addTermAsGroup(term);
+      createFilterFromTerm(term);
     });
     container.appendChild(chip);
   }
@@ -1876,11 +1881,34 @@ function groupsWithTerm(groups, term) {
    name silently REPLACES that filter. Clicking "inflammaging" when a filter
    called "inflammaging" exists would otherwise overwrite it; instead the new
    one is "inflammaging (2)". Case-insensitive. Pure, for the node-run test. */
-function freeFilterName(base, takenNames) {
+function freeFilterName(base, takenNames, maxLen = 80) {
   const taken = new Set((takenNames || []).map(n => String(n).trim().toLowerCase()));
-  let name = (base || "").trim().slice(0, 80) || "Discovered term";
+  let name = (base || "").trim().slice(0, maxLen) || "Discovered term";
   while (taken.has(name.toLowerCase())) name = nextListName(name);
   return name;
+}
+
+/* The server's limit on a filter name (FilterBody.name max_length). */
+const FILTER_NAME_MAX = 200;
+
+/* The open filter's name with the term appended: "sleep" → "sleep, apnea".
+
+   Saving goes through PUT, and a rename there is an upsert on the new name
+   that then deletes the old row. Renaming onto another filter's name would
+   overwrite that filter and delete this one, so the new name is made free
+   against every OTHER filter's name. The open filter's own name does not
+   count as taken.
+
+   Returns null when the appended name would pass the server's limit — the
+   caller keeps the old name and says so, rather than the server cutting the
+   name off silently. Pure, for the node-run test. */
+function appendedFilterName(current, term, takenNames) {
+  const own = (current || "").trim();
+  const base = own ? `${own}, ${term.trim()}` : term.trim();
+  const others = (takenNames || []).filter(
+    n => String(n).trim().toLowerCase() !== own.toLowerCase());
+  const name = freeFilterName(base, others, FILTER_NAME_MAX + 1);
+  return name.length > FILTER_NAME_MAX ? null : name;
 }
 
 /* Click: a new filter, named after the term, searching for it. */
@@ -1893,20 +1921,31 @@ async function createFilterFromTerm(term) {
   await saveTermFilter(`Created filter "${name}".`);
 }
 
-/* Right-click: the term becomes another group in the filter that is open.
-   With no saved filter open there is nothing to add to, so it starts one —
-   doing nothing at all was the old behaviour, and it looked broken. */
+/* Click: the term becomes another group in the filter that is open, and is
+   appended to the filter's name. With no saved filter open there is nothing
+   to add to, so the click starts one named after the term. */
 async function addTermAsGroup(term) {
   if (state.discoverSaving) return;
   if (!state.activeFilterId) { await createFilterFromTerm(term); return; }
 
   const groups = collectTextGroups();
+  const current = $("filter-name").value.trim();
   if (groupsHaveTerm(groups, term)) {
-    notice(`"${term}" is already in "${$("filter-name").value}".`, "warn");
+    notice(`"${term}" is already in "${current}".`, "warn");
     return;
   }
+  const others = (state.filters || []).filter(f => f.id !== state.activeFilterId)
+                                      .map(f => f.name);
+  const name = appendedFilterName(current, term, others);
   renderTextGroups(groupsWithTerm(groups, term));
-  await saveTermFilter(`Added "${term}" to "${$("filter-name").value}" as a new group.`);
+  if (name === null) {
+    await saveTermFilter(`Added "${term}" to "${current}" as a new group. The ` +
+      `name was left as it is: adding the term would pass the ` +
+      `${FILTER_NAME_MAX}-character limit.`);
+    return;
+  }
+  $("filter-name").value = name;
+  await saveTermFilter(`Added "${term}" as a new group. The filter is now "${name}".`);
 }
 
 /* Save the filter in the editor: create it if new, update it if not. */
@@ -1916,7 +1955,11 @@ async function saveTermFilter(message) {
   state.discoverSaving = true;
   try {
     if (state.activeFilterId) {
-      await api("PUT", `/api/filters/${state.activeFilterId}`, body);
+      // A rename is saved as a new row and the old one deleted, so the id
+      // changes. Keep the one the server returns, or the next save PUTs to a
+      // deleted id and 404s.
+      const saved = await api("PUT", `/api/filters/${state.activeFilterId}`, body);
+      state.activeFilterId = saved.id;
     } else {
       const created = await api("POST", "/api/filters", body);
       state.activeFilterId = created.id;

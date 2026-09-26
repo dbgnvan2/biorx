@@ -828,13 +828,15 @@ def test_m2a1_select_all_is_in_the_references_table_header():
     assert 'id="select-all-refs"' in panel.group(0)
 
 
-# ── Discover chips: click to create a filter, right-click to add a group ──────
+# ── Discover chips: click to add a group, right-click to start a filter ──────
 
 _CHIP_BLOCKS = [
     r"function nextListName\(name\) \{.*?\n\}",
     r"function groupsHaveTerm\(groups, term\) \{.*?\n\}",
     r"function groupsWithTerm\(groups, term\) \{.*?\n\}",
-    r"function freeFilterName\(base, takenNames\) \{.*?\n\}",
+    r"function freeFilterName\(base, takenNames, maxLen = 80\) \{.*?\n\}",
+    r"const FILTER_NAME_MAX = \d+;",
+    r"function appendedFilterName\(current, term, takenNames\) \{.*?\n\}",
 ]
 
 
@@ -871,7 +873,7 @@ def test_dc1_the_upsert_hazard_is_real():
     assert "ON CONFLICT(user_id, name) DO UPDATE" in upsert
 
 
-def test_dc2_right_click_adds_the_term_as_its_own_group():
+def test_dc2_a_click_adds_the_term_as_its_own_group():
     """A new group, OR with the others — not appended into an existing group's
     field, where it would change what that group means."""
     got = _chip_eval(
@@ -912,19 +914,20 @@ def test_dc2_a_term_already_in_the_filter_is_recognised(groups, term, expected):
     assert _chip_eval(f"groupsHaveTerm({json.dumps(groups)}, {term!r})") is expected
 
 
-def test_dc2_right_click_is_wired_and_the_browser_menu_suppressed():
+def test_dc2_click_adds_a_group_right_click_starts_a_filter():
     """contextmenu is the right-click event; without preventDefault the
     browser's own menu covers the page on every right-click."""
     code = _js_without_comments()
     body = re.search(r"function renderDiscoverChips\(terms\) \{.*?\n\}",
                      code, re.DOTALL).group(0)
-    assert 'addEventListener("click", () => createFilterFromTerm(term))' in body
+    assert 'addEventListener("click", () => addTermAsGroup(term))' in body
     assert 'addEventListener("contextmenu"' in body
     assert "e.preventDefault()" in body
-    assert "addTermAsGroup(term)" in body
+    menu = body[body.index('addEventListener("contextmenu"'):]
+    assert "createFilterFromTerm(term)" in menu
 
 
-def test_dc2_right_click_with_no_filter_open_starts_one():
+def test_dc2_a_click_with_no_filter_open_starts_one():
     """The old handler did nothing at all when no group existed, which looked
     broken. Doing nothing silently is the one outcome ruled out."""
     code = _js_without_comments()
@@ -932,6 +935,67 @@ def test_dc2_right_click_with_no_filter_open_starts_one():
                      code, re.DOTALL).group(0)
     assert "if (!state.activeFilterId)" in body
     assert "createFilterFromTerm(term)" in body
+
+
+def test_dc4_the_term_is_appended_to_the_filter_name():
+    assert _chip_eval('appendedFilterName("sleep", "apnea", ["Loneliness"])') \
+        == "sleep, apnea"
+
+
+def test_dc4_the_open_filters_own_name_is_not_counted_as_taken():
+    """The open filter is in the list of names too. Treating its own name as
+    taken is harmless here, but the check must be against the OTHER names."""
+    assert _chip_eval('appendedFilterName("sleep", "apnea", ["sleep"])') \
+        == "sleep, apnea"
+
+
+def test_dc4_an_appended_name_never_lands_on_another_filter():
+    """The decisive safety check. PUT renames by upserting on the new name and
+    deleting the old row: renaming "sleep" onto an existing "sleep, apnea"
+    would overwrite that filter AND delete this one."""
+    got = _chip_eval('appendedFilterName("sleep", "apnea", ["sleep", "Sleep, Apnea"])')
+    assert got == "sleep, apnea (2)"
+
+
+def test_dc4_a_name_past_the_server_limit_is_refused_not_cut_off():
+    """The server silently cuts names at 200 characters. Returning null lets
+    the caller keep the old name and say why."""
+    long_name = "x" * 195
+    assert _chip_eval(f'appendedFilterName("{long_name}", "apnea", [])') is None
+    fits = "x" * 190
+    assert _chip_eval(f'appendedFilterName("{fits}", "apnea", [])') == fits + ", apnea"
+
+
+def test_dc4_the_server_limit_matches_the_route():
+    """FILTER_NAME_MAX is a copy of FilterBody.name's max_length; a change to
+    one must fail here until the other follows."""
+    route = (Path(__file__).parent.parent.parent / "web" / "routes_filters.py").read_text()
+    server = int(re.search(r"name: str = Field\(min_length=1, max_length=(\d+)\)",
+                           route).group(1))
+    js = int(re.search(r"const FILTER_NAME_MAX = (\d+);", APP_JS.read_text()).group(1))
+    assert js == server
+
+
+def test_dc4_a_click_renames_the_open_filter_and_saves():
+    code = _js_without_comments()
+    body = re.search(r"async function addTermAsGroup\(term\) \{.*?\n\}",
+                     code, re.DOTALL).group(0)
+    assert "appendedFilterName(" in body
+    assert '$("filter-name").value = name' in body
+    assert body.count("saveTermFilter(") == 2   # renamed, and name-too-long
+
+
+@pytest.mark.parametrize("fn", ["saveTermFilter(message)", "saveFilter()"])
+def test_dc4_both_save_paths_keep_the_id_put_returns(fn):
+    """P5 sibling: a rename changes the filter's id (see
+    test_filters_routes::test_dc4_a_rename_returns_a_new_id_and_the_old_one_is_gone).
+    A save path that keeps the old id 404s on the next save."""
+    code = _js_without_comments()
+    name = re.escape(fn.split("(")[0])
+    body = re.search(rf"async function {name}\([^)]*\) \{{.*?\n\}}",
+                     code, re.DOTALL).group(0)
+    assert re.search(r"const saved = await api\(\"PUT\"", body)
+    assert "state.activeFilterId = saved.id" in body
 
 
 def test_dc3_the_new_filter_is_saved_and_runnable_at_once():

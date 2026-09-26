@@ -56,6 +56,24 @@ def test_renaming_does_not_leave_a_duplicate(signed_in):
     assert "Before" not in names
 
 
+def test_dc4_a_rename_returns_a_new_id_and_the_old_one_is_gone(signed_in):
+    """Pins why the page must keep the id PUT returns. A rename is saved as a
+    new row and the old row deleted, so a second save to the old id 404s.
+    Clicking terms renames the filter on every click, which hit this on the
+    second click."""
+    created = signed_in.post("/api/filters",
+                             json={"name": "sleep", "filter": FILTER}).json()
+    renamed = signed_in.put(f"/api/filters/{created['id']}",
+                            json={"name": "sleep, apnea", "filter": FILTER}).json()
+    assert renamed["name"] == "sleep, apnea"
+    assert signed_in.put(f"/api/filters/{created['id']}",
+                         json={"name": "sleep, apnea, snoring",
+                               "filter": FILTER}).status_code == 404
+    again = signed_in.put(f"/api/filters/{renamed['id']}",
+                          json={"name": "sleep, apnea, snoring", "filter": FILTER})
+    assert again.status_code == 200
+
+
 def test_updating_a_missing_filter_is_404(signed_in):
     assert signed_in.put("/api/filters/99999",
                          json={"name": "x", "filter": FILTER}).status_code == 404
