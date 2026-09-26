@@ -33,6 +33,29 @@ dialog, not the review:
 Fix both together: give the review estimate a completion allowance from config
 and price it through `tokens.rate_for`, as the summary estimate does.
 
+## From the term-chips gate (`docs/cycles/2026-09-26_term-chips-append-qa-gate.md`) — APPROVED, deferred
+
+No finding above low. These were recorded rather than fixed after approval, so
+what was pushed is exactly what was reviewed.
+
+- **A rapid second term click is dropped silently (P2).** `state.discoverSaving`
+  returns with no message while a save is in flight. Pre-existing, but it now
+  sits on the left-click path, which is the click-heavy one. Queue the term or
+  say the click was ignored.
+- **`saveFilterAs` still overwrites by name (P5 sibling).** It POSTs the name
+  from the prompt with no free-name step, so "Save as…" onto an existing name
+  replaces that filter — the overwrite the chip path now prevents. Also listed
+  under the earlier gate.
+- **`createFilterFromTerm` truncates a name at 80 characters** because it calls
+  `freeFilterName` without a `maxLen`, while the server allows 200.
+- **A comment in `appendedFilterName` misstates the server's behaviour.** It
+  says the server "silently cuts names at 200 characters"; the route rejects a
+  longer name with 422, and the `[:200]` truncation is reachable only from the
+  seed path. The code's behaviour is right; the rationale is not.
+- **`test_dc4_both_save_paths_keep_the_id_put_returns` is a substring match**,
+  so `saved.id + 1` would pass it. A browser-driven click-click test is the
+  stronger check.
+
 ## From the review-and-chips gate (`docs/cycles/2026-09-21_review-and-chips-qa-gate.md`) — APPROVED, deferred
 
 The three findings were fixed. The re-sweep recorded three older problems in the

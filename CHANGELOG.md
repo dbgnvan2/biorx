@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-09-26 — a term click builds up one filter
+
+Gate: `docs/cycles/2026-09-26_term-chips-append-qa-gate.md` (APPROVED).
+
+### Changed
+- **Click a suggested term to add it to the filter you have open**, as a new
+  group, with the term appended to the filter's name: clicking "sleep" then
+  "apnea" leaves one filter called "sleep, apnea" matching either term. With no
+  filter open, the first click starts one named after the term.
+- **Right-click now starts a new filter** from the term. The two actions have
+  swapped: adding term after term is the common one, so it is the plain click.
+
+### Fixed
+- Saving a renamed filter failed with "No such filter". A rename is stored under
+  the new name and the old row deleted, so the filter's id changes, and the page
+  kept the old one. It broke the second term click, and it broke **Save** on the
+  Filters tab after any rename.
+
+### Notes
+- An appended name never lands on another filter's name — that would overwrite
+  it — so it becomes "sleep, apnea (2)" instead.
+- Names stop growing at the server's 200-character limit: the term is still
+  added as a group, and the message says the name was left as it was.
+- On iPhone and iPad there is no right-click. Clicking still works; press
+  **+ New** first to start a separate filter.
+
 ## 2026-09-21 — build filters straight from suggested terms
 
 ### Added
