@@ -73,8 +73,14 @@ ROOT = Path(__file__).parent.parent.parent
 #   False on a failed lookup; _enrich counts and reports failures via WARNING,
 #   on_status and on_enrich_problem. Silent debug-only failures hid outages (P2)
 #   — W1.a required)
+# Updated from 4694712 → 493288a (review 2026-09-28 batch 1: B1 per-source budget
+#   and truncation reports, B2 empty dates, B3/M31 shared OSF adapter, B6 per-search
+#   adapter instances, B7/M18 bioRxiv+medRxiv over the filter's dates, M19-M22
+#   enrichment errors, unreadable records, outages raised, dedup surnames; the
+#   Europe PMC pubTypeList fix. Plan docs/implementation_plan_2026-09-28_review_fixes.md
+#   — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "4694712"
+BASELINE = "493288a"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
