@@ -3,6 +3,13 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the review batch-4 gate (`docs/cycles/2026-09-28_review-batch4-qa-gate.md`) — APPROVED
+
+- Both notes are fixed in review batch 5: at the cap limit a duplicate run got
+  429 instead of 409, and a free reuse of a stored summary was refused (the slot
+  was reserved before those checks); the request's database connection was not
+  released on the success path.
+
 ## From the review batch-3 gate (`docs/cycles/2026-09-28_review-batch3-qa-gate.md`) — APPROVED, deferred
 
 - LOW / docs — `APP_SPEC.md`, `BUILD_SUMMARY.md`, `PROJECT_COMPLETE.md` and

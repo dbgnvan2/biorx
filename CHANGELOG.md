@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-09-28 — background work: one spend path, separate queues, no double runs
+
+Review fixes, batch 4. Gate: `docs/cycles/2026-09-28_review-batch4-qa-gate.md` (APPROVED).
+
+### Fixed
+- **Summaries no longer wait behind searches.** Searches and model calls run in
+  separate worker pools (sizes in `llm_config.yaml` under `jobs:`), and each
+  person runs one search at a time.
+- **A second click, a second tab or a reload cannot start a second paid run** of
+  the same paper or the same list review: the server answers with the run
+  already going.
+- **A summary cancelled before it started** — every server restart cancels
+  queued work — gives its day's allowance slot back instead of keeping it for
+  24 hours.
+- **Review errors read like the others:** no key gives a plain 400 (it was a
+  bare "Internal Server Error"), an expired review says "run it again", and
+  "nothing to review" no longer shows as "HTTPException: 400".
+- **Lists and search summaries load faster:** a 2000-result search looks its
+  summaries up in 9 database queries instead of about 6000.
+
+### Changed
+- Spend accounting (who pays, the daily allowance, what a call cost) lives in
+  one module, `src/spend.py`, used by summaries, discover and reviews.
+
 ## 2026-09-28 — filters: no silent overwrites, one set of run rules
 
 Review fixes, batch 3. Gate: `docs/cycles/2026-09-28_review-batch3-qa-gate.md` (APPROVED).
