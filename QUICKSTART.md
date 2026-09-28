@@ -27,7 +27,7 @@ python gui.py
 The GUI will open with two tabs:
 
 **Tab 1: Search & Browse**
-- Select saved search clusters from `key_terms.json`
+- Pick a saved filter (from `filters.json`)
 - Click "Run Selected" or "Run All Enabled" to search
 - Or perform manual searches by date range and category
 - Results appear in table with pagination
@@ -36,15 +36,15 @@ The GUI will open with two tabs:
 **Tab 2: Configure**
 - View and edit search clusters
 - Add/remove/enable-disable clusters and profiles
-- Changes saved to `key_terms.json`
+- Changes saved to `filters.json`
 
 ### Command-Line (Agents)
 
 **Search for papers:**
 ```bash
-python agents/search_agent.py --all
-python agents/search_agent.py --cluster "Genetics & CRISPR"
-python agents/search_agent.py --dry-run  # Don't save to DB
+python agents/monitor.py --all                        # every enabled filter
+python agents/monitor.py --filter "Loneliness" --dry-run
+./run.sh search                                       # the same as --all
 ```
 
 **Summarize papers:**
@@ -65,7 +65,8 @@ python gui.py --run-full-cycle  # Search + summarize
 
 ## Configuration
 
-Edit `key_terms.json` to customize search clusters:
+Saved filters live in `filters.json` (the web app keeps each user's own copy).
+The older search-cluster file is no longer used; its format was:
 
 ```json
 {
@@ -116,7 +117,7 @@ Edit `key_terms.json` to customize search clusters:
 
 ## Next Steps
 
-1. Configure your search clusters in `key_terms.json`
+1. Set up your saved filters (Filters tab, or `filters.json`)
 2. Run searches from the GUI or CLI
 3. Review downloaded papers
 4. Summarize papers (DeepSeek by default)
@@ -125,12 +126,12 @@ Edit `key_terms.json` to customize search clusters:
 ## Files Overview
 
 - **gui.py** - Main PyQt6 application
-- **agents/search_agent.py** - Search execution logic
+- **agents/monitor.py** - Headless runs of saved filters
 - **agents/summarization_agent.py** - Summarization logic
 - **src/biorxiv_api.py** - bioRxiv API wrapper
 - **src/db.py** - SQLite database utilities
 - **src/pdf_handler.py** - PDF download and text extraction
 - **src/llm.py** - Ollama/Qwen interface
-- **key_terms.json** - Search configuration
+- **filters.json** - Saved filters
 - **APP_SPEC.md** - Full specification
 - **CLAUDE.md** - Development guidelines

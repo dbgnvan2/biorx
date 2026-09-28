@@ -9,13 +9,13 @@ deduplicate and enrich the results, download papers, and summarize them with an 
 1. **Read:** `APP_SPEC.md` for full specification
 2. **Key files to create:**
    - `gui.py` - PyQt6 desktop application
-   - `agents/search_agent.py` - Search logic
+   - `agents/monitor.py` - Headless runs of saved filters
    - `agents/summarization_agent.py` - Summarization logic
    - `src/biorxiv_api.py` - API wrapper
    - `src/db.py` - SQLite utilities
    - `src/pdf_handler.py` - PDF text extraction
    - `src/llm.py` - Ollama/Qwen interface
-   - `key_terms.json` - Configuration file (template)
+   - `filters.json` - Saved filters (seed for new web accounts)
    - `requirements.txt` - Dependencies
 
 ## Tech Stack
@@ -59,7 +59,7 @@ Records are emitted as one JSON object per line on stdout; progress goes to stde
 
 ## MVP Scope
 - GUI with Search & Browse + Configure tabs
-- Load/edit search clusters from key_terms.json
+- Saved filters (`filters.json`, per-user in the web app)
 - Run searches ad-hoc or on schedule
 - Download PDFs to `/preprints/`
 - Summarize papers with the configured LLM (DeepSeek by default)
@@ -67,7 +67,7 @@ Records are emitted as one JSON object per line on stdout; progress goes to stde
 - CLI headless modes for openclaw automation
 
 ## Key Design Decisions
-- ✅ **Categorized searches:** Organize key_terms into clusters (e.g., "Genetics & CRISPR")
+- ✅ **Saved filters:** OR-groups of title/abstract terms plus facets (see `filter_vocabulary.yaml`)
 - ✅ **LLM choice in config:** DeepSeek by default (needs `DEEPSEEK_API_KEY` in `.env`); Ollama for fully offline use
 - ✅ **Single papers:** Summarize one at a time, not in batches
 - ✅ **Background threads:** Keep UI responsive during summarization

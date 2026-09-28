@@ -72,7 +72,9 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
 
             def on_status(message: str):
                 job.phase = message
-                record_failure(job, message, ctx.sources_config)
+
+            def on_source_failure(source_name: str, kind: str):
+                record_failure(job, source_name, kind, ctx.sources_config)
 
             ctx.get_orchestrator().search(
                 filter_dict=filter_dict,
@@ -82,6 +84,10 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
                 on_status=on_status,
                 should_stop=job.should_stop,
                 max_results=settings.max_papers,
+                on_source_failure=on_source_failure,
+                # Only titles and abstracts are read below; enriching every
+                # paper cost up to two HTTP calls each for nothing (review M2).
+                enrich_only=lambda _r: False,
             )
 
             context_parts = []
@@ -164,6 +170,12 @@ def discover_terms(body: DiscoverRequest,
                    ctx: AppContext = Depends(get_context),
                    user_id: str = Depends(current_user)):
     """Queue a term-discovery job. Poll GET /api/discover-terms/{job_id}."""
+    # Refused before a slot is reserved (review M2): "   " passed min_length
+    # and ran an unfiltered search of every source plus a model call.
+    settings = discover_settings(ctx.llm_config)
+    if not query_to_keywords(body.description, settings.stop_words).strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Describe what you are looking for in a few words first.")
     try:
         resolved, usage_id = _resolve_for(ctx, user_id,
                                           inline_key=body.api_key,

@@ -18,15 +18,15 @@ from typing import Optional
 # Allow import of src modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.sources.orchestrator import SourceOrchestrator, FAILURE_STATUS_MARKER, _SOURCE_LABELS
+from src.sources.orchestrator import SourceOrchestrator
 from src.sources.config import load_sources_config
 from src.filtering import filter_papers, without_license
 from src.filters_store import EMPTY_FILTER_MESSAGE, filter_has_text
 
 logger = logging.getLogger(__name__)
 
-# FAILURE_STATUS_MARKER is imported from orchestrator (P19: single source of truth;
-# a wording change there is a visible diff that forces this file to update too).
+# Failed sources arrive through the orchestrator's on_source_failure callback
+# (review S2), so this file does not depend on the wording of status lines.
 
 
 def load_filters(path: str = "filters.json") -> list:
@@ -122,13 +122,12 @@ def run_search(
 
     failed_this_run: list = []
 
-    _label_to_name = {v: k for k, v in _SOURCE_LABELS.items()}
-
     def on_status(message: str) -> None:
         print(f"[{filter_name}] {message}", file=sys.stderr)
-        if FAILURE_STATUS_MARKER in message:
-            label = message.split(FAILURE_STATUS_MARKER)[0].strip()
-            source_name = _label_to_name.get(label, label)
+
+    def on_source_failure(source_name: str, _kind: str) -> None:
+        # Structured, not parsed from the status text (review S2).
+        if source_name not in failed_this_run:
             failed_this_run.append(source_name)
 
     def on_enrich_problem(label: str, failed: int, attempted: int) -> None:
@@ -146,6 +145,7 @@ def run_search(
         # many papers, and the full filter runs below (review B5).
         enrich_only=lambda r: bool(filter_papers([r.to_dict()], pre_enrichment)),
         on_enrich_problem=on_enrich_problem,
+        on_source_failure=on_source_failure,
     )
 
     papers = [r.to_dict() for r in records]

@@ -40,16 +40,19 @@ def _record(title, abstract="generative agents in simulation"):
     )
 
 
-def _fake_orchestrator(records=None, status_messages=(), block=None):
-    """A stand-in that drives the real callback protocol."""
+def _fake_orchestrator(records=None, status_messages=(), block=None, failures=()):
+    """A stand-in that drives the real callback protocol. `failures` are
+    (source name, kind) pairs reported through on_source_failure (review S2)."""
     records = records if records is not None else [_record("Generative Agents")]
 
     def search(filter_dict=None, source_selection=None, on_batch=None,
                on_progress=None, on_status=None, should_stop=None,
-               max_results=200, **kwargs):
+               max_results=200, on_source_failure=None, **kwargs):
         for message in status_messages:
             if on_status:
                 on_status(message)
+        for name, kind in failures:
+            on_source_failure(name, kind)
         if block is not None:
             while not block.is_set():
                 if should_stop and should_stop():
@@ -239,7 +242,8 @@ def test_fr3_1_fetched_survives_enrichment(ctx, signed_in):
 
 def test_a_failed_source_is_reported_not_silently_zero(ctx, signed_in):
     ctx.orchestrator = _fake_orchestrator(
-        records=[], status_messages=["arXiv — skipped (unavailable)"]
+        records=[], status_messages=["arXiv — skipped (unavailable)"],
+        failures=[("arxiv", "unavailable")],
     )
     job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
     body = _await_status(signed_in, job_id)
@@ -257,65 +261,25 @@ def test_a_normal_progress_message_is_not_read_as_a_failure(ctx, signed_in):
     assert body["sources_failed"] == []
 
 
-def test_the_failure_marker_matches_what_the_orchestrator_actually_emits():
-    """
-    Behavioral round-trip against the real producer (learnings P19): the orchestrator
-    emits a human-readable status on source failure; source_from_failure_status parses
-    it back to the internal source name. If someone changes the emission format without
-    updating the parser, this fails at the on_status boundary, not in source text.
-    """
-    from src.sources.orchestrator import SourceOrchestrator, _SOURCE_LABELS
+def test_s2_web_records_failures_from_the_real_orchestrator(ctx, signed_in):
+    """Round trip through the real orchestrator (learnings P19): a failing
+    source reaches the job as its internal name and a plain-language reason,
+    with no parsing of status text (review S2 replaced the string parser)."""
+    from src.sources.orchestrator import SourceOrchestrator
     from src.sources.errors import SourceUnavailableError
-    from web.routes_searches import source_from_failure_status
-
-    target_name = next(iter(_SOURCE_LABELS))
-    target_label = _SOURCE_LABELS[target_name]
+    from src.sources.config import SOURCE_LABELS
 
     class _AlwaysFails:
-        source_name = target_name
-        source_trust_weight = 1.0
         def search(self, *a, **kw): raise SourceUnavailableError("down for test")
         def normalize(self, raw): raise NotImplementedError
 
     orch = SourceOrchestrator({})
-    orch._search_adapters = {target_name: _AlwaysFails()}
-
-    msgs: list = []
-    orch.search(
-        filter_dict={"days_back": 1, "text_groups": [], "authors": []},
-        source_selection={"all": False, "selected": [target_name]},
-        on_status=msgs.append,
-    )
-
-    failure_msgs = [m for m in msgs if source_from_failure_status(m) != ""]
-    assert failure_msgs, (
-        f"Orchestrator emitted no parseable failure status for {target_name!r}: {msgs}"
-    )
-    assert source_from_failure_status(failure_msgs[0]) == target_name, (
-        f"source_from_failure_status({failure_msgs[0]!r}) should be {target_name!r}"
-    )
-    # Progress-style messages must not look like failures.
-    assert source_from_failure_status(f"{target_label}: 40 fetched") == ""
-
-
-def test_the_failure_parser_handles_all_sources_and_qualifiers():
-    """Unit test: source_from_failure_status covers all 8 _SOURCE_LABELS entries
-    across all 4 qualifier variants (unavailable/error/rate-limited/partial).
-    Progress messages must never parse as failures. Covers mutation gap where
-    only next(iter()) was tested in the behavioral round-trip above."""
-    from src.sources.orchestrator import FAILURE_STATUS_MARKER, _SOURCE_LABELS
-    from web.routes_searches import source_from_failure_status
-
-    qualifiers = ("unavailable", "error", "rate-limited", "partial", "truncated")
-    for name, label in _SOURCE_LABELS.items():
-        for q in qualifiers:
-            msg = f"{label} {FAILURE_STATUS_MARKER} ({q})"
-            assert source_from_failure_status(msg) == name, (
-                f"Parser failed for source={name!r} qualifier={q!r}: {msg!r}"
-            )
-        assert source_from_failure_status(f"{label}: 40 fetched") == "", (
-            f"Progress message misidentified as failure for source={name!r}"
-        )
+    orch._search_adapters = {name: _AlwaysFails() for name in ("arxiv", "biorxiv_medrxiv")}
+    ctx.orchestrator = orch
+    job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
+    body = _await_status(signed_in, job_id)
+    assert sorted(body["sources_failed"]) == ["arxiv", "biorxiv_medrxiv"]
+    assert set(body["source_problems"]) == {SOURCE_LABELS["arxiv"], SOURCE_LABELS["biorxiv_medrxiv"]}
 
 
 # ── Cancellation, expiry and ownership ────────────────────────────────────────
@@ -378,22 +342,18 @@ def test_one_user_cannot_read_or_cancel_anothers_search(ctx, app):
 ])
 def test_d2_failure_reason_from_config(kind, expect):
     from src.sources.config import load_sources_config
-    from src.sources.orchestrator import FAILURE_STATUS_MARKER, _SOURCE_LABELS
     from web.routes_searches import failure_reason
-    msg = f"{_SOURCE_LABELS['biorxiv_medrxiv']} {FAILURE_STATUS_MARKER} ({kind})"
-    assert expect in failure_reason(msg, load_sources_config())
+    assert expect in failure_reason(kind, load_sources_config())
 
 
 def test_d2_job_records_label_and_reason_once():
     from src.jobs import Job
-    from src.sources.config import load_sources_config
-    from src.sources.orchestrator import FAILURE_STATUS_MARKER, _SOURCE_LABELS
+    from src.sources.config import load_sources_config, source_label
     from web.routes_searches import record_failure
     job = Job(id="j", kind="search", owner="u")
-    label = _SOURCE_LABELS["biorxiv_medrxiv"]
     for _ in range(3):
-        record_failure(job, f"{label} {FAILURE_STATUS_MARKER} (unavailable)", load_sources_config())
-    record_failure(job, "Searching Europe PMC… page 2", load_sources_config())
+        record_failure(job, "biorxiv_medrxiv", "unavailable", load_sources_config())
+    label = source_label("biorxiv_medrxiv")
     assert job.sources_failed == ["biorxiv_medrxiv"]
     assert list(job.source_problems) == [label]
     assert "did not respond properly" in job.source_problems[label]

@@ -464,3 +464,24 @@ def test_s3_image_ships_filter_vocabulary():
     text = (ROOT / "Dockerfile").read_text()
     copy_lines = [l for l in text.splitlines() if l.upper().startswith("COPY ")]
     assert any("filter_vocabulary.yaml" in l.split() for l in copy_lines)
+
+
+# ── S4: one search engine ─────────────────────────────────────────────────────
+
+def test_s4_legacy_agent_removed():
+    """The bioRxiv-only search agent and its key_terms.json were a second engine
+    with no empty-filter guard (review S4)."""
+    assert not (ROOT / "agents" / "search_agent.py").exists()
+    assert not (ROOT / "key_terms.json").exists()
+    for path in list((ROOT / "src").rglob("*.py")) + list((ROOT / "web").rglob("*.py")) \
+            + list((ROOT / "agents").glob("*.py")) + [ROOT / "gui.py", ROOT / "run.sh"]:
+        text = path.read_text()
+        assert "search_agent" not in text and "key_terms" not in text, path
+
+
+def test_s4_run_sh_search_uses_monitor():
+    import subprocess
+    text = (ROOT / "run.sh").read_text()
+    assert 'agents/monitor.py --all' in text
+    assert "test_components.py" not in text          # the file does not exist
+    assert subprocess.run(["bash", "-n", str(ROOT / "run.sh")]).returncode == 0

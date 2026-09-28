@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDate, pyqtSignal, QThread, QObject
 from PyQt6.QtGui import QFont
 
-from agents.search_agent import SearchAgent
 from src.db import Database
 from src.biorxiv_api import BioRxivAPI
 from src.pdf_handler import PDFHandler

@@ -35,7 +35,8 @@ USER_AGENT_PRODUCT = "biorx/1.0"
 # Sources that are search-capable (shown in picker)
 _SEARCH_SOURCES = ["europepmc", "pubmed", "psyarxiv", "socarxiv", "biorxiv_medrxiv", "arxiv", "openalex"]
 
-# Display labels for picker
+# Display labels: the one map for the picker, status lines, warnings and the
+# web app (review S2; there were two, spelled differently).
 SOURCE_LABELS: Dict[str, str] = {
     "europepmc":       "Europe PMC",
     "pubmed":          "PubMed",
@@ -44,7 +45,16 @@ SOURCE_LABELS: Dict[str, str] = {
     "biorxiv_medrxiv": "bioRxiv / medRxiv",
     "arxiv":           "arXiv",
     "openalex":        "OpenAlex",
+    "crossref":        "Crossref",
 }
+
+
+def source_label(source_name: str) -> str:
+    """Purpose: A source's display name, from the one label map.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#S2
+    Tests:   tests/test_orchestrator.py::test_s2_failures_structured_not_parsed
+    """
+    return SOURCE_LABELS.get(source_name, source_name)
 
 
 def load_sources_config(path: str = "sources_config.yaml") -> Dict[str, Any]:

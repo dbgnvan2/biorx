@@ -33,7 +33,7 @@ Desktop GUI application (PyQt6) + CLI agents for searching bioRxiv preprints, do
 - **Single papers at a time:** Summarize one paper per user action (not batches)
 - **Background threading:** Keep UI responsive during long operations
 - **Idempotent agents:** Safe to run multiple times; check SQLite before inserting
-- **Categorized searches:** `key_terms.json` organized by search clusters
+- **Saved filters:** `filters.json` (per user in the web app); facet options in `filter_vocabulary.yaml`
 - **LLM:** DeepSeek by default (`DEEPSEEK_API_KEY` in `.env`); Ollama (localhost:11434, `qwen3.5:4b`) for offline use — set in `llm_config.yaml`
 - **External APIs:** publication sources, Crossref/Unpaywall enrichment, and the configured LLM provider
 
@@ -69,7 +69,7 @@ Desktop GUI application (PyQt6) + CLI agents for searching bioRxiv preprints, do
 biorx/
 ├── gui.py                    (Main PyQt6 app)
 ├── agents/
-│   ├── search_agent.py       (Search logic, callable from GUI or CLI)
+│   ├── monitor.py            (Headless runs of saved filters)
 │   └── summarization_agent.py (Summarization logic)
 ├── src/
 │   ├── biorxiv_api.py        (bioRxiv API wrapper)
@@ -77,7 +77,7 @@ biorx/
 │   ├── pdf_handler.py        (PDF text extraction)
 │   ├── llm.py                (Ollama/Qwen interface)
 │   └── __init__.py           (empty, makes src a package)
-├── key_terms.json            (User config, editable from GUI)
+├── filters.json              (Saved filters; seed for new web accounts)
 ├── requirements.txt
 ├── CLAUDE.md                 (this file)
 ├── README.md
@@ -90,7 +90,7 @@ biorx/
 ## MVP Features (Must Have)
 
 ### GUI - Search & Browse Tab
-- [ ] Load key_terms.json search clusters
+- [ ] Load saved filters (filters.json)
 - [ ] Display enabled/disabled clusters as checkboxes
 - [ ] "Run Selected" button - execute checked searches
 - [ ] "Run All Enabled" button - run all enabled clusters
@@ -104,10 +104,10 @@ biorx/
 - [ ] Add/edit/delete cluster
 - [ ] Add/edit/delete profile within cluster
 - [ ] Toggle cluster/profile enabled/disabled
-- [ ] Save button to write key_terms.json
+- [ ] Save button to write filters.json
 
 ### Agents
-- [ ] search_agent.py: Read key_terms, execute searches, store in SQLite
+- [x] monitor.py: run saved filters headless (replaced search_agent.py, review S4)
 - [ ] summarization_agent.py: Find unsummarized papers, run the configured LLM, store results
 - [ ] Both callable from GUI or CLI (python gui.py --run-search, --run-summarize)
 

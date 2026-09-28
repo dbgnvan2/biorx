@@ -34,17 +34,19 @@ PAPERS = [
 class FakeOrchestrator:
     """Records the filter it was asked to search and returns fixed papers."""
 
-    def __init__(self, papers=PAPERS, fail_with=None, status=None):
-        self.papers, self.fail_with, self.status = papers, fail_with, status
+    def __init__(self, papers=PAPERS, fail_with=None, failed_source=None):
+        self.papers, self.fail_with, self.failed_source = papers, fail_with, failed_source
         self.calls = []
 
     def search(self, filter_dict, source_selection, on_batch, on_progress,
-               on_status, should_stop, max_results):
-        self.calls.append({"filter_dict": filter_dict, "max_results": max_results})
+               on_status, should_stop, max_results, on_source_failure=None,
+               enrich_only=None):
+        self.calls.append({"filter_dict": filter_dict, "max_results": max_results,
+                           "enrich_only": enrich_only})
         if self.fail_with:
             raise self.fail_with
-        if self.status:
-            on_status(self.status)
+        if self.failed_source:
+            on_source_failure(self.failed_source, "error")
         on_batch([SimpleNamespace(to_dict=lambda p=p: dict(p)) for p in self.papers])
 
 
@@ -130,8 +132,7 @@ def test_dt2_no_papers_is_reported_as_such(signed_in, ctx):
 
 
 def test_dt2_failed_sources_are_recorded(signed_in, ctx):
-    from src.sources.orchestrator import FAILURE_STATUS_MARKER, _SOURCE_LABELS
-    orch = FakeOrchestrator(status=f"{_SOURCE_LABELS['pubmed']} {FAILURE_STATUS_MARKER} (error)")
+    orch = FakeOrchestrator(failed_source="pubmed")
     body = _run(signed_in, ctx, orch, '{"terms": ["a"]}')
     assert body["sources_failed"] == ["pubmed"]
 
@@ -328,3 +329,30 @@ def test_dt3_connection_released_even_if_settling_raises(signed_in, ctx, owner_k
     body = _run(signed_in, ctx, FakeOrchestrator(papers=[]), '{"terms": ["a"]}', OWNER_BODY)
     assert body["status"] == "error"
     assert released, "the pooled connection was not released"
+
+
+
+# ── M2: discover's search is guarded and not enriched ────────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M2
+
+def test_m2_whitespace_description_400(signed_in, ctx, monkeypatch):
+    """With a working provider, so the 400 is this check and not a missing key."""
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    from src.llm_config import load_llm_config
+    ctx.llm_config = load_llm_config()
+    orch = FakeOrchestrator()
+    ctx.orchestrator = orch
+    ok = signed_in.post("/api/discover-terms", json={"description": "sleep apnea"})
+    assert ok.status_code == 202                        # the setup does work
+    orch.calls.clear()
+    r = signed_in.post("/api/discover-terms", json={"description": "   "})
+    assert r.status_code == 400 and "Describe" in r.json()["detail"]
+    time.sleep(0.05)
+    assert orch.calls == []
+
+
+def test_m2_no_enrichment(signed_in, ctx):
+    orch = FakeOrchestrator()
+    _run(signed_in, ctx, orch, '{"terms": ["a"]}')
+    enrich_only = orch.calls[0]["enrich_only"]
+    assert enrich_only is not None and enrich_only(object()) is False

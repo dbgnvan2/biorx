@@ -177,16 +177,15 @@ def test_g_conftest_fallback_matches_db_constant():
 # ── P19: failure detection round-trip via real orchestrator ───────────────────
 
 def test_g_failure_detection_round_trip():
-    """Source failure → orchestrator on_status → monitor detects FAILURE_STATUS_MARKER.
+    """Source failure → the real orchestrator → monitor records it.
 
-    If orchestrator.py's status string is reworded away from '— skipped',
-    monitor.py's FAILURE_STATUS_MARKER check silently stops working while
-    test_monitor.py stays green (it hardcodes the string). This test exercises
-    the real on_status emission path end-to-end.
+    Since review S2 the orchestrator reports failures structurally
+    (on_source_failure), so no consumer depends on the status wording. This
+    exercises the real emission path end to end.
     """
+    from agents import monitor
     from src.sources.errors import SourceUnavailableError
     from src.sources.orchestrator import SourceOrchestrator
-    from agents.monitor import FAILURE_STATUS_MARKER
 
     class _AlwaysFails:
         source_name = "europepmc"
@@ -198,27 +197,13 @@ def test_g_failure_detection_round_trip():
         def normalize(self, raw):
             raise NotImplementedError
 
-        def get_by_id(self, identifier):
-            return None
-
-    config: dict = {}
-    orch = SourceOrchestrator(config)
-    # Inject the failing adapter directly — bypasses _register_adapters
-    orch._search_adapters["europepmc"] = _AlwaysFails()
-
-    status_messages: list = []
-    orch.search(
-        filter_dict={"text_groups": [{"both": "test"}], "days_back": 7},
-        source_selection={"all": False, "selected": ["europepmc"]},
-        on_status=status_messages.append,
-    )
-
-    failure_msgs = [m for m in status_messages if FAILURE_STATUS_MARKER in m]
-    assert failure_msgs, (
-        f"Expected at least one status message containing {FAILURE_STATUS_MARKER!r}; "
-        f"got messages: {status_messages!r}. "
-        "If orchestrator.py's wording changed, update FAILURE_STATUS_MARKER in monitor.py."
-    )
+    orch = SourceOrchestrator({})
+    orch._search_adapters = {"europepmc": _AlwaysFails()}
+    failed: list = []
+    monitor.run_search(orch, {"text_groups": [{"both": "test"}], "days_back": 7,
+                              "source_selection": {"all": True}},
+                       "T", sources_failed=failed)
+    assert failed == ["europepmc"]
 
 
 # ── P2: monitor exits 2 on PDF download failure ───────────────────────────────

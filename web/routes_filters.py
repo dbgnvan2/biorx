@@ -46,6 +46,19 @@ def refuse_unusable_facets(filter_dict: Dict[str, Any]) -> None:
                             detail="This filter cannot be saved: " + "; ".join(problems))
 
 
+def _refuse_name_clash(ctx: AppContext, user_id: str, name: str,
+                       exclude_id: int = None) -> None:
+    """Purpose: A save never overwrites another filter by taking its name.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A2
+    Tests:   tests/web/test_filters_routes.py::test_a2_rename_onto_existing_is_409,
+             tests/web/test_filters_routes.py::test_a2_create_duplicate_is_409
+    """
+    if user_store.filter_name_taken(ctx.db, user_id, name, exclude_id=exclude_id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f'A filter called "{name.strip()}" already exists. '
+                                   "Choose another name.")
+
+
 @router.get("/api/vocabulary")
 def get_vocabulary(user_id: str = Depends(current_user)):
     """Purpose: The options for each filter facet, for the page's dropdowns.
@@ -66,7 +79,8 @@ def create_filter(body: FilterBody,
                   ctx: AppContext = Depends(get_context),
                   user_id: str = Depends(current_user)):
     refuse_unusable_facets(body.filter)
-    filter_id = user_store.upsert_filter(
+    _refuse_name_clash(ctx, user_id, body.name)
+    filter_id = user_store.insert_filter(
         ctx.db, user_id, body.name, body.filter, body.enabled
     )
     return user_store.get_filter(ctx.db, user_id, filter_id)
@@ -81,14 +95,11 @@ def update_filter(filter_id: int, body: FilterBody,
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No such filter.")
     refuse_unusable_facets(body.filter)
-    # A rename is an upsert on the new name; delete the old row so a rename
-    # does not silently leave two copies.
-    new_id = user_store.upsert_filter(
-        ctx.db, user_id, body.name, body.filter, body.enabled
-    )
-    if new_id != filter_id:
-        user_store.delete_filter(ctx.db, user_id, filter_id)
-    return user_store.get_filter(ctx.db, user_id, new_id)
+    _refuse_name_clash(ctx, user_id, body.name, exclude_id=filter_id)
+    # Updated in place: a rename keeps the filter's id.
+    user_store.update_filter(ctx.db, user_id, filter_id, body.name, body.filter,
+                             body.enabled)
+    return user_store.get_filter(ctx.db, user_id, filter_id)
 
 
 @router.delete("/api/filters/{filter_id}")

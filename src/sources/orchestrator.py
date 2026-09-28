@@ -22,7 +22,7 @@ from .dedup import Deduplicator
 from .query_builder import build_europepmc_query, build_psyarxiv_query, build_arxiv_query
 from .errors import SourceUnavailableError, RateLimitedError
 from .config import (
-    SOURCE_LABELS, get_enabled_search_sources, is_source_enabled,
+    SOURCE_LABELS, get_enabled_search_sources, is_source_enabled, source_label,
     get_unpaywall_email, get_crossref_user_agent,
 )
 
@@ -32,22 +32,21 @@ logger = logging.getLogger(__name__)
 # monitor.py imports this so a wording change is a visible diff, not silent drift (P19).
 FAILURE_STATUS_MARKER = "— skipped"
 
-# Human-readable source names for status messages (spec E2.1)
-_SOURCE_LABELS: Dict[str, str] = {
-    "europepmc":       "Europe PMC",
-    "pubmed":          "PubMed",
-    "crossref":        "Crossref",
-    "psyarxiv":        "PsyArXiv",
-    "socarxiv":        "SocArXiv",
-    "biorxiv_medrxiv": "bioRxiv/medRxiv",
-    "arxiv":           "arXiv",
-    "openalex":        "OpenAlex",
-}
+class EmptyFilterError(ValueError):
+    """The filter has no text term or author, so every source would return its
+    whole date window unfiltered. Refused here, in the engine every entry point
+    uses, not only in each front end (review S2, learnings P10)."""
 
 
-def _source_label(source_name: str) -> str:
-    """Return a display label for a source, falling back to the raw name."""
-    return _SOURCE_LABELS.get(source_name, source_name)
+def _report_failure(source_name: str, kind: str,
+                    on_status: Optional[Callable[[str], None]],
+                    on_source_failure: Optional[Callable[[str, str], None]]) -> None:
+    """Tell callers a source failed: a status line for people, and the
+    (source, kind) pair for code, so no caller parses the line (review S2)."""
+    if on_status:
+        on_status(f"{source_label(source_name)} {FAILURE_STATUS_MARKER} ({kind})")
+    if on_source_failure:
+        on_source_failure(source_name, kind)
 
 
 class SourceOrchestrator:
@@ -124,7 +123,7 @@ class SourceOrchestrator:
         # is only an abstract lookup) would otherwise do nothing, silently (M31).
         for name in get_enabled_search_sources(self.config):
             if name not in self._search_adapters:
-                msg = (f"{SOURCE_LABELS.get(name, name)} is enabled in sources_config.yaml "
+                msg = (f"{source_label(name)} is enabled in sources_config.yaml "
                        "but has no search adapter, so it is not searched.")
                 logger.warning(msg)
                 self.warnings.append(msg)
@@ -157,6 +156,7 @@ class SourceOrchestrator:
         enrich_only: Optional[Callable[[CanonicalRecord], bool]] = None,
         on_enrich_progress: Optional[Callable[[int, int], None]] = None,
         on_enrich_problem: Optional[Callable[[str, int, int], None]] = None,
+        on_source_failure: Optional[Callable[[str, str], None]] = None,
     ) -> List[CanonicalRecord]:
         """
         Execute a multi-source search and return deduplicated CanonicalRecords.
@@ -181,10 +181,24 @@ class SourceOrchestrator:
             on_enrich_problem: Callback with (service label, failed, attempted)
                               for each enrichment service whose lookups failed,
                               so an outage is shown rather than only logged.
+            on_source_failure: Callback with (source name, kind) for each
+                              source that failed or was cut short; kind is
+                              unavailable, error, rate-limited, partial or
+                              truncated. Callers use this, not the status text.
+
+        Raises:
+            EmptyFilterError: the filter has nothing to search for.
 
         Returns:
             List of deduplicated, ranked CanonicalRecords.
         """
+        # Every entry point runs the same preconditions here (review S2): the
+        # canonical filter shape for the query builders, and no empty filter.
+        from src.filtering import normalise_filter
+        from src.filters_store import EMPTY_FILTER_MESSAGE, filter_has_text
+        filter_dict = normalise_filter(filter_dict)
+        if not filter_has_text(filter_dict):
+            raise EmptyFilterError(EMPTY_FILTER_MESSAGE)
         if source_selection is None:
             source_selection = {"all": True, "selected": []}
 
@@ -203,7 +217,7 @@ class SourceOrchestrator:
 
             adapter = self._adapter_for_search(self._search_adapters[source_name])
             query   = self._build_query(source_name, filter_dict)
-            label   = _source_label(source_name)
+            label   = source_label(source_name)
             logger.info("Searching %s: %s", source_name, query[:80])
             if on_status:
                 on_status(f"Searching {label}…")
@@ -238,6 +252,7 @@ class SourceOrchestrator:
                     should_stop=should_stop,
                     max_results=budget,
                     on_status=on_status,
+                    on_source_failure=on_source_failure,
                 )
                 total_fetched += fetched
                 known_total   += fetched
@@ -245,13 +260,11 @@ class SourceOrchestrator:
                     on_status(f"{label}: {fetched:,} fetched")
             except SourceUnavailableError as e:
                 logger.error("Source unavailable (%s): %s", source_name, e)
-                if on_status:
-                    on_status(f"{label} {FAILURE_STATUS_MARKER} (unavailable)")
+                _report_failure(source_name, "unavailable", on_status, on_source_failure)
                 continue
             except Exception as e:
                 logger.error("Unexpected error from %s: %s", source_name, e, exc_info=True)
-                if on_status:
-                    on_status(f"{label} {FAILURE_STATUS_MARKER} (error)")
+                _report_failure(source_name, "error", on_status, on_source_failure)
                 continue
 
         # Enrichment phase (only for records that have DOIs)
@@ -318,6 +331,7 @@ class SourceOrchestrator:
         should_stop: Optional[Callable],
         max_results: int,
         on_status: Optional[Callable] = None,
+        on_source_failure: Optional[Callable[[str, str], None]] = None,
     ) -> int:
         """Paginate through a single source and add results to dedup. Returns count fetched.
 
@@ -355,8 +369,7 @@ class SourceOrchestrator:
                     raw_records = adapter.search(query, page=page, page_size=self.PAGE_SIZE)
             except RateLimitedError:
                 logger.warning("Rate limited by %s — stopping", source_name)
-                if on_status:
-                    on_status(f"{_source_label(source_name)} {FAILURE_STATUS_MARKER} (rate-limited)")
+                _report_failure(source_name, "rate-limited", on_status, on_source_failure)
                 break
             except SourceUnavailableError as e:
                 logger.error("Source %s unavailable: %s", source_name, e)
@@ -364,8 +377,7 @@ class SourceOrchestrator:
                     raise  # propagate so search() can emit "— skipped (unavailable)"
                 # Mid-pagination failure: records already yielded but source is now broken.
                 # Emit the marker so callers (monitor.py) count this as a source failure.
-                if on_status:
-                    on_status(f"{_source_label(source_name)} {FAILURE_STATUS_MARKER} (partial)")
+                _report_failure(source_name, "partial", on_status, on_source_failure)
                 break
 
             # An adapter may filter entries out of a page (arXiv drops withdrawn
@@ -433,22 +445,22 @@ class SourceOrchestrator:
 
         logger.info("Source %s: %d records fetched", source_name, fetched)
         if unreadable:
-            label = _source_label(source_name)
+            label = source_label(source_name)
             got = seen_raw or unreadable
             logger.warning("Source %s: %d of %d records could not be read",
                            source_name, unreadable, got)
             if on_status:
                 on_status(f"{label}: {unreadable:,} of {got:,} records could not be read")
-                if unreadable >= got:     # every record failed, not just some
-                    on_status(f"{label} {FAILURE_STATUS_MARKER} (error)")
+            if unreadable >= got:     # every record failed, not just some
+                _report_failure(source_name, "error", on_status, on_source_failure)
         more_left = (seen_raw < src_total) if src_total else last_page_full
         if limited and more_left:
-            label = _source_label(source_name)
+            label = source_label(source_name)
             of_total = f" of {src_total:,}" if src_total else ""
             logger.warning("Source %s truncated: %d%s read", source_name, seen_raw, of_total)
             if on_status:
                 on_status(f"{label}: {seen_raw:,}{of_total} read (result limit reached)")
-                on_status(f"{label} {FAILURE_STATUS_MARKER} (truncated)")
+            _report_failure(source_name, "truncated", on_status, on_source_failure)
         return fetched
 
     # ── Enrichment ─────────────────────────────────────────────────────────────

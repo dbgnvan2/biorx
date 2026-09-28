@@ -151,9 +151,10 @@ def test_b1_truncation_sets_exit_2(capsys):
     from unittest.mock import patch
     from src.sources.orchestrator import FAILURE_STATUS_MARKER
 
-    def fake_search(filter_dict, on_status=None, **_):
+    def fake_search(filter_dict, on_status=None, on_source_failure=None, **_):
         on_status("Europe PMC: 200 of 1,000 read (result limit reached)")
         on_status(f"Europe PMC {FAILURE_STATUS_MARKER} (truncated)")
+        on_source_failure("europepmc", "truncated")
         return []
 
     orch = MagicMock()
@@ -183,3 +184,28 @@ def test_b5_license_filter_sees_enriched_license():
     out = monitor.run_search(orch, {"text_groups": [{"both": "generative agents"}],
                                     "license": "cc-by"}, "t")
     assert [p["title"] for p in out] == ["Generative Agents in Simulation"]
+
+
+def test_b13_legacy_filter_normalised():
+    """Review B13/S2: a legacy-shaped filter from filters.json reaches the query
+    builders normalised, because the engine normalises every filter."""
+    from src.sources.orchestrator import SourceOrchestrator
+    seen = []
+
+    class _Recorder:
+        last_page_size = 0
+        last_total = 0
+
+        def search(self, query, page=1, page_size=50, **_):
+            seen.append(query)
+            return []
+
+        def normalize(self, raw):
+            raise NotImplementedError
+
+    orch = SourceOrchestrator({})
+    orch._search_adapters = {"europepmc": _Recorder()}
+    monitor.run_search(orch, {"text_groups": [{"keywords": "zebrafish"}],
+                              "date_from": "2020-01-01", "date_to": "2020-12-31",
+                              "source_selection": {"all": True}}, "legacy")
+    assert "zebrafish" in seen[0] and "2020-01-01" in seen[0] and "2020-12-31" in seen[0]

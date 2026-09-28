@@ -56,22 +56,42 @@ def test_renaming_does_not_leave_a_duplicate(signed_in):
     assert "Before" not in names
 
 
-def test_dc4_a_rename_returns_a_new_id_and_the_old_one_is_gone(signed_in):
-    """Pins why the page must keep the id PUT returns. A rename is saved as a
-    new row and the old row deleted, so a second save to the old id 404s.
-    Clicking terms renames the filter on every click, which hit this on the
-    second click."""
+def test_a2_rename_keeps_the_id(signed_in):
+    """A rename updates the filter in place (review A2). It used to be saved as
+    a new row with the old one deleted, which is also how a rename onto another
+    filter's name overwrote that filter."""
     created = signed_in.post("/api/filters",
                              json={"name": "sleep", "filter": FILTER}).json()
     renamed = signed_in.put(f"/api/filters/{created['id']}",
                             json={"name": "sleep, apnea", "filter": FILTER}).json()
-    assert renamed["name"] == "sleep, apnea"
-    assert signed_in.put(f"/api/filters/{created['id']}",
-                         json={"name": "sleep, apnea, snoring",
-                               "filter": FILTER}).status_code == 404
-    again = signed_in.put(f"/api/filters/{renamed['id']}",
+    assert renamed["name"] == "sleep, apnea" and renamed["id"] == created["id"]
+    again = signed_in.put(f"/api/filters/{created['id']}",
                           json={"name": "sleep, apnea, snoring", "filter": FILTER})
     assert again.status_code == 200
+
+
+def test_a2_rename_onto_existing_is_409(signed_in):
+    a = signed_in.post("/api/filters", json={"name": "A", "filter": FILTER}).json()
+    b_filter = dict(FILTER, text_groups=[{"both": "only in B"}])
+    b = signed_in.post("/api/filters", json={"name": "B", "filter": b_filter}).json()
+    r = signed_in.put(f"/api/filters/{a['id']}", json={"name": "b", "filter": FILTER})
+    assert r.status_code == 409 and "already exists" in r.json()["detail"]
+    by_id = {f["id"]: f for f in signed_in.get("/api/filters").json()["filters"]}
+    assert by_id[a["id"]]["name"] == "A"
+    assert by_id[b["id"]]["text_groups"] == [{"both": "only in B"}]
+
+
+def test_a2_create_duplicate_is_409(signed_in):
+    signed_in.post("/api/filters", json={"name": "Dup", "filter": FILTER})
+    r = signed_in.post("/api/filters", json={"name": "  dup ", "filter": FILTER})
+    assert r.status_code == 409
+    assert [f["name"] for f in signed_in.get("/api/filters").json()["filters"]].count("Dup") == 1
+
+
+def test_a2_case_only_rename_of_self_ok(signed_in):
+    a = signed_in.post("/api/filters", json={"name": "stress", "filter": FILTER}).json()
+    r = signed_in.put(f"/api/filters/{a['id']}", json={"name": "Stress", "filter": FILTER})
+    assert r.status_code == 200 and r.json()["name"] == "Stress"
 
 
 def test_updating_a_missing_filter_is_404(signed_in):

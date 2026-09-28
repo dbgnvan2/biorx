@@ -395,6 +395,57 @@ def upsert_filter(db, user_id: str, name: str, filter_dict: Dict[str, Any],
     return int(row["id"])
 
 
+def _clean_filter_name(name: str) -> str:
+    return (name or "").strip()[:200] or "Untitled"
+
+
+def filter_name_taken(db, user_id: str, name: str,
+                      exclude_id: Optional[int] = None) -> bool:
+    """Whether another of this user's filters already has this name, ignoring case.
+
+    Purpose: Refuse a save that would silently overwrite another filter.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A2
+    Tests:   tests/web/test_filters_routes.py::test_a2_rename_onto_existing_is_409
+    """
+    row = db.conn.execute(
+        "SELECT id FROM user_filters WHERE user_id = ? AND lower(name) = lower(?) "
+        "AND (? IS NULL OR id <> ?)",
+        (user_id, _clean_filter_name(name), exclude_id, exclude_id),
+    ).fetchone()
+    return row is not None
+
+
+def insert_filter(db, user_id: str, name: str, filter_dict: Dict[str, Any],
+                  enabled: bool = True) -> int:
+    """Create a filter. The caller checks the name first (filter_name_taken);
+    the UNIQUE(user_id, name) index still refuses an exact clash."""
+    payload = {k: v for k, v in filter_dict.items() if k not in ("id",)}
+    cur = db.conn.execute(
+        "INSERT INTO user_filters (user_id, name, filter_json, enabled) VALUES (?, ?, ?, ?)",
+        (user_id, _clean_filter_name(name), json.dumps(payload), 1 if enabled else 0),
+    )
+    db.conn.commit()
+    return int(cur.lastrowid)
+
+
+def update_filter(db, user_id: str, filter_id: int, name: str,
+                  filter_dict: Dict[str, Any], enabled: bool = True) -> bool:
+    """Replace a filter in place, keeping its id (a rename included).
+
+    The old route upserted on the new name and deleted the old row, so a
+    rename onto another filter's name overwrote that filter (review A2).
+    """
+    payload = {k: v for k, v in filter_dict.items() if k not in ("id",)}
+    cur = db.conn.execute(
+        "UPDATE user_filters SET name = ?, filter_json = ?, enabled = ?, "
+        "updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ?",
+        (_clean_filter_name(name), json.dumps(payload), 1 if enabled else 0,
+         user_id, filter_id),
+    )
+    db.conn.commit()
+    return cur.rowcount > 0
+
+
 def delete_filter(db, user_id: str, filter_id: int) -> bool:
     cur = db.conn.execute(
         "DELETE FROM user_filters WHERE user_id = ? AND id = ?",

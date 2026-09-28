@@ -83,7 +83,7 @@ def test_selecting_only_europepmc_skips_psyarxiv():
     orch._search_adapters = {"europepmc": mock_epmc, "psyarxiv": mock_psya}
 
     orch.search(
-        filter_dict={"days_back": 7, "text_groups": []},
+        filter_dict={"days_back": 7, "text_groups": [{"both": "x"}]},
         source_selection={"all": False, "selected": ["europepmc"]},
     )
 
@@ -113,7 +113,7 @@ def test_results_are_deduplicated():
     orch._search_adapters = {"europepmc": mock_epmc, "psyarxiv": mock_psya}
 
     results = orch.search(
-        filter_dict={"days_back": 7, "text_groups": []},
+        filter_dict={"days_back": 7, "text_groups": [{"both": "x"}]},
         source_selection={"all": True, "selected": []},
     )
 
@@ -142,7 +142,7 @@ def test_source_unavailable_does_not_crash():
     orch._search_adapters = {"europepmc": mock_epmc, "psyarxiv": mock_psya}
 
     results = orch.search(
-        filter_dict={"days_back": 7, "text_groups": []},
+        filter_dict={"days_back": 7, "text_groups": [{"both": "x"}]},
         source_selection={"all": True, "selected": []},
     )
 
@@ -167,7 +167,7 @@ def test_crossref_enriches_records():
     orch._search_adapters = {"europepmc": mock_epmc}
 
     orch.search(
-        filter_dict={"days_back": 7, "text_groups": []},
+        filter_dict={"days_back": 7, "text_groups": [{"both": "x"}]},
         source_selection={"all": True, "selected": []},
     )
 
@@ -190,7 +190,7 @@ def test_on_batch_callback_called():
 
     batches = []
     orch.search(
-        filter_dict={"days_back": 7, "text_groups": []},
+        filter_dict={"days_back": 7, "text_groups": [{"both": "x"}]},
         source_selection={"all": True, "selected": []},
         on_batch=batches.append,
     )
@@ -217,7 +217,7 @@ def test_duplicate_across_sources_streamed_once():
 
     streamed = []
     orch.search(
-        filter_dict={"days_back": 7, "text_groups": []},
+        filter_dict={"days_back": 7, "text_groups": [{"both": "x"}]},
         source_selection={"all": True, "selected": []},
         on_batch=lambda recs: streamed.extend(recs),
     )
@@ -269,7 +269,7 @@ def test_e2_2_progress_reports_known_total():
 
     progress = []
     orch.search(
-        filter_dict={"days_back": 7, "text_groups": []},
+        filter_dict={"days_back": 7, "text_groups": [{"both": "x"}]},
         source_selection={"all": True, "selected": []},
         on_progress=lambda fetched, total: progress.append((fetched, total)),
     )
@@ -295,7 +295,7 @@ def test_e2_3_enrichment_emits_status():
 
     messages = []
     orch.search(
-        filter_dict={"days_back": 7, "text_groups": []},
+        filter_dict={"days_back": 7, "text_groups": [{"both": "x"}]},
         source_selection={"all": True, "selected": []},
         on_status=messages.append,
     )
@@ -738,3 +738,46 @@ def test_m20_all_unreadable_is_a_source_failure():
                 {"all": True, "selected": []}, on_status=statuses.append)
     assert "Europe PMC: 10 of 10 records could not be read" in statuses
     assert "Europe PMC — skipped (error)" in statuses
+
+
+
+# ── S2: run preconditions live in the engine; failures are structured ─────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#S2
+
+def test_s2_empty_filter_refused_in_engine():
+    from src.sources.orchestrator import EmptyFilterError
+    adapter = MagicMock()
+    orch = _orch_with({"europepmc": adapter})
+    for empty in ({"days_back": 7, "text_groups": []},
+                  {"text_groups": [{"both": "   "}]},
+                  {"text_groups": [{"keywords": ""}]}):
+        with pytest.raises(EmptyFilterError):
+            orch.search(empty, {"all": True, "selected": []})
+    adapter.search.assert_not_called()
+
+
+def test_s2_legacy_filter_normalised_before_querying():
+    """A legacy {"keywords": ...} group reaches the query builder as a term."""
+    seen = []
+    adapter = _PagedAdapter("europepmc", total=0)
+    real = adapter.search
+    adapter.search = lambda q, **kw: seen.append(q) or real(q, **kw)
+    _orch_with({"europepmc": adapter}).search(
+        {"text_groups": [{"keywords": "zebrafish"}], "date_from": "2020-01-01"},
+        {"all": True, "selected": []})
+    assert "zebrafish" in seen[0] and "2020-01-01" in seen[0]
+
+
+def test_s2_failures_structured_not_parsed():
+    from src.sources.errors import SourceUnavailableError
+    down = MagicMock()
+    down.search.side_effect = SourceUnavailableError("down")
+    failures, statuses = [], []
+    orch = _orch_with({"europepmc": _PagedAdapter("europepmc", total=1000),
+                       "biorxiv_medrxiv": down})
+    orch.search({"text_groups": [{"both": "x"}]}, {"all": True, "selected": []},
+                max_results=200, on_status=statuses.append,
+                on_source_failure=lambda n, k: failures.append((n, k)))
+    assert failures == [("europepmc", "truncated"), ("biorxiv_medrxiv", "unavailable")]
+    # The line people read uses the one label map.
+    assert "bioRxiv / medRxiv — skipped (unavailable)" in statuses

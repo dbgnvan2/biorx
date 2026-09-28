@@ -474,25 +474,6 @@ def test_h_europepmc_factory_carries_config_contact_address(monkeypatch):
     )
 
 
-def test_h_search_agent_biorxiv_api_carries_config_contact_address(monkeypatch, tmp_path):
-    """SearchAgent.api must be constructed with polite_user_agent(sources_config) (F1/P5)."""
-    from src.sources import config as sources_config_mod
-
-    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
-    monkeypatch.setattr(sources_config_mod, "load_sources_config",
-                        lambda: {"contact_email": "cfg@example.org"})
-
-    # Avoid touching real database and key_terms.json.
-    fake_db_path = str(tmp_path / "test.db")
-    fake_terms = tmp_path / "key_terms.json"
-    fake_terms.write_text('{"clusters": []}')
-
-    from agents.search_agent import SearchAgent
-    agent = SearchAgent(key_terms_path=str(fake_terms), db_path=fake_db_path)
-    assert agent.api.session.headers["User-Agent"] == "biorx/1.0 (mailto:cfg@example.org)", (
-        "SearchAgent.api must use config contact_email in UA; "
-        f"got: {agent.api.session.headers.get('User-Agent')}"
-    )
 
 
 def test_h_pdf_download_sends_biorx_user_agent(monkeypatch, tmp_path):

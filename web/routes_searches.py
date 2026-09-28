@@ -28,53 +28,36 @@ from src.jobs import Job, JobLookup
 
 from .auth import current_user, get_context
 from .deps import AppContext
-from src.sources.orchestrator import FAILURE_STATUS_MARKER
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# FAILURE_STATUS_MARKER is imported from orchestrator (P19: single source of truth;
-# wording change there breaks this import and the round-trip test, not silently).
 
 
 _FALLBACK_EXPLANATION = "could not be reached"
 
 
-def failure_reason(message: str, sources_config: Dict[str, Any]) -> str:
-    """Plain-language reason for a failure status, from its "(kind)" suffix
-    and sources_config.yaml failure_explanations (D2)."""
-    kind = ""
-    if message.rstrip().endswith(")") and "(" in message:
-        kind = message.rstrip()[message.rfind("(") + 1:-1].strip()
+def failure_reason(kind: str, sources_config: Dict[str, Any]) -> str:
+    """Plain-language reason for a failure kind, from sources_config.yaml
+    failure_explanations (D2)."""
     table = (sources_config or {}).get("failure_explanations") or {}
     return str(table.get(kind) or _FALLBACK_EXPLANATION)
 
 
-def record_failure(job: Job, message: str, sources_config: Dict[str, Any]) -> None:
-    """Record a failed source and why, once per source."""
-    failed = source_from_failure_status(message)
-    if not failed:
-        return
-    if failed not in job.sources_failed:
-        job.sources_failed.append(failed)
-    from src.sources.orchestrator import _SOURCE_LABELS
-    job.source_problems.setdefault(_SOURCE_LABELS.get(failed, failed),
-                                   failure_reason(message, sources_config))
+def record_failure(job: Job, source_name: str, kind: str,
+                   sources_config: Dict[str, Any]) -> None:
+    """Record a failed source and why, once per source.
 
-
-def source_from_failure_status(message: str) -> str:
-    """Return the source name a failure status refers to, or "".
-
-    Matches the source's display label rather than its internal name, because
-    that is what the status string carries.
+    Purpose: Show which sources failed, from the orchestrator's structured
+             report rather than by parsing its status text (review S2).
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#S2
+    Tests:   tests/web/test_searches_routes.py::test_d2_job_records_label_and_reason_once
     """
-    if FAILURE_STATUS_MARKER not in message:
-        return ""
-    from src.sources.orchestrator import _SOURCE_LABELS
-    for name, label in _SOURCE_LABELS.items():
-        if message.startswith(label):
-            return name
-    return ""
+    from src.sources.config import source_label
+    if source_name not in job.sources_failed:
+        job.sources_failed.append(source_name)
+    job.source_problems.setdefault(source_label(source_name),
+                                   failure_reason(kind, sources_config))
 
 
 # Job kinds whose result is a list of papers (a search, or a filter's test run).
@@ -158,7 +141,9 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
 
         def on_status(message: str):
             job.phase = message
-            record_failure(job, message, ctx.sources_config)
+
+        def on_source_failure(source_name: str, kind: str):
+            record_failure(job, source_name, kind, ctx.sources_config)
 
         try:
             ctx.get_orchestrator().search(
@@ -173,6 +158,7 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
                 enrich_only=lambda r: id(r) in matched_ids,
                 on_enrich_progress=on_enrich_progress,
                 on_enrich_problem=on_enrich_problem,
+                on_source_failure=on_source_failure,
             )
         finally:
             # This job ran on a pool thread that took a database connection.

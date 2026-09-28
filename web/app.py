@@ -140,11 +140,10 @@ def create_app(ctx: AppContext = None) -> FastAPI:
         pconf = provider_config(c.llm_config, provider)
         orch = c.get_orchestrator()
         enabled_sources = orch.get_enabled_sources() if orch else []
-        from src.sources.orchestrator import _SOURCE_LABELS
-        from src.sources.config import get_default_selected_sources
+        from src.sources.config import get_default_selected_sources, source_label
         server_defaults = set(get_default_selected_sources(c.sources_config or {}))
         sources_list = [
-            {"id": sid, "label": _SOURCE_LABELS.get(sid, sid), "enabled": True,
+            {"id": sid, "label": source_label(sid), "enabled": True,
              # D1: the server's suggestion for users who have not chosen
              # their own defaults (sources_config.yaml default_selected).
              "default_selected": sid in server_defaults}
