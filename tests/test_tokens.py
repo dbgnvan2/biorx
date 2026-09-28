@@ -161,25 +161,76 @@ def test_m1a1_ollama_client_returns_text_and_usage():
     assert (usage.prompt, usage.completion, usage.counted) == (500, 60, True)
 
 
-def test_m1a1_a_failed_ollama_call_is_uncounted_not_free():
-    """The request never reached the model, so there is nothing to report —
-    but the caller must still get the pair, not a bare None."""
+def test_m29_ollama_retried_then_unavailable():
+    """Review M29: a failed call is retried, then raises a typed error that
+    carries no usage (the model never ran) instead of returning None."""
     import requests as _requests
-    with patch("src.llm.requests.post", side_effect=_requests.RequestException("down")):
-        text, usage = OllamaClient().generate("prompt")
-    assert text is None and usage.counted is False
+    from src.llm_providers import ProviderUnavailableError
+    with patch("src.llm.requests.post", side_effect=_requests.ConnectionError("down")) as post, \
+         patch("src.llm_providers._sleep_backoff"):
+        with pytest.raises(ProviderUnavailableError) as err:
+            OllamaClient().generate("prompt")
+    assert post.call_count == 3
+    assert err.value.usage.counted is False
+
+
+def test_m29_ollama_recovers_after_one_failure():
+    import requests as _requests
+    ok = MagicMock()
+    ok.json.return_value = {"response": "fine"}
+    ok.raise_for_status.return_value = None
+    with patch("src.llm.requests.post", side_effect=[_requests.Timeout("slow"), ok]), \
+         patch("src.llm_providers._sleep_backoff"):
+        assert OllamaClient().generate("p")[0] == "fine"
 
 
 def test_m1b3_ollama_records_tokens_even_when_the_reply_cannot_be_parsed():
     """The model ran and was billed. An unparseable reply loses the summary,
-    never the record of what it cost (M1.B.3)."""
+    never the record of what it cost (M1.B.3) — the usage rides on the error."""
+    from src.llm_providers import ProviderResponseError
     resp = MagicMock()
     resp.json.return_value = {"response": "not in the expected shape at all",
                               "prompt_eval_count": 400, "eval_count": 30}
     resp.raise_for_status.return_value = None
     with patch("src.llm.requests.post", return_value=resp):
-        summary, usage = OllamaClient().summarize_paper("abstract", "text")
-    assert usage.counted and usage.prompt == 400
+        with pytest.raises(ProviderResponseError) as err:
+            OllamaClient().summarize_paper("abstract", "text")
+    assert err.value.usage.counted and err.value.usage.prompt == 400
+
+
+def test_a10_ollama_malformed_raises():
+    """Review A10: the old parser stored single-newline sections as a summary
+    whose key findings were every line of the reply."""
+    from src.llm_providers import ProviderResponseError
+    resp = MagicMock()
+    resp.json.return_value = {"response": "KEY FINDINGS:\n- a\nMETHODOLOGY:\nx\nCONCLUSIONS:\ny"}
+    resp.raise_for_status.return_value = None
+    with patch("src.llm.requests.post", return_value=resp):
+        with pytest.raises(ProviderResponseError):
+            OllamaClient().summarize_paper("abstract", "text")
+
+
+def test_a10_ollama_json_keeps_negative_numbers():
+    resp = MagicMock()
+    resp.json.return_value = {"response": '{"key_findings": ["-5% change"], '
+                                          '"methodology": "m", "conclusions": "c"}'}
+    resp.raise_for_status.return_value = None
+    with patch("src.llm.requests.post", return_value=resp) as post:
+        summary, _ = OllamaClient().summarize_paper("abstract", "text")
+    assert summary["key_findings"] == ["-5% change"]
+    assert post.call_args.kwargs["json"]["format"] == "json"
+
+
+def test_m33_ollama_uses_delimited_prompt():
+    """Review M33: the same delimited, budgeted prompt as the hosted clients."""
+    resp = MagicMock()
+    resp.json.return_value = {"response": '{"key_findings": ["a"], "methodology": "", "conclusions": ""}'}
+    resp.raise_for_status.return_value = None
+    with patch("src.llm.requests.post", return_value=resp) as post:
+        OllamaClient(max_chars=5000).summarize_paper("A" * 50_000, "T" * 50_000)
+    prompt = post.call_args.kwargs["json"]["prompt"]
+    assert "<paper_abstract>" in prompt and "</paper_text>" in prompt
+    assert prompt.count("A") <= 5000 and prompt.count("T") <= 5000 + 10
 
 
 # ── M1.A.2: no call site drops the usage ──────────────────────────────────────
@@ -188,8 +239,8 @@ _CALLERS = [
     ("src/llm_providers.py", r"self\.generate\("),
     ("src/llm.py", r"self\.generate\("),
     ("web/routes_discover.py", r"\.generate\("),
-    ("web/routes_summaries.py", r"\.summarize_paper\("),
-    ("agents/summarization_agent.py", r"\.summarize_paper\("),
+    # The route and the CLI share src/summarize.py since review S1.
+    ("src/summarize.py", r"\.summarize_paper\("),
     ("gui.py", r"\.generate\("),
 ]
 

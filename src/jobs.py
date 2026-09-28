@@ -229,6 +229,21 @@ class JobRegistry:
             return None, JobLookup.EXPIRED
         return None, JobLookup.UNKNOWN
 
+    def finished_results(self, owner: str, kinds: tuple) -> List[Any]:
+        """Results of this owner's finished jobs of the given kinds, newest first.
+
+        Purpose: Let a route trust a paper the server itself produced for this
+                 user (a search result), instead of the client's copy (review A1).
+        Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A1
+        Tests:   tests/web/test_summaries_routes.py::test_a1_paper_from_own_search_is_used
+        """
+        with self._lock:
+            jobs = [j for j in self._jobs.values()
+                    if j.owner == owner and j.kind in kinds
+                    and j.status == JobStatus.DONE and j.result is not None]
+        jobs.sort(key=lambda j: j.finished_at or 0, reverse=True)
+        return [j.result for j in jobs]
+
     def get(self, job_id: str, owner: str) -> Optional[Job]:
         """This user's job, or None. `owner` is required (see lookup())."""
         job, _ = self.lookup(job_id, owner)

@@ -134,7 +134,7 @@ def _build_summary_prompt(abstract: str, full_text: str, limit: int,
     )
 
 
-def _coerce_summary(payload: Any) -> Dict[str, Any]:
+def coerce_summary(payload: Any) -> Dict[str, Any]:
     """Validate a decoded JSON summary into the canonical shape.
 
     Raises ProviderResponseError rather than returning blanks: a summary whose
@@ -161,6 +161,10 @@ def _coerce_summary(payload: Any) -> Dict[str, Any]:
         "methodology": methodology,
         "conclusions": conclusions,
     }
+
+
+# Older name, still imported by tests written before review S1 made it public.
+_coerce_summary = coerce_summary
 
 
 def _extract_json(text: str) -> Any:
@@ -197,7 +201,7 @@ def _parsed_or_billed(raw: str, usage: TokenUsage) -> Dict[str, Any]:
     agent both call _coerce_summary directly.
     """
     try:
-        return _coerce_summary(_extract_json(raw))
+        return coerce_summary(_extract_json(raw))
     except LLMError as e:
         if not e.usage.counted:
             e.usage = usage

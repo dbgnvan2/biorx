@@ -2474,3 +2474,24 @@ def test_s3_no_vocabulary_literals_in_app_js():
     for lit in ('"review article"', '"Human studies only"', '"cc_by"', '"(any)"',
                 '"2+ (revised only)"', '"evolutionary biology"'):
         assert lit not in code, lit
+
+
+# ── A8: a batch summary the server could not store is not counted as done ────
+
+def test_a8_batch_counts_not_saved_as_failure():
+    import json, shutil, subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    script = "\n".join([
+        "const state = { me: { provider: 'deepseek' } };",
+        "function localSettings() { return {}; } function findByTitle() { return true; }",
+        "async function api() { return { job_id: 'j' }; }",
+        "async function pollJobUntilSettled() { return { status: { result: {"
+        " source_text: 'full_text', not_saved: 'This summary was shown but could not be saved (locked).' } } }; }",
+        _js_block(r"async function summarizeOnePaper\(paper\) \{.*?\n\}"),
+        "summarizeOnePaper({doi: '10.1/x'}).then(r => console.log(JSON.stringify(r)));",
+    ])
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout)
+    assert "ok" not in got and "could not be saved" in got["error"]

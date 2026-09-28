@@ -192,10 +192,20 @@ def test_a_slot_is_returned_when_the_job_fails_before_the_provider(
     """
     with patch("web.routes_summaries._extract_text", return_value=""):
         with patch("src.llm_providers.build_client", return_value=_ok_client()):
-            r = signed_in.post("/api/summaries",
-                               json={"paper": {"title": "t", "abstract": ""}})
+            r = signed_in.post("/api/summaries", json={"paper": {
+                "title": "t", "abstract": "", "doi": "10.1/no-text"}})
             _await(signed_in, r.json()["job_id"])
 
+    assert signed_in.get("/api/me").json()["owner_summaries_remaining"] == 3
+
+
+def test_a1_a_paper_with_no_id_is_refused_and_its_slot_returned(ctx, signed_in, owner_key):
+    """Review A1: a paper is looked up by DOI or id; one with neither is refused
+    at the route, before any job, and the reserved slot is given back."""
+    with patch("src.llm_providers.build_client", return_value=_ok_client()):
+        r = signed_in.post("/api/summaries", json={"paper": {"title": "t", "abstract": "a"}})
+    assert r.status_code == 400
+    assert "no DOI or id" in r.json()["detail"]
     assert signed_in.get("/api/me").json()["owner_summaries_remaining"] == 3
 
 

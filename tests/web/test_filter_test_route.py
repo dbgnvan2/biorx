@@ -187,3 +187,32 @@ def test_sal3_duplicate_name_is_409(signed_in, ctx):
                           json={"name": "Twice"}).status_code == 201
     assert signed_in.post(f"/api/searches/{job_id}/save-as-list",
                           json={"name": "Twice"}).status_code == 409
+
+
+def test_m27_a_paper_that_fails_to_store_is_reported(signed_in, ctx):
+    """Review M27: insert_paper raises on a non-duplicate constraint failure;
+    save-as-list reports that paper as skipped rather than failing the save."""
+    import sqlite3
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    good = dict(PAPER)
+    broken = dict(PAPER, doi="10.1234/fp.002", canonical_id="doi:10.1234/fp.002",
+                  title="Alpha that will not store")
+
+    def search(on_batch, **_):
+        on_batch([SimpleNamespace(to_dict=lambda p=p: dict(p)) for p in (good, broken)])
+
+    job_id = _search_job(signed_in, ctx, search)
+    _wait(signed_in, job_id)
+    real = ctx.db.insert_paper
+
+    def insert(paper):
+        if paper.get("title") == "Alpha that will not store":
+            raise sqlite3.IntegrityError("NOT NULL constraint failed: papers.x")
+        return real(paper)
+
+    with patch.object(ctx.db, "insert_paper", side_effect=insert):
+        r = signed_in.post(f"/api/searches/{job_id}/save-as-list", json={"name": "M27"})
+    assert r.status_code == 201, r.text
+    assert r.json()["skipped"] == ["Alpha that will not store"]
+    assert r.json()["saved"] == 1

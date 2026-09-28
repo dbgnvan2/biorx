@@ -1250,7 +1250,9 @@ async function startSummary(paper, button) {
           refreshRefSummaries(state.activeListId);
         }
         if (modalShows(paper)) renderSummary(job, s.result);
-        else notice(`Summary ready for "${(paper.title || "").slice(0, 80)}" — click Summarize to view it.`, "ok");
+        // A8: shown but not stored — running it again would bill again.
+        if (s.result.not_saved) notice(s.result.not_saved, "warn");
+        else if (!modalShows(paper)) notice(`Summary ready for "${(paper.title || "").slice(0, 80)}" — click Summarize to view it.`, "ok");
       } else {
         const reason = (s.error || "The summary failed.").replace(/^\w+Error: /, "");
         notice(reason);
@@ -2585,6 +2587,8 @@ async function summarizeOnePaper(paper) {
   // Counting that as "summarized" would tell the user three papers were
   // summarized when the model only read one.
   const result = settled.status.result || {};
+  // A8: a summary the server could not store is not a success.
+  if (result.not_saved) return { error: result.not_saved };
   return { ok: true, abstractOnly: result.source_text === "abstract" };
 }
 

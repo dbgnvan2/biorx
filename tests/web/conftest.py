@@ -159,3 +159,42 @@ def signed_in(client):
 @pytest.fixture
 def enc_secret(monkeypatch):
     monkeypatch.setenv("KEY_ENC_SECRET", "a-long-enough-encryption-secret")
+
+
+@pytest.fixture(autouse=True)
+def papers_at_source(monkeypatch):
+    """A stand-in for the publication sources the summary route looks papers up in.
+
+    Since review A1 the route takes only a paper's DOI / canonical_id from the
+    request and looks the paper up itself. Most summary tests post a paper they
+    made up and need the route to find it, so by default ("echo") the stand-in
+    knows every paper a test posts to /api/summaries — i.e. the posted paper is
+    treated as the real one at its source. Tests of A1 itself set
+    `papers_at_source["echo"] = False` and register what the source really has
+    in `papers_at_source["papers"]` (keyed by DOI or canonical_id).
+    """
+    from fastapi.testclient import TestClient
+    known = {"echo": True, "papers": {}, "fail": None}
+
+    def fake_lookup(ref, _cfg=None):
+        if known["fail"] is not None:
+            raise known["fail"]
+        for key in (ref.get("doi"), ref.get("canonical_id")):
+            if key and key in known["papers"]:
+                return dict(known["papers"][key])
+        return None
+
+    monkeypatch.setattr("web.routes_summaries._PAPER_LOOKUP", fake_lookup)
+    real_post = TestClient.post
+
+    def post(self, url, *args, **kwargs):
+        body = kwargs.get("json")
+        if known["echo"] and url == "/api/summaries" and isinstance(body, dict):
+            paper = body.get("paper") or {}
+            for key in (paper.get("doi"), paper.get("canonical_id")):
+                if key:
+                    known["papers"][key] = dict(paper)
+        return real_post(self, url, *args, **kwargs)
+
+    monkeypatch.setattr(TestClient, "post", post)
+    return known

@@ -15,6 +15,7 @@ on_progress / on_status / should_stop callbacks straight through.
 from __future__ import annotations
 
 import logging
+import sqlite3
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -299,7 +300,14 @@ def save_search_as_list(job_id: str, body: SaveAsListBody,
     db_ids: List[int] = []
     skipped: List[str] = []
     for paper in results:
-        pid = ctx.db.insert_paper(paper)
+        try:
+            pid = ctx.db.insert_paper(paper)
+        except sqlite3.IntegrityError:
+            # Not a duplicate (insert_paper returns None for those, M27): the
+            # row could not be stored. Reported with the others skipped below.
+            pid = None
+            skipped.append(paper.get("title") or paper.get("canonical_id") or "(untitled)")
+            continue
         if not pid:
             existing = ctx.db.find_paper(paper)
             pid = existing["id"] if existing else None

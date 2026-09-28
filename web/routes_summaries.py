@@ -16,10 +16,7 @@ from src import user_store
 from src.crypto import KeyEncryptionUnavailable
 from src.jobs import Job, JobLookup
 from src.llm_config import non_article_kind, summary_daily_cap
-from src.llm_providers import (
-    LLMError, NoLLMCredentialError, ProviderResponseError, _coerce_summary,
-    resolve_client,
-)
+from src.llm_providers import LLMError, NoLLMCredentialError, resolve_client
 from src.paper_meta import pdf_url, recover_abstract
 
 from .auth import current_user, get_context
@@ -178,136 +175,94 @@ def _extract_text(ctx: AppContext, paper: Dict[str, Any],
     return ""
 
 
-def _paper_row_id(ctx: AppContext, paper: Dict[str, Any]) -> Optional[int]:
-    """The paper's row id, inserting it if it is new.
-
-    insert_paper() returns None for a paper already stored — the normal case for
-    anyone summarizing a paper a colleague already saved. Looks the row up by
-    DOI or canonical_id, because many papers (every arXiv record) have no DOI.
-    """
-    paper_id = ctx.db.insert_paper(paper)
-    if paper_id:
-        return paper_id
-    existing = ctx.db.find_paper(paper)
-    if existing:
-        return existing["id"]
-    logger.warning(
-        "Could not store or find the paper row for %s — the summary will not "
-        "be saved", paper.get("canonical_id") or (paper.get("title") or "")[:60],
-    )
-    return None
+# The source lookup for a paper nobody has stored. None = the real one
+# (src/summarize.lookup_at_source); tests replace it (tests/web/conftest).
+_PAPER_LOOKUP = None
 
 
-def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
+def _run_summary(ctx: AppContext, user_id: str, ref: Dict[str, str], resolved,
                  usage_id: Optional[int] = None, find_by_title: Optional[bool] = None):
+    """Purpose: The summary job: resolve the paper server-side, then summarize it.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A1, #S1, #A8
+    Tests:   tests/web/test_summaries_routes.py::test_a1_client_abstract_never_stored,
+             tests/web/test_summaries_routes.py::test_a8_db_error_reports_not_saved
+    """
+    from .routes_searches import SEARCH_JOB_KINDS as SEARCH_RESULT_KINDS
+    from src.summarize import (PaperLookupError, PaperNotFoundError, resolve_paper,
+                               summarize_paper)
+
     def work(job: Job) -> Dict[str, Any]:
         provider_called = False
         recorded = False
         try:
-            job.phase = "Looking for the full text"
-            text_outcome: Dict[str, str] = {}
-            full_text = _extract_text(ctx, paper, text_outcome, by_title=find_by_title)
-            abstract = paper.get("abstract", "") or ""
+            job.phase = "Looking up the paper"
+            try:
+                paper = resolve_paper(
+                    ctx.db, ref,
+                    candidates=ctx.jobs.finished_results(user_id, SEARCH_RESULT_KINDS),
+                    sources_config=ctx.sources_config, lookup=_PAPER_LOOKUP)
+            except PaperLookupError as e:
+                raise PaperLookupError(
+                    f"Could not look up this paper's details ({e}) — try again later.") from e
+            except PaperNotFoundError as e:
+                raise PaperNotFoundError(
+                    f"This paper could not be found at its source, so it was not "
+                    f"summarized ({e}).") from e
 
-            if not abstract and not full_text:
-                # Many records arrive without an abstract even though one is a
-                # lookup away — an open-access paper on PMC, for instance. Try
-                # the same recovery chain the desktop app uses before giving up.
-                job.phase = "Looking for the abstract"
-                # Guarded: the URLs it scrapes come from the client's paper.
+            def find_text(p):
+                outcome: Dict[str, str] = {}
+                text = _extract_text(ctx, p, outcome, by_title=find_by_title)
+                return text, outcome.get("full_text", ""), outcome.get("text_source", "")
+
+            def model_call():
+                nonlocal provider_called
+                provider_called = True
+                job.phase = f"Summarizing with {resolved.provider}"
+
+            def recover(p):
+                # Guarded: the URLs it scrapes come from the paper record.
                 from src.safe_fetch import fetch_html
-                recovered = recover_abstract(paper, fetch_html=fetch_html)
-                if recovered.found:
-                    abstract = recovered.text
-                    paper["abstract"] = abstract       # stored with the paper below
-                    job.phase = f"Abstract found via {recovered.source}"
-                else:
-                    notice = non_article_kind(ctx.llm_config, paper.get("title", ""))
-                    if notice:
-                        raise ProviderResponseError(
-                            f"This looks like a {notice.rstrip(':')} notice rather "
-                            "than an article, and it has no abstract to summarize."
-                        )
-                    failed = list(dict.fromkeys(getattr(recovered, "failed", [])))
-                    asked = [n for n in dict.fromkeys(recovered.tried) if n not in failed]
-                    tried = ", ".join(asked) or "nothing to look up"
-                    unreachable = (f" Could not reach: {', '.join(failed)} — try again later."
-                                   if failed else "")
-                    raise ProviderResponseError(
-                        "No abstract or downloadable text for this paper "
-                        f"(looked in: {tried}).{unreachable}"
-                    )
+                return recover_abstract(p, fetch_html=fetch_html)
 
-            if not full_text:
-                # No full text anywhere: the abstract stands in, and the model
-                # is not called — a "summary" of an abstract costs tokens and
-                # reads as more than it is (plan 2026-09-19 C1, FT1).
-                job.phase = "No full text found — keeping the abstract"
-                paper_id = _paper_row_id(ctx, paper)
-                if paper_id:
-                    ctx.db.insert_summary(
-                        paper_id, summary_text=abstract, model_version="",
-                        created_by_user_id=user_id, source_text="abstract",
-                    )
-                if usage_id is not None:
-                    user_store.release_usage(ctx.db, usage_id)   # nothing was spent
-                return {
-                    "paper_id": paper_id,
-                    "source_text": "abstract",
-                    "abstract": abstract,
-                    "full_text": text_outcome.get("full_text") or "not found",
-                    "provider": "", "model": "", "key_source": "none",
-                    "key_findings": [], "methodology": "", "conclusions": "",
-                }
+            outcome = summarize_paper(
+                ctx.db, paper, lambda: (resolved.client, resolved.model),
+                find_text=find_text, recover=recover, llm_config=ctx.llm_config,
+                created_by=user_id,
+                on_phase=lambda m: setattr(job, "phase", m),
+                on_model_call=model_call,
+                on_usage=lambda u: setattr(job, "token_usage", u))
 
-            job.phase = f"Summarizing with {resolved.provider}"
-            provider_called = True
-            summary, usage = resolved.client.summarize_paper(abstract, full_text)
-            # Recorded before the validation below: a reply the model was
-            # billed for still cost tokens even when it is unusable (M1.B.3).
-            job.token_usage = usage
+            if provider_called:
+                user_store.record_spend(ctx.db, user_id, USAGE_KIND, resolved.provider,
+                                        resolved.model, resolved.key_source,
+                                        usage_id, job.token_usage)
+                recorded = True
+            elif usage_id is not None:
+                user_store.release_usage(ctx.db, usage_id)   # nothing was spent
 
-            # OllamaClient returns None on failure while the hosted clients
-            # raise; normalise here so the route has one contract (P22).
-            if summary is None:
-                raise ProviderResponseError(
-                    f"{resolved.provider} returned no summary."
-                )
-            # And it does no validation of what it did return. Its text parser
-            # yields a dict of empty fields when the model answers in a shape it
-            # does not recognise, which would be stored as a successful summary
-            # and shown as a blank card. Put every provider through the same
-            # check the hosted ones use.
-            summary = _coerce_summary(summary)
-
-            job.phase = "Saving"
-            paper_id = _paper_row_id(ctx, paper)
-            if paper_id:
-                ctx.db.insert_summary(
-                    paper_id,
-                    summary_text="",
-                    key_findings=summary.get("key_findings"),
-                    methodology=summary.get("methodology"),
-                    conclusions=summary.get("conclusions"),
-                    model_version=resolved.model,
-                    created_by_user_id=user_id,
-                    source_text="full_text",
-                    text_source=text_outcome.get("text_source", ""),
-                )
-            user_store.record_spend(ctx.db, user_id, USAGE_KIND, resolved.provider,
-                                    resolved.model, resolved.key_source,
-                                    usage_id, job.token_usage)
-            recorded = True
-            return {
-                "paper_id": paper_id,
-                "provider": resolved.provider,
-                "model": resolved.model,
-                "key_source": resolved.key_source,
-                "full_text": "used",
-                "source_text": "full_text",
-                "text_source": text_outcome.get("text_source", ""),
-                **summary,
+            result: Dict[str, Any] = {
+                "paper_id": outcome.paper_id,
+                "source_text": outcome.source_text,
+                "full_text": outcome.full_text,
+                "text_source": outcome.text_source,
+                "saved": outcome.saved,
+                "reused": outcome.reused,
+                **outcome.summary,
             }
+            if not outcome.saved:
+                # Shown but not kept (A8): the user must know a re-run bills again.
+                result["not_saved"] = (
+                    f"This summary was shown but could not be saved ({outcome.not_saved_reason}). "
+                    "Running it again will call the model again.")
+            if outcome.source_text == "abstract":
+                result.update(abstract=outcome.abstract, provider="", model="",
+                              key_source="none")
+            elif outcome.reused:
+                result.update(provider="", model=outcome.model, key_source="none")
+            else:
+                result.update(provider=resolved.provider, model=resolved.model,
+                              key_source=resolved.key_source)
+            return result
         except BaseException as exc:
             # The slot was reserved at admission. Give it back only when the
             # provider was never reached — a failure after the call may still
@@ -318,14 +273,8 @@ def _run_summary(ctx: AppContext, user_id: str, paper: Dict[str, Any], resolved,
                     user_store.release_usage(ctx.db, usage_id)
             elif not recorded:
                 # The model ran and was billed. The summary is lost; the record
-                # of what it cost must not be (M1.B.3) — otherwise the tokens a
-                # failed run spent are invisible in the meter.
-                # `recorded` guards against writing twice when the failure came
-                # after the success-path write (gate finding 3).
-                #
-                # A hosted provider that raises on an unusable reply carries the
-                # usage on the exception: the response said what it cost even
-                # though its content was unusable (gate finding 2).
+                # of what it cost must not be (M1.B.3). A provider that raises
+                # on an unusable reply carries the usage on the exception.
                 spent = job.token_usage
                 if not spent.counted:
                     spent = getattr(exc, "usage", None) or spent
@@ -367,8 +316,17 @@ def start_summary(body: SummaryRequest,
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail=str(e)) from e
 
+    from src.summarize import paper_ref
+    ref = paper_ref(body.paper)
+    if not ref["doi"] and not ref["canonical_id"]:
+        if usage_id is not None:
+            user_store.release_usage(ctx.db, usage_id)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="The paper has no DOI or id, so it cannot be looked up.")
+    # Only the paper's identity is taken from the request (review A1); its
+    # content comes from the server's own copy, resolved in the job.
     job = ctx.jobs.submit("summary", user_id,
-                          _run_summary(ctx, user_id, body.paper, resolved, usage_id,
+                          _run_summary(ctx, user_id, ref, resolved, usage_id,
                                        find_by_title=body.find_by_title))
     payload = job.to_dict()
     payload["provider"] = resolved.provider

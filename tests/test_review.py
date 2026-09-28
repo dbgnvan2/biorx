@@ -183,3 +183,22 @@ def test_m4a2_building_a_prompt_makes_no_network_call(monkeypatch):
     items = [_item(1, "One", abstract="a"), _item(2, "Two", abstract="b")]
     built = review.build_prompt(review.gather(items, {}))
     assert built["prompt"]
+
+
+def test_a13_summary_not_sent_twice():
+    """A CLI-written row repeated its fields in summary_text; the review prompt
+    must carry them once. Spec: docs/implementation_plan_2026-09-28_review_fixes.md#A13"""
+    from src.review import _text_for
+    row = {"key_findings": ["Loneliness predicts decline"], "methodology": "Cohort study.",
+           "conclusions": "Act early.", "source_text": "full_text",
+           "summary_text": "KEY FINDINGS:\n- Loneliness predicts decline\n\nMETHODOLOGY:\nCohort study."}
+    text, _basis = _text_for({}, row)
+    assert text.count("Loneliness predicts decline") == 1
+    assert text.count("Cohort study.") == 1
+
+
+def test_a13_abstract_stand_in_still_sent():
+    from src.review import _text_for
+    row = {"key_findings": None, "methodology": "", "conclusions": "",
+           "source_text": "abstract", "summary_text": "The abstract itself."}
+    assert "The abstract itself." in _text_for({}, row)[0]

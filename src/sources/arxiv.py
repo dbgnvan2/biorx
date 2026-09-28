@@ -264,8 +264,46 @@ class ArxivAdapter:
         }
 
     def get_by_id(self, identifier: str) -> Optional[RawRecord]:
-        """Not implemented; return None."""
-        return None
+        """Fetch one paper by arXiv id (with or without a version suffix).
+
+        Purpose: Let the server look a paper up itself instead of trusting a
+                 client's copy of it.
+        Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A1
+        Tests:   tests/test_summarize.py::test_a1_arxiv_paper_resolved_at_source
+
+        Returns None when arXiv has no such paper (or it was withdrawn).
+        Raises SourceUnavailableError / RateLimitedError when arXiv could not
+        answer, so the caller can say "try again".
+        """
+        arxiv_id = (identifier or "").strip()
+        if arxiv_id.lower().startswith("arxiv:"):
+            arxiv_id = arxiv_id[6:]
+        if not arxiv_id:
+            return None
+        headers = {"User-Agent": polite_user_agent(self.sources_config)}
+        self._wait_turn()
+        try:
+            resp = requests.get("https://export.arxiv.org/api/query",
+                                params={"id_list": arxiv_id, "max_results": 1},
+                                headers=headers, timeout=self.timeout)
+        except requests.RequestException as e:
+            raise SourceUnavailableError(f"arXiv request failed: {e}") from e
+        if resp.status_code == 429:
+            raise RateLimitedError("arXiv rate limited")
+        if resp.status_code >= 500:
+            raise SourceUnavailableError(f"arXiv returned {resp.status_code}")
+        if not resp.ok:
+            return None
+        try:
+            root = ET.fromstring(resp.content)
+        except ET.ParseError as e:
+            raise SourceUnavailableError(f"Failed to parse arXiv response: {e}") from e
+        entry = root.find("atom:entry", ATOM_NS)
+        if entry is None:
+            return None
+        raw = self._parse_entry(entry)
+        # arXiv answers an unknown id with an entry that has no title.
+        return raw if raw and raw.get("title") else None
 
     def normalize(self, raw: RawRecord) -> CanonicalRecord:
         """Normalize a raw arXiv entry to CanonicalRecord."""

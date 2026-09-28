@@ -615,3 +615,131 @@ def test_ft1_find_by_title_reaches_the_finder(ctx, signed_in, monkeypatch):
                                 json={"paper": PAPER, "find_by_title": False}).json()["job_id"]
         _await(signed_in, job_id)
     assert seen["by_title"] is False
+
+
+# ── A1: a paper's content never comes from the request ───────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#A1
+# Summaries are shared by every user. Before the fix, any signed-in user could
+# post a real DOI with an invented title and abstract; with no full text found,
+# that abstract became the paper's summary for everyone.
+
+REAL = {"doi": "10.1/real", "canonical_id": "doi:10.1/real",
+        "title": "The Real Paper", "abstract": "What the paper actually says.",
+        "authors": "Lee A"}
+
+
+def _attacker_copy():
+    return dict(REAL, title="Invented", abstract="Attacker text shown to everyone.",
+                pdf_url="https://attacker.example/fake.pdf")
+
+
+def test_a1_client_abstract_never_stored(ctx, signed_in, monkeypatch, no_pdf, papers_at_source):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    papers_at_source["echo"] = False
+    papers_at_source["papers"]["10.1/real"] = REAL
+
+    job_id = signed_in.post("/api/summaries", json={"paper": _attacker_copy()}).json()["job_id"]
+    body = _await(signed_in, job_id)
+
+    assert body["status"] == "done", body
+    stored = ctx.db.get_summary(body["result"]["paper_id"])
+    assert stored["summary_text"] == REAL["abstract"]
+    row = ctx.db.get_paper_by_id(body["result"]["paper_id"])
+    assert row["title"] == "The Real Paper"
+
+
+def test_a1_client_pdf_url_ignored(ctx, signed_in, monkeypatch, papers_at_source):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    papers_at_source["echo"] = False
+    papers_at_source["papers"]["10.1/real"] = REAL
+    seen = []
+
+    def fake_extract(_ctx, paper, outcome=None, by_title=None):
+        seen.append(paper.get("pdf_url"))
+        return ""
+
+    with patch("web.routes_summaries._extract_text", side_effect=fake_extract):
+        job_id = signed_in.post("/api/summaries", json={"paper": _attacker_copy()}).json()["job_id"]
+        _await(signed_in, job_id)
+    assert seen and "attacker.example" not in str(seen)
+
+
+def test_a1_unknown_paper_is_refused_and_stores_nothing(ctx, signed_in, monkeypatch, no_pdf,
+                                                        papers_at_source):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    papers_at_source["echo"] = False
+    job_id = signed_in.post("/api/summaries", json={"paper": _attacker_copy()}).json()["job_id"]
+    body = _await(signed_in, job_id)
+    assert body["status"] == "error" and "could not be found" in body["error"]
+    assert ctx.db.find_paper({"doi": "10.1/real"}) is None
+
+
+def test_a1_resolver_outage_is_retryable_and_writes_nothing(ctx, signed_in, monkeypatch,
+                                                            no_pdf, papers_at_source):
+    from src.summarize import PaperLookupError
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    papers_at_source["echo"] = False
+    papers_at_source["fail"] = PaperLookupError("Europe PMC unreachable")
+    job_id = signed_in.post("/api/summaries", json={"paper": REAL}).json()["job_id"]
+    body = _await(signed_in, job_id)
+    assert body["status"] == "error" and "try again" in body["error"]
+    assert ctx.db.find_paper(REAL) is None
+
+
+def test_a1_paper_from_own_search_is_used(ctx, signed_in, monkeypatch, no_pdf, papers_at_source):
+    """A paper the server found for this user in a search is trusted as it is."""
+    from src.jobs import JobStatus
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    papers_at_source["echo"] = False                 # the source knows nothing
+    me = signed_in.get("/api/me").json()["user_id"]
+    job = ctx.jobs.submit("search", me, lambda j: [dict(REAL)])
+    for _ in range(200):
+        if job.status == JobStatus.DONE:
+            break
+        time.sleep(0.01)
+
+    job_id = signed_in.post("/api/summaries", json={"paper": _attacker_copy()}).json()["job_id"]
+    body = _await(signed_in, job_id)
+    assert body["status"] == "done", body
+    assert ctx.db.get_summary(body["result"]["paper_id"])["summary_text"] == REAL["abstract"]
+
+
+def test_a1_existing_full_text_returned_not_billed(ctx, signed_in, monkeypatch, with_full_text):
+    """M26 / A1: a paper that already has a model summary gets it back; the
+    model is not called and nothing is spent."""
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    pid = ctx.db.insert_paper(REAL)
+    ctx.db.insert_summary(pid, summary_text="", key_findings=["paid"], methodology="m",
+                          conclusions="c", model_version="deepseek-flash",
+                          source_text="full_text")
+    client = MagicMock()
+    with patch("src.llm_providers.build_client", return_value=client):
+        job_id = signed_in.post("/api/summaries", json={"paper": _attacker_copy()}).json()["job_id"]
+        body = _await(signed_in, job_id)
+    client.summarize_paper.assert_not_called()
+    assert body["result"]["reused"] is True
+    assert body["result"]["key_findings"] == ["paid"]
+    assert ctx.db.get_summary(pid)["key_findings"] == ["paid"]
+
+
+# ── A8: a summary that could not be saved says so ────────────────────────────
+
+def test_a8_db_error_reports_not_saved(ctx, signed_in, monkeypatch, with_full_text):
+    from src.db import SummaryNotSaved
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    with patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)), \
+         patch.object(type(ctx.db), "insert_summary",
+                      side_effect=SummaryNotSaved("database is locked")):
+        job_id = signed_in.post("/api/summaries", json={"paper": PAPER}).json()["job_id"]
+        body = _await(signed_in, job_id)
+    assert body["status"] == "done"
+    assert body["result"]["saved"] is False
+    assert "database is locked" in body["result"]["not_saved"]
+    assert "call the model again" in body["result"]["not_saved"]

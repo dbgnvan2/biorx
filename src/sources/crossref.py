@@ -91,6 +91,12 @@ class CrossrefAdapter:
         if not msg:
             return True
 
+        self.fill_from_message(record, msg)
+        logger.debug("Crossref enriched: %s", record.doi)
+        return True
+
+    def fill_from_message(self, record: CanonicalRecord, msg: Dict[str, Any]) -> None:
+        """Fill the record's empty fields from a Crossref 'message' dict."""
         # Fill missing title
         if not record.title:
             titles = msg.get("title", [])
@@ -137,5 +143,30 @@ class CrossrefAdapter:
                         family=a.get("family", "") or "",
                     ))
 
-        logger.debug("Crossref enriched: %s", record.doi)
-        return True
+    def record_for_doi(self, doi: str) -> Optional[CanonicalRecord]:
+        """A record built from Crossref alone, or None if Crossref has no such DOI.
+
+        Purpose: Look a paper up server-side by DOI (review A1).
+        Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A1
+        Tests:   tests/test_summarize.py::test_a1_doi_resolved_via_crossref
+
+        Raises SourceUnavailableError / RateLimitedError when Crossref could not
+        answer.
+        """
+        from .schema import RecordFlags, SourceHit, make_canonical_id
+        from datetime import datetime, timezone
+        msg = self.get_by_id(doi)
+        if not msg:
+            return None
+        record = CanonicalRecord(
+            canonical_id=make_canonical_id(doi=doi), title="", abstract="", authors=[],
+            year=0, published_date="", document_type="other",
+            is_preprint=(msg.get("type") == "posted-content"),
+            journal_or_server="", doi=doi, pmid="", pmcid="",
+            source_url=msg.get("URL") or f"https://doi.org/{doi}", best_oa_url="",
+            pdf_url="", license="", oa_status="", subjects=[], keywords=[],
+            source_hits=[SourceHit(source="crossref", source_record_id=doi,
+                                   fetched_at=datetime.now(timezone.utc).isoformat())],
+            flags=RecordFlags(), source_trust_weight=0.85)
+        self.fill_from_message(record, msg)
+        return record if record.title else None

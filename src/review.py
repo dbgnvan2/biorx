@@ -53,8 +53,15 @@ def _text_for(paper: Mapping, summary: Optional[Mapping]) -> Tuple[str, str]:
         findings = summary.get("key_findings")
         if isinstance(findings, list):
             parts.extend(str(f).strip() for f in findings if str(f).strip())
-        for key in ("methodology", "conclusions", "summary_text"):
+        for key in ("methodology", "conclusions"):
             value = str(summary.get(key) or "").strip()
+            if value:
+                parts.append(value)
+        # summary_text only when the structured fields are empty (an abstract
+        # stand-in). CLI summaries used to repeat the fields there, which sent
+        # them to the model twice and doubled the prompt (review A13).
+        if not parts:
+            value = str(summary.get("summary_text") or "").strip()
             if value:
                 parts.append(value)
         text = "\n".join(parts).strip()

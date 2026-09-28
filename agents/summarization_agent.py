@@ -17,8 +17,9 @@ from src.db import Database
 from src.pdf_handler import PDFHandler
 from src.llm import MockOllamaClient
 from src.tokens import UNCOUNTED
-from src.llm_config import load_llm_config, max_text_chars
-from src.llm_providers import LLMError, ProviderResponseError, _coerce_summary, resolve_client
+from src.llm_config import load_llm_config
+from src.llm_providers import LLMError, resolve_client
+from src.summarize import summarize_paper
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,16 +33,23 @@ class SummarizationAgent:
 
     def __init__(
         self,
-        db_path: str = "~/preprints/biorxiv.db",
+        db_path: Optional[str] = None,
         use_mock: bool = False,
     ):
         """
         Initialize summarization agent.
 
         Args:
-            db_path: Path to SQLite database
-            use_mock: If True, use mock LLM (for testing without Ollama)
+            db_path: Path to SQLite database. None = the same database the web
+                app uses (BIORX_DB_PATH / DATA_DIR, else ~/preprints/biorxiv.db).
+                A hard-coded default skipped those settings (review A12).
+            use_mock: If True, use mock LLM (for testing without Ollama). Needs
+                an explicit db_path: mock findings written to the real
+                database would be shown to every user as a summary (M25).
         """
+        if use_mock and not db_path:
+            raise ValueError("--mock writes made-up findings; give --db-path to a "
+                             "scratch database, never the real one")
         self.db = Database(db_path)
         self.pdf_handler = PDFHandler()
         self.use_mock = use_mock
@@ -164,97 +172,49 @@ class SummarizationAgent:
 
         return self._summarize_paper(paper)
 
+    def _find_text(self, paper: Dict[str, Any]):
+        """The downloaded PDF if there is one, else a free copy found online."""
+        pdf_path = paper.get("pdf_path")
+        if pdf_path and Path(pdf_path).exists():
+            text = self.pdf_handler.extract_text(pdf_path, max_pages=10) or ""
+            if text:
+                return text, "used", "downloaded PDF"
+        found = self._find_full_text(paper)
+        if found.text:
+            return found.text, "used", found.source
+        return "", found.explain(), ""
+
     def _summarize_paper(self, paper: Dict[str, Any]) -> bool:
         """
-        Summarize a single paper.
+        Summarize a single stored paper through the shared pipeline
+        (src/summarize.py, review S1).
 
-        Args:
-            paper: Paper dictionary from database
-
-        Returns:
-            True if successful
+        Returns True only when a summary (or the abstract stand-in) was stored.
         """
         paper_id = paper.get("id")
-        title = paper.get("title", "Unknown")
-        pdf_path = paper.get("pdf_path")
-
+        logger.info("Summarizing: %s", paper.get("title", "Unknown"))
+        if paper_id is not None:
+            self.db.mark_summary_attempt(paper_id)
         try:
-            logger.info(f"Summarizing: {title}")
-
-            # Full text: the downloaded PDF if there is one, else a free copy
-            # found online (plan 2026-09-19 C2).
-            text, text_source = "", ""
-            if pdf_path and Path(pdf_path).exists():
-                logger.debug(f"Extracting text from {pdf_path}")
-                text = self.pdf_handler.extract_text(pdf_path, max_pages=10) or ""
-                text_source = "downloaded PDF" if text else ""
-            if not text:
-                found = self._find_full_text(paper)
-                text, text_source = found.text, found.source
-                if not text:
-                    logger.info("Paper %s: no full text — %s", paper_id, found.explain())
-
-            abstract = paper.get("abstract", "")
-            if not text:
-                # No full text: keep the abstract as the entry and do not call
-                # the model (plan 2026-09-19 C1, FT1.5).
-                if not abstract.strip():
-                    logger.warning("Paper %s has neither full text nor an abstract", paper_id)
-                    return False
-                self.db.insert_summary(paper_id=paper_id, summary_text=abstract,
-                                       model_version="", source_text="abstract")
-                logger.info("Paper %s: no full text found — kept the abstract, no model used",
-                            paper_id)
-                return True
-            # Same budget the web app uses (llm_config.yaml max_text_chars);
-            # what is dropped is logged rather than cut silently (P9).
-            budget = max_text_chars(load_llm_config())
-            if len(text) > budget:
-                logger.info("Paper %s: sending %d of %d extracted characters",
-                            paper_id, budget, len(text))
-            full_text = text[:budget]
-
-            llm = self._client()
-            logger.debug(f"Generating summary with {self.model} for paper {paper_id}")
-            summary_data, usage = llm.summarize_paper(abstract, full_text)
-            self.last_usage = usage
-            if summary_data is None:
-                raise ProviderResponseError(f"{self.model} returned no summary")
-            # Same check the web app applies: Ollama's text parser returns a
-            # dict of empty fields when the reply is not in the expected shape,
-            # which must not be saved as a success (review finding 4).
-            summary_data = _coerce_summary(summary_data)
-
-            if not summary_data:
-                logger.warning(f"Failed to generate summary for paper {paper_id}")
-                return False
-
-            # Format key findings
-            key_findings = summary_data.get("key_findings", [])
-            summary_text = f"KEY FINDINGS:\n"
-            for finding in key_findings:
-                summary_text += f"- {finding}\n"
-            summary_text += f"\nMETHODOLOGY:\n{summary_data.get('methodology', '')}\n"
-            summary_text += f"\nCONCLUSIONS:\n{summary_data.get('conclusions', '')}"
-
-            # Save to database
-            self.db.insert_summary(
-                paper_id=paper_id,
-                summary_text=summary_text,
-                key_findings=key_findings,
-                methodology=summary_data.get("methodology"),
-                conclusions=summary_data.get("conclusions"),
-                model_version=self.model,
-                source_text="full_text",
-                text_source=text_source,
-            )
-
-            logger.info(f"Summary saved for paper {paper_id}")
-            return True
-
+            outcome = summarize_paper(
+                self.db, paper, lambda: (self._client(), self.model),
+                find_text=self._find_text,
+                llm_config=load_llm_config(),
+                on_usage=lambda u: setattr(self, "last_usage", u))
         except Exception as e:
-            logger.error(f"Error summarizing paper {paper_id}: {e}")
+            logger.error("Error summarizing paper %s: %s", paper_id, e)
             return False
+        if not outcome.saved:
+            logger.error("Paper %s: summary not saved — %s", paper_id, outcome.not_saved_reason)
+            return False
+        if outcome.reused:
+            logger.info("Paper %s already has a full-text summary; kept it", paper_id)
+        elif outcome.source_text == "abstract":
+            logger.info("Paper %s: no full text found — kept the abstract, no model used",
+                        paper_id)
+        else:
+            logger.info("Summary saved for paper %s", paper_id)
+        return True
 
 
 def main():
@@ -277,13 +237,24 @@ def main():
         help="Use mock LLM (for testing)",
     )
     parser.add_argument(
+        "--db-path",
+        type=str,
+        default=None,
+        help="Database to use (default: BIORX_DB_PATH / DATA_DIR, as the web app). "
+             "Required with --mock.",
+    )
+    parser.add_argument(
         "--paper-id",
         type=int,
         help="Summarize specific paper by ID",
     )
     args = parser.parse_args()
 
-    agent = SummarizationAgent(use_mock=args.mock)
+    try:
+        agent = SummarizationAgent(db_path=args.db_path, use_mock=args.mock)
+    except ValueError as e:
+        print(f"Cannot summarize: {e}", file=sys.stderr)
+        return 2
 
     # Say which model will run, and whether it is billed, before any call:
     # the default is now a paid API (review finding 7).

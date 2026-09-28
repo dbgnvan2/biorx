@@ -59,118 +59,78 @@ class OllamaClient:
             return False
         return True
 
-    def generate(self, prompt: str, context: Optional[str] = None
-                 ) -> Tuple[Optional[str], TokenUsage]:
+    def generate(self, prompt: str, context: Optional[str] = None,
+                 json_schema: Optional[Dict[str, Any]] = None) -> Tuple[str, TokenUsage]:
         """
         Generate text using Ollama.
 
+        Purpose: The same contract as the hosted clients: a reply or a typed error.
+        Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A10, #M29, #M33
+        Tests:   tests/test_tokens.py::test_m29_ollama_retried_then_unavailable,
+                 tests/test_tokens.py::test_m1a1_ollama_client_returns_text_and_usage
+
         Args:
             prompt: Instruction prompt
-            context: Optional context/document text
+            context: Optional system text
+            json_schema: When given, Ollama is asked for a JSON reply.
 
         Returns:
-            (generated text, what the call cost). The text is None if the call
-            failed. Ollama does not always report counts, so the usage may be
-            uncounted even on success — uncounted means unknown, not free
-            (M1.A.1).
+            (generated text, what the call cost). Ollama does not always report
+            counts, so the usage may be uncounted even on success — uncounted
+            means unknown, not free (M1.A.1).
+
+        Raises:
+            ProviderUnavailableError after MAX_ATTEMPTS failed requests (a model
+            still loading, a timeout, a 5xx); ProviderResponseError for a reply
+            that is not JSON. It returned None before, which every caller had
+            to remember to check (review A10/M29).
         """
-        full_prompt = prompt
+        from .llm_providers import (MAX_ATTEMPTS, ProviderResponseError,
+                                    ProviderUnavailableError, _sleep_backoff)
+        payload: Dict[str, Any] = {"model": self.model, "prompt": prompt, "stream": False}
         if context:
-            full_prompt = f"{context}\n\n{prompt}"
+            payload["system"] = context
+        if json_schema is not None:
+            payload["format"] = "json"
 
-        try:
-            url = f"{self.base_url}/api/generate"
-            payload = {
-                "model": self.model,
-                "prompt": full_prompt,
-                "stream": False,
-            }
-
-            response = requests.post(url, json=payload, timeout=self.timeout)
-            response.raise_for_status()
-
-            result = response.json()
-            return result.get("response", "").strip(), from_ollama(result)
-
-        except requests.RequestException as e:
-            logger.error(f"Ollama generation failed: {e}")
-            return None, UNCOUNTED
+        url = f"{self.base_url}/api/generate"
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                response = requests.post(url, json=payload, timeout=self.timeout)
+                response.raise_for_status()
+            except requests.RequestException as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status is not None and status < 500:
+                    raise ProviderResponseError(f"Ollama returned {status}: {e}") from e
+                logger.warning("Ollama request failed (attempt %d/%d): %s",
+                               attempt, MAX_ATTEMPTS, e)
+                if attempt < MAX_ATTEMPTS:
+                    _sleep_backoff(attempt)
+                    continue
+                raise ProviderUnavailableError(f"Ollama unreachable: {e}") from e
+            try:
+                result = response.json()
+            except ValueError as e:
+                raise ProviderResponseError(f"Ollama returned non-JSON: {e}") from e
+            return (result.get("response") or "").strip(), from_ollama(result)
+        raise ProviderUnavailableError("Ollama failed")   # pragma: no cover
 
     def summarize_paper(
         self,
         abstract: str,
         full_text: str,
         max_findings: int = 3,
-    ) -> Tuple[Optional[Dict[str, Any]], TokenUsage]:
+    ) -> Tuple[Dict[str, Any], TokenUsage]:
         """
-        Summarize a paper using Qwen.
-
-        Args:
-            abstract: Paper abstract
-            full_text: Full paper text
-            max_findings: Maximum number of key findings to extract
-
-        Returns:
-            Dictionary with key_findings, methodology, conclusions
+        Summarize a paper with the same delimited JSON prompt, budget and
+        validation as the hosted clients (review A10/M33). The old text format
+        was parsed by splitting on blank lines: single-newline sections put every
+        line into key_findings, and "- -5%" lost its minus sign.
         """
-        prompt = f"""You are a research paper summarization expert. Analyze the following paper and provide a structured summary.
-
-PAPER ABSTRACT:
-{abstract}
-
-PAPER TEXT:
-{full_text[:self.max_chars]}
-
-Provide ONLY the following structured output (no markdown, plain text):
-
-KEY FINDINGS:
-- Finding 1
-- Finding 2
-- Finding 3
-
-METHODOLOGY:
-Brief description of the research methods used.
-
-CONCLUSIONS:
-Brief description of the conclusions and implications."""
-
-        response, usage = self.generate(prompt)
-        if not response:
-            return None, usage
-
-        # Parse response
-        try:
-            result = {
-                "key_findings": [],
-                "methodology": "",
-                "conclusions": "",
-            }
-
-            sections = response.split("\n\n")
-
-            for section in sections:
-                if section.startswith("KEY FINDINGS:"):
-                    findings_text = section.replace("KEY FINDINGS:", "").strip()
-                    for line in findings_text.split("\n"):
-                        finding = line.lstrip("- ").strip()
-                        if finding:
-                            result["key_findings"].append(finding)
-
-                elif section.startswith("METHODOLOGY:"):
-                    result["methodology"] = (
-                        section.replace("METHODOLOGY:", "").strip()
-                    )
-
-                elif section.startswith("CONCLUSIONS:"):
-                    result["conclusions"] = section.replace("CONCLUSIONS:", "").strip()
-
-            return result, usage
-
-        except Exception as e:
-            # The model ran and was billed; the tokens are reported even though
-            # the text could not be parsed (M1.B.3).
-            logger.error(f"Failed to parse summarization response: {e}")
-            return None, usage
+        from .llm_providers import SUMMARY_SCHEMA, _build_summary_prompt, _parsed_or_billed
+        prompt = _build_summary_prompt(abstract, full_text, self.max_chars, max_findings)
+        raw, usage = self.generate(prompt, json_schema=SUMMARY_SCHEMA)
+        return _parsed_or_billed(raw, usage), usage
 
 
 class MockOllamaClient(OllamaClient):

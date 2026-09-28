@@ -115,6 +115,20 @@ def ensure_writable_directory(directory: Path) -> None:
         )
 
 
+class SummaryNotSaved(Exception):
+    """A summary could not be written. The caller must say so: the model may
+    already have been paid for, and a silent miss bills again next time (A8)."""
+
+
+class SummaryDowngradeRefused(SummaryNotSaved):
+    """An abstract stand-in was about to replace a full-text model summary.
+
+    Purpose: Keep a paid summary from being replaced by an abstract.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A1, #M26
+    Tests:   tests/test_db_summaries.py::test_a1_abstract_cannot_replace_full_text
+    """
+
+
 class Database:
     """SQLite database for bioRxiv papers and metadata."""
 
@@ -439,6 +453,24 @@ class Database:
         self._add_column_if_missing(cursor, "summaries", "text_source", "TEXT DEFAULT ''")
         self._add_column_if_missing(cursor, "users", "preferred_model", "TEXT DEFAULT ''")
 
+        # When a batch summary run last tried this paper (review A11), so a
+        # paper that always fails goes to the back of the queue instead of
+        # filling every run's limit.
+        self._add_column_if_missing(cursor, "papers", "summary_attempted_at", "TIMESTAMP")
+        # CLI summaries used to copy the structured fields into summary_text as
+        # "KEY FINDINGS: …", and review prompts then sent them twice (review
+        # A13). Web summaries store "" there; bring old CLI rows into line.
+        # Idempotent: a cleared row no longer matches.
+        cursor.execute("""
+            UPDATE summaries SET summary_text = ''
+            WHERE source_text = 'full_text' AND summary_text LIKE 'KEY FINDINGS:%'
+              AND (key_findings IS NOT NULL OR COALESCE(methodology, '') <> ''
+                   OR COALESCE(conclusions, '') <> '')
+        """)
+        if cursor.rowcount:
+            logger.info("Cleared duplicated summary text on %d CLI-written summaries",
+                        cursor.rowcount)
+
         # What each billable call cost (plan 2026-09-20 M1.B.1). Rows written
         # before this migration keep tokens_counted = 0, which reads as "the
         # tokens for this call are unknown" — the truthful answer for them, and
@@ -673,10 +705,16 @@ class Database:
             )
             self.conn.commit()
             return cursor.lastrowid
-        except sqlite3.IntegrityError:
+        except sqlite3.IntegrityError as e:
             self._rollback_quietly()
-            logger.debug("Paper %s already exists", doi or canonical_id)
-            return None
+            # Only a UNIQUE clash means "already stored". Any other constraint
+            # (NOT NULL, CHECK) is a paper that failed to store, and hiding it
+            # at DEBUG made it look like a duplicate (review M27).
+            if "UNIQUE constraint failed" in str(e):
+                logger.debug("Paper %s already exists", doi or canonical_id)
+                return None
+            logger.error("Could not store paper %s: %s", doi or canonical_id, e)
+            raise
         except sqlite3.Error as e:
             self._rollback_quietly()
             logger.error(f"Database error inserting paper: {e}")
@@ -711,9 +749,24 @@ class Database:
             text_source: where the text came from, e.g. "Unpaywall", "OpenAlex"
 
         Returns:
-            Summary ID if successful, None otherwise
+            Summary ID.
+
+        Raises:
+            SummaryDowngradeRefused: source_text is "abstract" and the paper
+                already has a "full_text" summary (review A1/M26).
+            SummaryNotSaved: the write failed (review A8). It used to return
+                None, which no caller checked, so a paid summary could be
+                reported as saved when it was not.
         """
         try:
+            if source_text == "abstract":
+                row = self.conn.execute(
+                    "SELECT source_text FROM summaries WHERE paper_id = ?", (paper_id,)
+                ).fetchone()
+                if row is not None and row[0] == "full_text":
+                    raise SummaryDowngradeRefused(
+                        f"paper {paper_id} already has a full-text summary; "
+                        "an abstract will not replace it")
             cursor = self.conn.cursor()
             cursor.execute(
                 """
@@ -740,34 +793,39 @@ class Database:
         except sqlite3.Error as e:
             self._rollback_quietly()
             logger.error(f"Database error inserting summary: {e}")
-            return None
+            raise SummaryNotSaved(f"the summary could not be saved: {e}") from e
 
     def get_unsummarized_papers(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """
-        Get papers that don't have summaries yet.
+        """Papers with no model summary yet, least recently tried first.
 
-        Args:
-            limit: Maximum number of papers to return
+        Purpose: The queue for batch summary runs.
+        Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A11
+        Tests:   tests/test_summarize.py::test_a11_selects_undownloaded,
+                 tests/test_summarize.py::test_a11_failing_papers_do_not_starve_others
 
-        Returns:
-            List of paper dictionaries
+        A paper whose entry is only its abstract counts as unsummarized: full
+        text may be findable now. The old query also required downloaded =
+        TRUE, which nothing sets, so it always returned nothing.
         """
         cursor = self.conn.cursor()
         cursor.execute(
             """
             SELECT p.* FROM papers p
             LEFT JOIN summaries s ON p.id = s.paper_id
-            WHERE s.id IS NULL AND p.downloaded = TRUE
+            WHERE s.id IS NULL OR s.source_text = 'abstract'
+            ORDER BY p.summary_attempted_at IS NOT NULL, p.summary_attempted_at, p.id
             LIMIT ?
         """,
             (limit,),
         )
+        return [dict(row) for row in cursor.fetchall()]
 
-        papers = []
-        for row in cursor.fetchall():
-            papers.append(dict(row))
-
-        return papers
+    def mark_summary_attempt(self, paper_id: int) -> None:
+        """Record that a batch run tried this paper now (review A11)."""
+        self.conn.execute(
+            "UPDATE papers SET summary_attempted_at = strftime('%Y-%m-%d %H:%M:%f', 'now') "
+            "WHERE id = ?", (paper_id,))
+        self.conn.commit()
 
     def get_paper_by_canonical_id(self, canonical_id: str) -> Optional[Dict[str, Any]]:
         row = self.conn.execute(

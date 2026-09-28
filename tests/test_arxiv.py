@@ -245,10 +245,40 @@ def test_arxiv_search_malformed_xml_raises_unavailable():
             adapter.search("ti:agents")
 
 
-def test_arxiv_get_by_id_returns_none():
+_ONE_ENTRY = b"""<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+ <entry><id>http://arxiv.org/abs/2301.12345v2</id><title>Agents at Scale</title>
+  <summary>We study agents.</summary><published>2023-01-29T00:00:00Z</published>
+  <author><name>Ann Lee</name></author></entry>
+</feed>"""
+_EMPTY_ENTRY = b"""<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>http://arxiv.org/api/errors</id></entry></feed>"""
+
+
+def test_a1_arxiv_get_by_id_returns_the_paper():
+    """Review A1: the server looks papers up itself. Was a stub returning None."""
     from src.sources.arxiv import ArxivAdapter
-    adapter = ArxivAdapter()
-    assert adapter.get_by_id("2301.12345") is None
+    resp = MagicMock(status_code=200, ok=True, content=_ONE_ENTRY)
+    with patch("requests.get", return_value=resp) as g:
+        raw = ArxivAdapter(min_request_interval=0).get_by_id("arxiv:2301.12345")
+    assert g.call_args.kwargs["params"]["id_list"] == "2301.12345"
+    assert raw["title"] == "Agents at Scale" and raw["arxiv_id_full"] == "2301.12345v2"
+
+
+def test_a1_arxiv_get_by_id_unknown_is_none_outage_raises():
+    import requests as _rq
+    from src.sources.arxiv import ArxivAdapter
+    from src.sources.errors import SourceUnavailableError
+    a = ArxivAdapter(min_request_interval=0)
+    with patch("requests.get", return_value=MagicMock(status_code=200, ok=True,
+                                                      content=_EMPTY_ENTRY)):
+        assert a.get_by_id("9999.99999") is None
+    with patch("requests.get", side_effect=_rq.ConnectionError("down")):
+        with pytest.raises(SourceUnavailableError):
+            a.get_by_id("2301.12345")
+    with patch("requests.get", return_value=MagicMock(status_code=503, ok=False)):
+        with pytest.raises(SourceUnavailableError):
+            a.get_by_id("2301.12345")
 
 
 # ── Withdrawal detection (review finding 3) ───────────────────────────────────

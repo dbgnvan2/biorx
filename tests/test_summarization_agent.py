@@ -145,7 +145,8 @@ def test_r4_ollama_gets_config_budget_and_timeout():
     assert (client.max_chars, client.timeout) == (50, pconf.timeout)
     sent = {}
     with patch.object(client, "generate",
-                      side_effect=lambda p, **_: (sent.setdefault("p", p) and "", UNCOUNTED)):
+                      side_effect=lambda p, **_: (sent.setdefault("p", p) and
+                                                  '{"key_findings": ["a"]}', UNCOUNTED)):
         client.summarize_paper("abs", "x" * 80)
     assert "x" * 50 in sent["p"] and "x" * 51 not in sent["p"]
     assert "# Limit" not in sent["p"]
