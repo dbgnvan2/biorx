@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-09-28 — summaries: checked on the server, one pipeline
+
+Review fixes, batch 2. Gates: `docs/cycles/2026-09-28_review-batch2-qa-gate.md`
+(REJECTED, one blocking finding) and `docs/cycles/2026-09-28_review-batch2-regate-qa-gate.md`
+(APPROVED after fix loop 1).
+
+### Fixed
+- **Nobody can change another user's summary.** Summaries are shared, one per
+  paper. The server used to store the title, abstract and PDF link the page
+  sent; now it takes only the paper's DOI or id and looks the paper up itself —
+  in the database, in your own recent search results, or at the source (arXiv,
+  Europe PMC, Crossref). If the source cannot be reached you are told to try
+  again, and nothing is stored.
+- **A paid summary is never replaced by an abstract.** A paper that already has
+  a full-text summary gets it back at once, with no model call and no charge.
+- **A summary that could not be saved says so** ("shown but could not be saved
+  — running it again will call the model again") instead of reporting success.
+- **Local Ollama summaries** use the same prompt, checks and retries as the
+  hosted models. Its old text parser could store a garbled summary.
+- **The command-line summarizer works again.** It found no papers (it waited
+  for a "downloaded" flag nothing set), used a different database from the web
+  app, and repeated each summary's text so reviews sent it twice. It now shares
+  the web app's summarize code and database, tries papers that failed last
+  instead of first, and `--mock` refuses to write into the real database.
+
+### Notes
+- Summarizing needs the paper's DOI or id. A paper known only by a title
+  fingerprint can be summarized from a search you just ran or a saved list.
+
 ## 2026-09-28 — searches reach every source, and filters mean what they say
 
 Review fixes, batch 1. Gate: `docs/cycles/2026-09-28_review-batch1-qa-gate.md` (APPROVED).

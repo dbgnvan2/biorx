@@ -3,6 +3,13 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the review batch-2 gates (`docs/cycles/2026-09-28_review-batch2-*qa-gate.md`) — APPROVED, deferred
+
+- Known GUI effect (retiring app, not fixed): `gui.py` `DiscoverTermsWorker`
+  calls `client.generate()` unguarded. Ollama now raises on failure, as the
+  hosted providers always did, so a failed call there ends the worker without
+  a message. Gate finding 2.
+
 ## From the review batch-1 gate (`docs/cycles/2026-09-28_review-batch1-qa-gate.md`) — APPROVED, deferred
 
 - LOW / perf — `filter_papers` normalises the filter on every call, and the
