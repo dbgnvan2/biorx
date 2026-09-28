@@ -3,6 +3,20 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the review batch-1 gate (`docs/cycles/2026-09-28_review-batch1-qa-gate.md`) — APPROVED, deferred
+
+- LOW / perf — `filter_papers` normalises the filter on every call, and the
+  enrichment gate calls it once per record. Fold into M11 (batch 4 of
+  `docs/implementation_plan_2026-09-28_review_fixes.md`).
+- LOW / P19 — two source-label maps: `config.SOURCE_LABELS` ("bioRxiv / medRxiv")
+  and `orchestrator._SOURCE_LABELS` ("bioRxiv/medRxiv") now both feed messages.
+  S2 (batch 3) makes one public `source_label()`.
+- LOW / M22 residual — a multi-word surname ("da Silva") is "dasilva" from
+  Europe PMC's lastName but "silva" from arXiv's last word, so those two copies
+  still do not merge by title.
+- Known GUI effect (retiring app, not fixed): the desktop app's institution
+  field is now ignored by the shared filter code.
+
 ## From the UI-enhancements gate (`docs/cycles/2026-09-19_ui-enhancements-qa-gate.md`) — APPROVED, deferred
 
 - MED / P32 — `test_e2_tab_bar_is_sticky` pins `#notice { top: 52px }` by reading

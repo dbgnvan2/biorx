@@ -40,7 +40,9 @@ first author + year), enriched via Crossref/Unpaywall, and ranked by source trus
 | OpenAlex | index | no |
 | Crossref, Unpaywall | enrichment only | yes |
 
-Configure in `sources_config.yaml`. Saved searches live in `filters.json`.
+Configure in `sources_config.yaml`. Filter options (paper type, licence, species,
+category, …) and what each one matches are in `filter_vocabulary.yaml`. Saved
+searches live in `filters.json`.
 
 ## Headless CLI
 

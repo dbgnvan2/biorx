@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-09-28 — searches reach every source, and filters mean what they say
+
+Review fixes, batch 1. Gate: `docs/cycles/2026-09-28_review-batch1-qa-gate.md` (APPROVED).
+Plan: `docs/implementation_plan_2026-09-28_review_fixes.md`. Live counts before
+the fix: `docs/cycles/2026-09-28_retrieval_baseline.json`.
+
+### Fixed
+- **Every selected source is searched.** Max results used to be one budget for
+  the whole run, so a broad filter used it all on Europe PMC and the other
+  sources were never asked. It now applies to each source, and a source cut off
+  by it says so ("Europe PMC — skipped (truncated)").
+- **PsyArXiv, SocArXiv and arXiv work with saved filters again.** A filter with
+  no start/end date sent them empty dates; they answered with errors (HTTP 400
+  and 500) and returned nothing.
+- **PsyArXiv and SocArXiv see every term.** Only the first word of the filter
+  was sent. Each title term is now asked for separately, or, when that could
+  miss a match, the date range is fetched and the filter applied here.
+- **bioRxiv/medRxiv searches medRxiv too**, over the filter's own dates, and
+  knows each paper's version, so "revised only" works.
+- **Paper type works.** Europe PMC records were all typed "other" (the adapter
+  read a field the API does not send), so "Review" and the other types matched
+  nothing — "Loneliness" found 0 of 709. Preprints in Europe PMC are now flagged
+  as preprints.
+- **A wildcard term matches inside a title** ("adolescen*" finds "Stress in
+  adolescents"), not only at its start.
+- **Licence filtering compares meaning, not spelling** ("cc_by", "CC BY 4.0" and
+  a Creative Commons URL are the same licence; "cc_by" no longer matches
+  "cc_by_nc"), and it runs after enrichment, so licences found by Unpaywall
+  count.
+- Two searches running at once no longer mix up each other's pages.
+- Records a source sent but could not be read, and sources that could not be
+  reached during abstract recovery, are reported instead of looking like
+  "nothing found".
+- The same paper from Europe PMC, bioRxiv and arXiv is merged more often.
+
+### Changed
+- **Filter options live in `filter_vocabulary.yaml`.** The page builds its
+  dropdowns from it. Filters store option ids; ones saved with the old labels
+  are read as before. A filter with an option the search cannot apply is
+  refused on save.
+- **Institution is gone from the filter editor.** No source reports author
+  institutions, so an institution term matched nothing. A stored one is ignored
+  (with a log warning).
+
+### Notes
+- With several sources, a run can now return up to Max results *per source*.
+- `sources_config.yaml` gains `osf.max_title_terms` and a `truncated`
+  explanation.
+
 ## 2026-09-26 — a term click builds up one filter
 
 Gate: `docs/cycles/2026-09-26_term-chips-append-qa-gate.md` (APPROVED).
