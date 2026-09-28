@@ -143,7 +143,8 @@ def run_search(
         # Only papers the filter keeps are worth two HTTP calls (plan C2).
         # The licence is left out here: enrichment is what supplies it for
         # many papers, and the full filter runs below (review B5).
-        enrich_only=lambda r: bool(filter_papers([r.to_dict()], pre_enrichment)),
+        enrich_only=lambda r: bool(filter_papers([r.to_dict()], pre_enrichment,
+                                                 normalised=True)),
         on_enrich_problem=on_enrich_problem,
         on_source_failure=on_source_failure,
     )

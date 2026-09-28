@@ -129,3 +129,10 @@ discover:
   stop_words: [a, an, the, and, or, of, for, in, to, by, on, at, is, are, was,
                were, be, been, being, that, this, with, from, how, what, where,
                which, about, as]
+
+# Background job workers (review A14). Searches and model calls (summaries,
+# discover, reviews) have separate pools, so long searches cannot hold every
+# summary in a queue. Each user may run one search at a time.
+jobs:
+  search_workers: 2
+  model_workers: 3

@@ -282,7 +282,8 @@ def test_regate1_the_reserving_check_is_only_used_where_money_is_spent():
             src = ast.get_source_segment(module.read_text(), fn) or ""
             if fn.name == "_resolve_for" or "_resolve_for(" not in src:
                 continue
-            if "ctx.jobs.submit(" not in src:
+            # submit_billed wraps ctx.jobs.submit for billed routes (review A7).
+            if "ctx.jobs.submit(" not in src and "submit_billed(" not in src:
                 offenders.append(f"{module.name}:{fn.name}")
     assert not offenders, (
         f"reserving credential check called where nothing is spent: {offenders}"
@@ -328,3 +329,46 @@ def test_m4_review_routes_need_a_session(client):
     assert client.post("/api/reviews", json={"list_id": 1}).status_code == 401
     assert client.get("/api/references/1/review").status_code == 401
     assert client.get("/api/references/1/review-preview").status_code == 401
+
+
+# ── M1: review errors answer like their siblings ─────────────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M1
+
+def test_m1_no_key_is_400(signed_in, ctx, monkeypatch):
+    list_id, _ = _list_with(signed_in, ctx, PAPER, SECOND)
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    from src.llm_config import load_llm_config
+    ctx.llm_config = load_llm_config()
+    r = signed_in.post("/api/reviews", json={"list_id": list_id})
+    assert r.status_code == 400, r.text
+
+
+def test_m1_expired_is_410(signed_in, ctx):
+    ctx.jobs.ttl_seconds = 0
+    me = signed_in.get("/api/me").json()["user_id"]
+    job = ctx.jobs.submit("review", me, lambda j: {"review_text": "x"})
+    deadline = time.time() + 5
+    r = signed_in.get(f"/api/reviews/{job.id}")
+    while r.status_code == 200 and time.time() < deadline:
+        time.sleep(0.01)
+        r = signed_in.get(f"/api/reviews/{job.id}")
+    assert r.status_code == 410 and "run it again" in r.json()["detail"]
+    assert signed_in.get("/api/reviews/no-such-job").json()["detail"] == "No such job."
+
+
+def test_m1_nothing_to_review_reads_plainly(signed_in, ctx):
+    """The worker raised HTTPException, so the page showed "HTTPException: 400: …"."""
+    from src.jobs import JobRegistry
+    list_id, _ = _list_with(signed_in, ctx, PAPER, SECOND)
+    ctx.db.conn.execute("UPDATE papers SET abstract = ''")
+    ctx.db.conn.commit()
+    with patch("src.llm_providers.build_client", return_value=_llm()):
+        r = signed_in.post("/api/reviews", json={"list_id": list_id,
+                                                 "api_key": "sk-user-x", "provider": "anthropic"})
+        body = _await(signed_in, r.json()["job_id"])
+    assert body["status"] == "error"
+    # The page strips a leading "<Name>Error: " and shows the rest.
+    import re
+    shown = re.sub(r"^\w+Error: ", "", body["error"])
+    assert shown.startswith("None of these papers have a summary"), body["error"]

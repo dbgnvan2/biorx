@@ -485,16 +485,18 @@ def test_gate2_both_spending_routes_use_the_shared_recorder():
     spend never reached the meter — and a user-key discover run wrote no row
     at all.
 
-    Both now go through user_store.record_spend. A source check, because the
-    two routes drifting apart is precisely what happened and neither route's
-    own tests noticed (P5).
+    Since review M12 every billed route settles through src/spend.BilledCall,
+    which is the only caller of user_store.record_spend / release_usage. A
+    source check, because the routes drifting apart is precisely what happened
+    and neither route's own tests noticed (P5).
     """
-    for path in ("web/routes_summaries.py", "web/routes_discover.py"):
+    for path in ("web/routes_summaries.py", "web/routes_discover.py",
+                 "web/routes_reviews.py"):
         source = (Path(__file__).parent.parent / path).read_text()
-        assert "user_store.record_spend(" in source, (
-            f"{path} does not use the shared recorder — it will drift again"
+        assert "spend.BilledCall(" in source, (
+            f"{path} does not settle through the shared BilledCall — it will drift again"
         )
-        # The private per-route helper this replaced must not come back.
+        assert "record_spend(" not in source and "release_usage(" not in source, path
         assert "def _record_spend" not in source
 
 

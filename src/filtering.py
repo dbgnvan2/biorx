@@ -100,7 +100,7 @@ def without_license(f: Dict[str, Any]) -> Dict[str, Any]:
     report. Callers choose what to enrich with this, and apply the full
     filter once enrichment has run.
     """
-    out = dict(f or {})
+    out = normalise_filter(f)
     out["license"] = vocab.ANY
     return out
 
@@ -178,14 +178,20 @@ def text_group_matches(paper: Dict[str, Any], group: Dict[str, str]) -> bool:
     return True
 
 
-def filter_papers(papers: List[Dict[str, Any]], f: Dict[str, Any]) -> List[Dict[str, Any]]:
+def filter_papers(papers: List[Dict[str, Any]], f: Dict[str, Any], *,
+                  normalised: bool = False) -> List[Dict[str, Any]]:
     """Apply filter criteria to a list of papers. No API calls.
 
     Facets compare vocabulary ids (filter_vocabulary.yaml) against the
     record's own values: paper type against document_type, licence after
     reduction to an id (review S3/B5).
+
+    normalised=True: the caller already ran normalise_filter, so it is not
+    repeated — the enrichment gate calls this once per record (batch-1 gate
+    note 1, folded into review M11).
     """
-    f = normalise_filter(f)
+    if not normalised:
+        f = normalise_filter(f)
     text_groups = f.get("text_groups", [])
     if not text_groups and f.get("keywords"):
         text_groups = [{"title": "", "abstract": "", "both": ", ".join(f["keywords"])}]

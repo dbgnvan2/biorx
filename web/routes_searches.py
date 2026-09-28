@@ -121,7 +121,7 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
 
         def on_batch(records):
             papers = [r.to_dict() for r in records]
-            kept = {id(p) for p in filter_papers(papers, pre_enrichment)}
+            kept = {id(p) for p in filter_papers(papers, pre_enrichment, normalised=True)}
             for record, paper in zip(records, papers):
                 if id(paper) in kept:
                     matched.append(record)
@@ -190,11 +190,52 @@ def start_search(body: SearchRequest,
     selection = body.source_selection or filter_dict.get(
         "source_selection", {"all": True, "selected": []}
     )
-    job = ctx.jobs.submit(
-        SEARCH_JOB_KIND, user_id,
-        _run_search(ctx, filter_dict, selection, body.max_results),
-    )
+    return submit_search(ctx, SEARCH_JOB_KIND, user_id,
+                         _run_search(ctx, filter_dict, selection, body.max_results))
+
+
+# Searches (and filter tests) share one key per user: each can hold a worker
+# for minutes, so one user may run one at a time (review A14).
+SEARCH_KEY = ("search",)
+
+
+def submit_search(ctx: AppContext, kind: str, user_id: str, work):
+    """Purpose: Queue a search, or answer 409 while this user's last one runs.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A14
+    Tests:   tests/web/test_jobs.py::test_a14_one_search_per_user
+    """
+    from fastapi.responses import JSONResponse
+    from src.jobs import JobAlreadyRunning
+    try:
+        job = ctx.jobs.submit(kind, user_id, work, key=SEARCH_KEY)
+    except JobAlreadyRunning as e:
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={
+            "detail": "A search is already running — wait for it to finish or stop it first.",
+            "job_id": e.job.id})
+    except RuntimeError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="The server is restarting — try again in a minute.") from e
     return job.to_dict()
+
+
+@router.get("/api/jobs/running")
+def running_jobs(ctx: AppContext = Depends(get_context),
+                 user_id: str = Depends(current_user)):
+    """Purpose: This user's queued or running jobs, so a reloaded page can show
+             which buttons are still busy and resume polling (review A7).
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A7
+    Tests:   tests/web/test_jobs.py::test_a7_running_jobs_listed
+    """
+    out = []
+    for job, key in ctx.jobs.running(user_id):
+        entry = {"job_id": job.id, "kind": job.kind, "status": job.status,
+                 "phase": job.phase}
+        if isinstance(key, tuple) and len(key) == 2 and key[0] == "paper":
+            entry["paper"] = key[1]
+        elif isinstance(key, tuple) and len(key) == 2 and key[0] == "review":
+            entry["list_id"] = key[1]
+        out.append(entry)
+    return {"jobs": out}
 
 
 def _job_or_404(ctx: AppContext, job_id: str, user_id: str) -> Job:
@@ -316,6 +357,30 @@ def save_search_as_list(job_id: str, body: SaveAsListBody,
     return payload
 
 
+def summary_card(paper: Dict[str, Any], s: Dict[str, Any], **extra) -> Dict[str, Any]:
+    """Purpose: The one shape a stored summary is sent to the page in, for
+             search results and saved lists alike (review M11).
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#M11
+    Tests:   tests/web/test_searches_routes.py::test_m11_card_identical_across_endpoints
+    """
+    card = {
+        "canonical_id": paper.get("canonical_id") or "",
+        "doi": paper.get("doi") or "",
+        "title": paper.get("title") or "",
+        "paper_id": paper.get("paper_id"),
+        "key_findings": s.get("key_findings") or [],
+        "methodology": s.get("methodology") or "",
+        "conclusions": s.get("conclusions") or "",
+        "model_version": s.get("model_version") or "",
+        "source_text": s.get("source_text") or "",
+        "text_source": s.get("text_source") or "",
+        "abstract_only": s.get("summary_text") if s.get("source_text") == "abstract" else "",
+        "created_at": str(s.get("created_at") or ""),
+    }
+    card.update(extra)
+    return card
+
+
 # ── Summaries for a search's results (S1–S3, docs/implementation_plan_2026-09-18_cache_and_summaries.md)
 
 def _job_summaries(ctx: AppContext, job: Job, only_ids: Optional[List[str]] = None):
@@ -331,20 +396,17 @@ def _job_summaries(ctx: AppContext, job: Job, only_ids: Optional[List[str]] = No
         results = [p for p in results
                    if p.get("canonical_id") in wanted or p.get("doi") in wanted]
     items: List[Dict[str, Any]] = []
-    summaries: Dict[int, Dict[str, Any]] = {}
     seen = set()
-    for paper in results:
-        row = ctx.db.find_paper(paper)
-        pid = row["id"] if row else None
+    # Bulk lookups (review M11): per-paper queries were ~3 per result, so a
+    # 2000-result search made ~6000 queries on every call.
+    for paper, pid in zip(results, ctx.db.find_paper_ids(results)):
         if pid is not None:
             if pid in seen:
                 continue      # two results for the same paper: list it once
             seen.add(pid)
         items.append({"paper": {**paper, "paper_id": pid}})
-        if pid is not None and pid not in summaries:
-            s = ctx.db.get_summary(pid)
-            if s:
-                summaries[pid] = s
+    summaries = ctx.db.summaries_for_papers(
+        i["paper"]["paper_id"] for i in items if i["paper"]["paper_id"] is not None)
     return items, summaries
 
 
@@ -363,26 +425,9 @@ def search_summaries(job_id: str,
     """Stored summaries for this search's results, newest first (S1, S2)."""
     job = _finished_search(ctx, job_id, user_id)
     items, summaries = _job_summaries(ctx, job)
-    out = []
-    for item in items:        # one item per paper (_job_summaries dedupes)
-        p = item["paper"]
-        s = summaries.get(p["paper_id"]) if p["paper_id"] is not None else None
-        if not s:
-            continue
-        out.append({
-            "canonical_id": p.get("canonical_id") or "",
-            "doi": p.get("doi") or "",
-            "title": p.get("title") or "",
-            "paper_id": p["paper_id"],
-            "key_findings": s.get("key_findings") or [],
-            "methodology": s.get("methodology") or "",
-            "conclusions": s.get("conclusions") or "",
-            "model_version": s.get("model_version") or "",
-            "source_text": s.get("source_text") or "",
-            "text_source": s.get("text_source") or "",
-            "abstract_only": s.get("summary_text") if s.get("source_text") == "abstract" else "",
-            "created_at": str(s.get("created_at") or ""),
-        })
+    out = [summary_card(item["paper"], summaries[item["paper"]["paper_id"]])
+           for item in items        # one item per paper (_job_summaries dedupes)
+           if item["paper"]["paper_id"] in summaries]
     out.sort(key=lambda r: r["created_at"], reverse=True)
     return {"summaries": out, "total_results": len(items)}
 

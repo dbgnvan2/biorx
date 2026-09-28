@@ -109,7 +109,7 @@ def build_context(db_path: Optional[str] = None,
 
     llm_config = load_llm_config()
     from src.llm_config import (default_provider, default_provider_source,
-                                provider_setting_problems)
+                                job_lanes, provider_setting_problems)
     logger.info("Default LLM provider: %s (from %s)",
                 default_provider(llm_config), default_provider_source(llm_config))
     for problem in provider_setting_problems(llm_config):
@@ -117,7 +117,7 @@ def build_context(db_path: Optional[str] = None,
 
     return AppContext(
         db=Database(db_path) if db_path else Database(),
-        jobs=JobRegistry(),
+        jobs=JobRegistry(lanes=job_lanes(llm_config)),
         llm_config=llm_config,
         sources_config=load_sources_config(),
         access_code=code,

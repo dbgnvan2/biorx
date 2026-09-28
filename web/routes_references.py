@@ -188,27 +188,12 @@ def list_reference_summaries(list_id: int,
     papers are summarized without re-running the search that found them.
     """
     _get_list_or_404(ctx, user_id, list_id)
-    out: List[Dict[str, Any]] = []
-    for item in user_store.list_reference_items(ctx.db, list_id):
-        p = item["paper"]
-        s = ctx.db.get_summary(p["paper_id"])
-        if not s:
-            continue
-        out.append({
-            "canonical_id": p.get("canonical_id") or "",
-            "doi": p.get("doi") or "",
-            "title": p.get("title") or "",
-            "paper_id": p["paper_id"],
-            "item_id": item["item_id"],
-            "key_findings": s.get("key_findings") or [],
-            "methodology": s.get("methodology") or "",
-            "conclusions": s.get("conclusions") or "",
-            "model_version": s.get("model_version") or "",
-            "source_text": s.get("source_text") or "",
-            "text_source": s.get("text_source") or "",
-            "abstract_only": s.get("summary_text") if s.get("source_text") == "abstract" else "",
-            "created_at": str(s.get("created_at") or ""),
-        })
+    from .routes_searches import summary_card
+    items = user_store.list_reference_items(ctx.db, list_id)
+    summaries = ctx.db.summaries_for_papers(i["paper"]["paper_id"] for i in items)
+    out: List[Dict[str, Any]] = [
+        summary_card(i["paper"], summaries[i["paper"]["paper_id"]], item_id=i["item_id"])
+        for i in items if i["paper"]["paper_id"] in summaries]
     out.sort(key=lambda r: r["created_at"], reverse=True)
     return {"summaries": out}
 
@@ -235,12 +220,7 @@ def export_summaries_pdf(list_id: int,
         if not items:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail="None of the ticked papers are in this list.")
-    summaries: Dict[int, Dict[str, Any]] = {}
-    for item in items:
-        pid = item["paper"]["paper_id"]
-        row = ctx.db.get_summary(pid)
-        if row:
-            summaries[pid] = row
+    summaries = ctx.db.summaries_for_papers(i["paper"]["paper_id"] for i in items)
     data = build_summaries_pdf(ref_list.get("name", ""), items, summaries)
     safe_name = reference_export.safe_filename(ref_list.get("name", "references"))
     return Response(

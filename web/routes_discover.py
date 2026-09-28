@@ -21,7 +21,9 @@ from src.llm_providers import LLMError, NoLLMCredentialError, ProviderResponseEr
 from .auth import current_user, get_context
 from .deps import AppContext
 from .routes_searches import record_failure
-from .routes_summaries import USAGE_KIND, _resolve_for
+from src import spend
+
+from .routes_summaries import _resolve_for, submit_billed
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -52,8 +54,9 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
     settings = discover_settings(ctx.llm_config)
 
     def work(job: Job) -> Dict[str, Any]:
-        provider_called = False
-        try:
+        # Settlement (spend or give the slot back; release the connection) is
+        # BilledCall's job, the same for every billed route (review M12).
+        with spend.BilledCall(ctx.db, user_id, resolved, usage_id, job) as call:
             job.phase = "Searching for papers"
             keywords = query_to_keywords(body.description, settings.stop_words)
             filter_dict: Dict[str, Any] = {
@@ -111,7 +114,7 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
             )
 
             job.phase = f"Asking {resolved.provider} ({len(papers)} papers found)"
-            provider_called = True
+            call.model_called()
             raw, usage = resolved.client.generate(prompt, context=_DISCOVER_SYSTEM_PROMPT)
             job.token_usage = usage
             try:
@@ -123,44 +126,6 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
                 ) from e
 
             return {"terms": terms, "papers_found": len(papers), "keywords": keywords}
-        except BaseException as exc:
-            # generate() raises on an unusable reply (a bad response shape, a
-            # refusal, no text block) — so the assignment above never ran and
-            # job.token_usage is still UNCOUNTED, while the response itself
-            # reported what the billed call cost. Recover it here or the
-            # settlement below writes tokens_counted = 0 for a call that spent
-            # real money.
-            #
-            # This route calls generate() directly rather than through
-            # summarize_paper, so it does not pass through _parsed_or_billed
-            # and needs its own recovery — the same sibling-path gap as the
-            # first gate finding, one level down (re-gate finding 1).
-            if not job.token_usage.counted:
-                carried = getattr(exc, "usage", None)
-                if carried is not None:
-                    job.token_usage = carried
-            raise
-        finally:
-            # Settle the owner-key slot on every exit — including the early
-            # return when no papers were found, which never calls the model.
-            # Same rule as summaries: given back only if the provider was never
-            # reached; a call that was made may have cost money.
-            try:
-                if provider_called:
-                    # What the call cost is recorded whichever key paid for it.
-                    # This used to settle only the owner's reserved slot and
-                    # record nothing at all for a user-key run, so discover
-                    # spend never reached the meter (gate finding 1).
-                    user_store.record_spend(ctx.db, user_id, USAGE_KIND,
-                                            resolved.provider, resolved.model,
-                                            resolved.key_source, usage_id,
-                                            job.token_usage)
-                elif usage_id is not None:
-                    user_store.release_usage(ctx.db, usage_id)
-            finally:
-                # Always, even if settling the slot raised: a pooled thread
-                # must not keep its connection.
-                ctx.db.release()
 
     return work
 
@@ -176,20 +141,14 @@ def discover_terms(body: DiscoverRequest,
     if not query_to_keywords(body.description, settings.stop_words).strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Describe what you are looking for in a few words first.")
-    try:
-        resolved, usage_id = _resolve_for(ctx, user_id,
-                                          inline_key=body.api_key,
-                                          inline_provider=body.provider,
-                                          inline_model=body.model)
-    except NoLLMCredentialError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=str(exc)) from exc
-    except LLMError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail=str(exc)) from exc
-
-    job = ctx.jobs.submit(JOB_KIND, user_id,
-                          _run_discover(ctx, user_id, body, resolved, usage_id))
+    resolved, usage_id = _resolve_for(ctx, user_id, inline_key=body.api_key,
+                                      inline_provider=body.provider,
+                                      inline_model=body.model)
+    job = submit_billed(ctx, JOB_KIND, user_id,
+                        _run_discover(ctx, user_id, body, resolved, usage_id),
+                        usage_id, key=("discover",))
+    if not hasattr(job, "to_dict"):
+        return job                                   # the 409 response
     payload = job.to_dict()
     payload["provider"] = resolved.provider
     payload["model"] = resolved.model

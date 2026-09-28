@@ -100,7 +100,8 @@ def test_an_undecryptable_stored_key_does_not_silently_spend_the_owners(
     monkeypatch.setenv("KEY_ENC_SECRET", "a-completely-different-long-secret")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-owner")
 
-    r = signed_in.post("/api/summaries", json={"paper": {"title": "t", "abstract": "a"}})
+    r = signed_in.post("/api/summaries", json={"paper": {"title": "t", "abstract": "a",
+                                                          "doi": "10.1/t"}})
     assert r.status_code == 503
     assert "could not be read" in r.json()["detail"]
 

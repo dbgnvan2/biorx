@@ -41,6 +41,27 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_WORKERS = 4
 DEFAULT_TTL_SECONDS = 3600
 
+# Worker pools by lane (review A14). Searches can hold a thread for minutes
+# (many pages from many sources); with one shared pool a few searches queued
+# every summary behind them. Sizes come from llm_config.yaml `jobs:`.
+SEARCH_LANE = "search"
+MODEL_LANE = "model"
+DEFAULT_LANES = {SEARCH_LANE: 2, MODEL_LANE: 3}
+SEARCH_KINDS = ("search", "filter_test")
+
+
+class JobAlreadyRunning(Exception):
+    """A job with the same key is already queued or running for this owner.
+
+    Purpose: One billed run per paper / list, one search per user (review A7, A14).
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A7, #A14
+    Tests:   tests/web/test_jobs.py::test_a14_one_search_per_user
+    """
+
+    def __init__(self, job: "Job"):
+        super().__init__(f"a {job.kind} job is already running ({job.id})")
+        self.job = job
+
 
 class JobStatus:
     QUEUED = "queued"
@@ -147,39 +168,89 @@ class Job:
 class JobRegistry:
     """Submit, poll, cancel and expire background jobs."""
 
-    def __init__(self, max_workers: int = DEFAULT_MAX_WORKERS,
-                 ttl_seconds: int = DEFAULT_TTL_SECONDS):
+    def __init__(self, max_workers: Optional[int] = None,
+                 ttl_seconds: int = DEFAULT_TTL_SECONDS,
+                 lanes: Optional[Dict[str, int]] = None):
+        """max_workers, when given, sizes every lane (tests use it); otherwise
+        `lanes` (from llm_config.yaml) or DEFAULT_LANES."""
         self._jobs: Dict[str, Job] = {}
+        self._keys: Dict[str, Any] = {}        # job id -> (owner, key)
         self._expired: "OrderedDict[str, str]" = OrderedDict()   # job id -> owner
         self._lock = threading.Lock()
-        self._pool = ThreadPoolExecutor(
-            max_workers=max_workers, thread_name_prefix="biorx-job"
-        )
+        sizes = dict(DEFAULT_LANES)
+        sizes.update(lanes or {})
+        if max_workers is not None:
+            sizes = {lane: max_workers for lane in sizes}
+        self._pools = {lane: ThreadPoolExecutor(max_workers=max(1, int(n)),
+                                                thread_name_prefix=f"biorx-{lane}")
+                       for lane, n in sizes.items()}
         self.ttl_seconds = ttl_seconds
 
     # ── Submission ────────────────────────────────────────────────────────────
 
     def submit(self, kind: str, owner: str,
                work: Callable[[Job], Any],
-               on_finish: Optional[Callable[[Job], None]] = None) -> Job:
+               on_finish: Optional[Callable[[Job], None]] = None,
+               key: Any = None,
+               on_never_ran: Optional[Callable[[Job], None]] = None) -> Job:
         """Queue `work(job)` and return the Job immediately.
 
         `work` receives its own Job so it can report progress and check
         job.should_stop(). Its return value becomes job.result.
+
+        key: jobs of one owner with the same key do not overlap — a second
+        submit raises JobAlreadyRunning carrying the running job (A7/A14).
+        on_never_ran: called if `work` never starts — the job was cancelled
+        while queued (every redeploy), or the pool refused it — so whatever
+        the route reserved for it (an allowance slot) can be given back (A14).
         """
         self._expire_old()
         job = Job(id=uuid.uuid4().hex, kind=kind, owner=owner)
         with self._lock:
+            if key is not None:
+                for jid, (o, k) in self._keys.items():
+                    other = self._jobs.get(jid)
+                    if o == owner and k == key and other is not None \
+                            and other.status not in TERMINAL:
+                        raise JobAlreadyRunning(other)
+                self._keys[job.id] = (owner, key)
             self._jobs[job.id] = job
-        self._pool.submit(self._run, job, work, on_finish)
+        lane = SEARCH_LANE if kind in SEARCH_KINDS else MODEL_LANE
+        pool = self._pools.get(lane) or next(iter(self._pools.values()))
+        try:
+            pool.submit(self._run, job, work, on_finish, on_never_ran)
+        except RuntimeError:
+            # The pool is shut down (the app is stopping).
+            job.status = JobStatus.CANCELLED
+            job.finished_at = time.time()
+            if on_never_ran is not None:
+                on_never_ran(job)
+            raise
         return job
 
+    def running(self, owner: str) -> List["Job"]:
+        """This owner's queued or running jobs, with the key each was submitted
+        under (as job_key), so a reloaded page can show what is still going (A7)."""
+        with self._lock:
+            out = []
+            for jid, job in self._jobs.items():
+                if job.owner == owner and job.status not in TERMINAL:
+                    job_key = self._keys.get(jid, (None, None))[1]
+                    out.append((job, job_key))
+        return out
+
     def _run(self, job: Job, work: Callable[[Job], Any],
-             on_finish: Optional[Callable[[Job], None]]) -> None:
+             on_finish: Optional[Callable[[Job], None]],
+             on_never_ran: Optional[Callable[[Job], None]] = None) -> None:
         """The worker body. Everything is inside the guard, including setup."""
         try:
             if job.cancelled:
                 job.status = JobStatus.CANCELLED
+                if on_never_ran is not None:
+                    try:
+                        on_never_ran(job)
+                    except Exception:
+                        logger.exception("Job %s never-ran hook failed", job.id)
                 return
             job.status = JobStatus.RUNNING
             result = work(job)
@@ -220,6 +291,9 @@ class JobRegistry:
         as UNKNOWN, not as a permission error, so a guessed id cannot confirm
         that someone else's job exists.
         """
+        # Expire here too, not only on submit: finished results (up to
+        # thousands of papers) otherwise stay in memory until the next submit.
+        self._expire_old()
         with self._lock:
             job = self._jobs.get(job_id)
             expired_owner = self._expired.get(job_id)
@@ -273,6 +347,7 @@ class JobRegistry:
             for jid in stale:
                 self._expired[jid] = self._jobs[jid].owner
                 del self._jobs[jid]
+                self._keys.pop(jid, None)
             while len(self._expired) > EXPIRED_MEMORY:
                 self._expired.popitem(last=False)
         if stale:
@@ -291,7 +366,8 @@ class JobRegistry:
         for job in list(self._jobs.values()):
             if job.status not in TERMINAL:
                 job.request_cancel()
-        self._pool.shutdown(wait=False)
+        for pool in self._pools.values():
+            pool.shutdown(wait=False)
         if not wait:
             return False
 

@@ -14,11 +14,19 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import pytest
 
+from src.tokens import UNCOUNTED
+
 from src import user_store
 
 PAPER = {"title": "Generative Agents", "abstract": "Interactive simulacra.",
          "doi": "10.1234/agents", "canonical_id": "arxiv:1"}
 SUMMARY = {"key_findings": ["f"], "methodology": "m", "conclusions": "c"}
+
+
+def _paper(n):
+    """A distinct paper. Since review M26 a paper that already has a full-text
+    summary gets it back free, so a test of the cap needs a new paper per run."""
+    return dict(PAPER, doi=f"10.1234/agents-{n}", canonical_id=f"doi:10.1234/agents-{n}")
 
 
 
@@ -56,18 +64,18 @@ def _await(client, job_id, timeout=5):
 
 def _ok_client():
     c = MagicMock()
-    c.summarize_paper.return_value = SUMMARY
+    c.summarize_paper.return_value = (SUMMARY, UNCOUNTED)   # the (summary, usage) pair
     return c
 
 
 def test_owner_key_summaries_are_capped_per_user_per_day(signed_in, owner_key, no_pdf):
     with patch("src.llm_providers.build_client", return_value=_ok_client()):
         for i in range(3):
-            r = signed_in.post("/api/summaries", json={"paper": PAPER})
+            r = signed_in.post("/api/summaries", json={"paper": _paper(i)})
             assert r.status_code == 202, f"request {i} was refused early"
             _await(signed_in, r.json()["job_id"])
 
-        refused = signed_in.post("/api/summaries", json={"paper": PAPER})
+        refused = signed_in.post("/api/summaries", json={"paper": _paper(3)})
 
     assert refused.status_code == 429
     detail = refused.json()["detail"]
@@ -120,14 +128,14 @@ def test_one_users_spending_does_not_cap_another(ctx, app, owner_key, no_pdf):
 
     with patch("src.llm_providers.build_client", return_value=_ok_client()):
         alice.post("/api/session", json=account_body(ACCESS_CODE))
-        for _ in range(3):
-            r = alice.post("/api/summaries", json={"paper": PAPER})
+        for n in range(3):
+            r = alice.post("/api/summaries", json={"paper": _paper(n)})
             _await(alice, r.json()["job_id"])
         assert alice.post("/api/summaries",
-                          json={"paper": PAPER}).status_code == 429
+                          json={"paper": _paper(3)}).status_code == 429
 
         bob.post("/api/session", json=account_body(ACCESS_CODE))
-        assert bob.post("/api/summaries", json={"paper": PAPER}).status_code == 202
+        assert bob.post("/api/summaries", json={"paper": _paper(4)}).status_code == 202
 
 
 def test_usage_rows_never_contain_a_key(ctx, signed_in, owner_key, no_pdf):
@@ -163,14 +171,17 @@ def test_the_cap_holds_against_simultaneous_requests(app, owner_key, no_pdf):
     codes_lock = threading.Lock()
     start = threading.Event()
 
-    def fire():
+    def fire(n):
         start.wait(timeout=5)
-        r = client.post("/api/summaries", json={"paper": PAPER})
+        # A different paper each: since review A7 a second run for the same
+        # paper is answered 409, which would hide what this test measures.
+        paper = dict(PAPER, doi=f"10.1/cap{n}", canonical_id=f"doi:10.1/cap{n}")
+        r = client.post("/api/summaries", json={"paper": paper})
         with codes_lock:
             codes.append(r.status_code)
 
     with patch("src.llm_providers.build_client", return_value=_ok_client()):
-        threads = [threading.Thread(target=fire) for _ in range(8)]
+        threads = [threading.Thread(target=fire, args=(n,)) for n in range(8)]
         for t in threads:
             t.start()
         start.set()
@@ -220,3 +231,58 @@ def test_a_slot_is_kept_when_the_provider_itself_failed(ctx, signed_in, owner_ke
         _await(signed_in, r.json()["job_id"])
 
     assert signed_in.get("/api/me").json()["owner_summaries_remaining"] == 2
+
+
+
+def test_m26_a_reused_summary_costs_no_allowance(signed_in, owner_key, no_pdf):
+    """The same paper again gets its stored summary back without a model call,
+    so it must not use a slot of the day's allowance."""
+    with patch("src.llm_providers.build_client", return_value=_ok_client()):
+        for _ in range(5):
+            r = signed_in.post("/api/summaries", json={"paper": PAPER})
+            assert r.status_code == 202
+            _await(signed_in, r.json()["job_id"])
+    assert signed_in.get("/api/me").json()["owner_summaries_remaining"] == 2
+
+
+def test_a14_a_summary_cancelled_at_shutdown_gives_its_slot_back(ctx, signed_in, owner_key, no_pdf):
+    """Review A14: on a redeploy, queued jobs are cancelled before they start.
+    The allowance slot reserved for one must come back."""
+    import threading
+    from src.jobs import JobRegistry
+    ctx.jobs = JobRegistry(lanes={"search": 1, "model": 1})
+    gate = threading.Event()
+    blocker = ctx.jobs.submit("review", "someone-else", lambda j: gate.wait(5))
+    with patch("src.llm_providers.build_client", return_value=_ok_client()):
+        r = signed_in.post("/api/summaries", json={"paper": _paper(9)})
+    assert r.status_code == 202
+    assert signed_in.get("/api/me").json()["owner_summaries_remaining"] == 2   # reserved
+    ctx.jobs.shutdown(wait=False)
+    gate.set()
+    deadline = time.time() + 5
+    while time.time() < deadline and \
+            signed_in.get("/api/me").json()["owner_summaries_remaining"] != 3:
+        time.sleep(0.02)
+    assert signed_in.get("/api/me").json()["owner_summaries_remaining"] == 3
+
+
+def test_a7_duplicate_job_409(ctx, signed_in, owner_key):
+    """Review A7: a second Summarize for a paper whose run is still going gets
+    the running job back, and no second slot is spent."""
+    import threading
+    gate = threading.Event()
+
+    def slow(_ctx, paper, outcome=None, by_title=None):
+        gate.wait(5)
+        return _full_text(_ctx, paper, outcome, by_title)
+
+    with patch("web.routes_summaries._extract_text", side_effect=slow), \
+         patch("src.llm_providers.build_client", return_value=_ok_client()):
+        first = signed_in.post("/api/summaries", json={"paper": _paper(1)})
+        second = signed_in.post("/api/summaries", json={"paper": _paper(1)})
+        assert first.status_code == 202
+        assert second.status_code == 409
+        assert second.json()["job_id"] == first.json()["job_id"]
+        assert signed_in.get("/api/me").json()["owner_summaries_remaining"] == 2
+        gate.set()
+        _await(signed_in, first.json()["job_id"])

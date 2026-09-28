@@ -307,9 +307,13 @@ def test_an_expired_job_is_410_not_404(ctx, signed_in):
     ctx.orchestrator = _fake_orchestrator()
     ctx.jobs.ttl_seconds = 0
     job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
-    _await_status(signed_in, job_id)
-    signed_in.post("/api/searches", json={"filter": FILTER})     # triggers the sweep
+    # With a zero TTL the job expires as soon as it finishes; since review A14
+    # a poll sweeps too, so no second submit is needed to see the 410.
+    deadline = time.time() + 5
     r = signed_in.get(f"/api/searches/{job_id}")
+    while r.status_code == 200 and time.time() < deadline:
+        time.sleep(0.01)
+        r = signed_in.get(f"/api/searches/{job_id}")
     assert r.status_code == 410
     assert "run it again" in r.json()["detail"]
 
@@ -407,3 +411,51 @@ def test_b5_license_filter_sees_enriched_license(ctx, signed_in):
     assert [r["doi"] for r in results] == ["10.1/a"]
     assert body["matched"] == 1
     assert sorted(c.args[0].doi for c in orch._unpaywall.enrich.call_args_list) == ["10.1/a", "10.1/b"]
+
+
+# ── M11: summaries for many papers in a few queries, one card shape ──────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M11
+
+def test_m11_summaries_bulk_query_count(ctx):
+    from src.jobs import Job
+    from web.routes_searches import _job_summaries
+    papers = [{"doi": f"10.9/{i}", "canonical_id": f"doi:10.9/{i}", "title": f"P{i}"}
+              for i in range(2000)]
+    for p in papers[:300]:
+        pid = ctx.db.insert_paper(p)
+        ctx.db.insert_summary(pid, summary_text="", key_findings=["f"], source_text="full_text")
+    job = Job(id="j", kind="search", owner="u")
+    job.result = papers
+    statements = []
+    ctx.db.conn.set_trace_callback(statements.append)
+    try:
+        items, summaries = _job_summaries(ctx, job)
+    finally:
+        ctx.db.conn.set_trace_callback(None)
+    assert len(items) == 2000 and len(summaries) == 300
+    selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+    # Chunks of 500 (SQLite's bound-parameter limit): 4 by DOI + 4 by
+    # canonical_id + 1 for the summaries. It was ~3 queries per result (~6000).
+    import math
+    assert len(selects) <= 2 * math.ceil(2000 / 500) + math.ceil(300 / 500), len(selects)
+
+
+def test_m11_card_identical_across_endpoints(ctx, signed_in):
+    from src.jobs import JobStatus
+    me = signed_in.get("/api/me").json()["user_id"]
+    paper = {"doi": "10.9/card", "canonical_id": "doi:10.9/card", "title": "Card"}
+    pid = ctx.db.insert_paper(paper)
+    ctx.db.insert_summary(pid, summary_text="", key_findings=["f"], methodology="m",
+                          conclusions="c", model_version="mv", source_text="full_text")
+    job = ctx.jobs.submit("search", me, lambda j: [dict(paper)])
+    for _ in range(200):
+        if job.status == JobStatus.DONE:
+            break
+        time.sleep(0.01)
+    from_search = signed_in.get(f"/api/searches/{job.id}/summaries").json()["summaries"]
+    lst = signed_in.post(f"/api/searches/{job.id}/save-as-list", json={"name": "Cards"}).json()
+    from_list = signed_in.get(f"/api/references/{lst['id']}/summaries").json()["summaries"]
+    assert len(from_search) == len(from_list) == 1
+    list_card = dict(from_list[0])
+    list_card.pop("item_id")
+    assert list_card == from_search[0]

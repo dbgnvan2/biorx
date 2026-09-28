@@ -235,3 +235,17 @@ def non_article_kind(config: Dict[str, Any], title: str) -> str:
         if prefix and lowered.startswith(prefix):
             return prefix
     return ""
+
+
+def job_lanes(config: Dict[str, Any]) -> Dict[str, int]:
+    """Purpose: Worker-pool sizes per job lane, from llm_config.yaml `jobs:`.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A14
+    Tests:   tests/web/test_jobs.py::test_a14_lanes_from_config
+    """
+    jobs = (config or {}).get("jobs") or {}
+    out = {}
+    for lane, key in (("search", "search_workers"), ("model", "model_workers")):
+        value = jobs.get(key)
+        if isinstance(value, int) and value > 0:
+            out[lane] = value
+    return out

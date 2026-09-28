@@ -920,6 +920,48 @@ class Database:
             logger.error(f"Database error updating paper path: {e}")
             return False
 
+    # SQLite's default limit on bound parameters is 999; stay well under it.
+    _IN_CHUNK = 500
+
+    def summaries_for_papers(self, paper_ids) -> Dict[int, Dict[str, Any]]:
+        """Stored summaries for many papers at once, keyed by paper id.
+
+        Purpose: One query per 500 papers instead of one per paper (review M11).
+        Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#M11
+        Tests:   tests/web/test_searches_routes.py::test_m11_summaries_bulk_query_count
+        """
+        ids = [int(i) for i in dict.fromkeys(paper_ids) if i is not None]
+        out: Dict[int, Dict[str, Any]] = {}
+        for start in range(0, len(ids), self._IN_CHUNK):
+            chunk = ids[start:start + self._IN_CHUNK]
+            marks = ",".join("?" * len(chunk))
+            for row in self.conn.execute(
+                    f"SELECT * FROM summaries WHERE paper_id IN ({marks})", chunk):
+                result = dict(row)
+                if result.get("key_findings"):
+                    result["key_findings"] = json.loads(result["key_findings"])
+                out[result["paper_id"]] = result
+        return out
+
+    def find_paper_ids(self, papers) -> List[Optional[int]]:
+        """Stored row ids for many papers, in order, by DOI first and
+        canonical_id second (as find_paper). None where not stored (M11)."""
+        papers = list(papers)
+        dois = [str(p.get("doi") or "").strip() for p in papers]
+        cids = [str(p.get("canonical_id") or "").strip() for p in papers]
+        by_doi: Dict[str, int] = {}
+        by_cid: Dict[str, int] = {}
+        for column, values, into in (("doi", dois, by_doi), ("canonical_id", cids, by_cid)):
+            wanted = [v for v in dict.fromkeys(values) if v]
+            for start in range(0, len(wanted), self._IN_CHUNK):
+                chunk = wanted[start:start + self._IN_CHUNK]
+                marks = ",".join("?" * len(chunk))
+                for row in self.conn.execute(
+                        f"SELECT id, {column} FROM papers WHERE {column} IN ({marks})", chunk):
+                    into[row[1]] = row[0]
+        return [by_doi.get(d) if d and d in by_doi else (by_cid.get(c) if c else None)
+                for d, c in zip(dois, cids)]
+
     def get_summary(self, paper_id: int) -> Optional[Dict[str, Any]]:
         """
         Get summary for a paper.

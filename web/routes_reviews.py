@@ -20,13 +20,15 @@ from pydantic import BaseModel, Field
 
 from src import review as review_builder
 from src import user_store
-from src.jobs import Job
+from src.jobs import Job, JobLookup
 from src.llm_providers import LLMError
 
 from .auth import current_user, get_context
 from .deps import AppContext
 from .routes_references import _get_list_or_404, _parse_item_ids
-from .routes_summaries import USAGE_KIND, _resolve_for
+from src import spend
+
+from .routes_summaries import _resolve_for, submit_billed
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,10 @@ class ReviewRequest(BaseModel):
     model: str = Field(default="", max_length=200)
 
 
+class NothingToReviewError(Exception):
+    """The selected papers have neither a summary nor an abstract."""
+
+
 def _max_prompt_chars(config: Dict[str, Any]) -> int:
     """The cap on the combined prompt, from config rather than a literal (P4)."""
     value = (config or {}).get("review_max_prompt_chars")
@@ -57,20 +63,15 @@ def _gather_for(ctx: AppContext, list_id: int, item_ids: Optional[set]):
     items = user_store.list_reference_items(ctx.db, list_id)
     if item_ids is not None:
         items = [i for i in items if i.get("item_id") in item_ids]
-    summaries = {}
-    for item in items:
-        paper_id = item["paper"]["paper_id"]
-        row = ctx.db.get_summary(paper_id)
-        if row:
-            summaries[paper_id] = row
+    summaries = ctx.db.summaries_for_papers(i["paper"]["paper_id"] for i in items)
     return items, review_builder.gather(items, summaries)
 
 
 def _run_review(ctx: AppContext, user_id: str, body: ReviewRequest, resolved,
                 usage_id: Optional[int] = None):
     def work(job: Job) -> Dict[str, Any]:
-        provider_called = False
-        try:
+        # Settlement is BilledCall's job, the same for every billed route (M12).
+        with spend.BilledCall(ctx.db, user_id, resolved, usage_id, job) as call:
             job.phase = "Reading the stored summaries"
             items, gathered = _gather_for(ctx, body.list_id,
                                           _parse_item_ids(body.item_ids or None))
@@ -80,14 +81,15 @@ def _run_review(ctx: AppContext, user_id: str, body: ReviewRequest, resolved,
             if not built["included"]:
                 # Nothing to synthesize. Said plainly, and no model is called —
                 # a review of nothing would be invention.
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="None of these papers have a summary or an abstract "
-                           "stored, so there is nothing to review yet.")
+                # A domain error, not HTTPException: this runs in a worker, and
+                # the user saw "HTTPException: 400: …" (review M1).
+                raise NothingToReviewError(
+                    "None of these papers have a summary or an abstract "
+                    "stored, so there is nothing to review yet.")
 
             job.total = len(built["included"])
             job.phase = f"Asking {resolved.provider} about {job.total} papers"
-            provider_called = True
+            call.model_called()
             text, usage = resolved.client.generate(
                 built["prompt"], context=review_builder.SYSTEM_PROMPT)
             job.token_usage = usage
@@ -112,26 +114,6 @@ def _run_review(ctx: AppContext, user_id: str, body: ReviewRequest, resolved,
                 "provider": resolved.provider,
                 "model": resolved.model,
             }
-        except BaseException as exc:
-            # generate() raises carrying what the billed call cost; recover it
-            # so a failed review is not recorded as costing nothing (the same
-            # rule as summaries and discover).
-            if not job.token_usage.counted:
-                carried = getattr(exc, "usage", None)
-                if carried is not None:
-                    job.token_usage = carried
-            raise
-        finally:
-            try:
-                if provider_called:
-                    user_store.record_spend(ctx.db, user_id, USAGE_KIND,
-                                            resolved.provider, resolved.model,
-                                            resolved.key_source, usage_id,
-                                            job.token_usage)
-                elif usage_id is not None:
-                    user_store.release_usage(ctx.db, usage_id)
-            finally:
-                ctx.db.release()
 
     return work
 
@@ -142,10 +124,15 @@ def start_review(body: ReviewRequest,
                  user_id: str = Depends(current_user)):
     """Queue a cross-paper review of one saved list."""
     _get_list_or_404(ctx, user_id, body.list_id)
+    # _resolve_for maps a missing key to 400 and a provider problem to 503 —
+    # this route used to let them become a bare 500 (review M1).
     resolved, usage_id = _resolve_for(ctx, user_id, body.api_key.strip(),
                                       body.provider, body.model)
-    job = ctx.jobs.submit(JOB_KIND, user_id,
-                          _run_review(ctx, user_id, body, resolved, usage_id))
+    job = submit_billed(ctx, JOB_KIND, user_id,
+                        _run_review(ctx, user_id, body, resolved, usage_id),
+                        usage_id, key=("review", body.list_id))
+    if not hasattr(job, "to_dict"):
+        return job                                   # the 409 response
     payload = job.to_dict()
     payload.update(provider=resolved.provider, model=resolved.model,
                    key_source=resolved.key_source)
@@ -157,10 +144,10 @@ def review_status(job_id: str,
                   ctx: AppContext = Depends(get_context),
                   user_id: str = Depends(current_user)):
     job, reason = ctx.jobs.lookup(job_id, user_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail=reason or "No such job.")
-    if job.kind != JOB_KIND:
+    if reason == JobLookup.EXPIRED:
+        raise HTTPException(status_code=status.HTTP_410_GONE,
+                            detail="That review has expired — run it again.")
+    if job is None or job.kind != JOB_KIND:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No such job.")
     payload = job.to_dict()

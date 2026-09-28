@@ -73,7 +73,7 @@ def test_the_lifespan_shuts_the_job_pool_and_database_down(app):
     ctx = app.state.ctx
     with TestClient(app):
         pass
-    assert ctx.jobs._pool._shutdown is True
+    assert all(pool._shutdown for pool in ctx.jobs._pools.values())
 
 
 def test_shutdown_waits_for_a_running_worker_before_the_database_closes(ctx):

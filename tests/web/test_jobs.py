@@ -260,3 +260,88 @@ def test_fr3_2_poll_payload_has_counts():
               enriched=2, enrich_total=3)
     d = job.to_dict()
     assert (d["fetched"], d["matched"], d["enriched"], d["enrich_total"]) == (150, 3, 2, 3)
+
+
+# ── A14: lanes, one search per user, never-ran hooks, expiry on poll ─────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#A14, #A7
+
+def test_a14_cancelled_before_start_releases_slot():
+    r = JobRegistry(max_workers=1)
+    gate = threading.Event()
+    released = []
+    blocker = r.submit("summary", "u", lambda j: gate.wait(5))
+    queued = r.submit("summary", "u", lambda j: "never", on_never_ran=released.append)
+    r.shutdown(wait=False)
+    gate.set()
+    _settled(queued)
+    assert queued.status == JobStatus.CANCELLED
+    assert released == [queued]
+    _settled(blocker)
+
+
+def test_a14_submit_failure_releases_slot():
+    r = JobRegistry(max_workers=1)
+    r.shutdown(wait=True)
+    released = []
+    with pytest.raises(RuntimeError):
+        r.submit("summary", "u", lambda j: None, on_never_ran=released.append)
+    assert len(released) == 1
+
+
+def test_a14_one_search_per_user():
+    from src.jobs import JobAlreadyRunning
+    r = JobRegistry(max_workers=2)
+    gate = threading.Event()
+    first = r.submit("search", "alice", lambda j: gate.wait(5), key=("search",))
+    with pytest.raises(JobAlreadyRunning) as err:
+        r.submit("filter_test", "alice", lambda j: None, key=("search",))
+    assert err.value.job is first
+    other = r.submit("search", "bob", lambda j: None, key=("search",))   # another user
+    gate.set()
+    _settled(first)
+    _settled(other)
+    again = r.submit("search", "alice", lambda j: None, key=("search",))  # after it ends
+    _settled(again)
+
+
+def test_a14_model_jobs_not_blocked_by_searches():
+    r = JobRegistry(lanes={"search": 1, "model": 1})
+    gate = threading.Event()
+    s1 = r.submit("search", "a", lambda j: gate.wait(5))
+    s2 = r.submit("search", "b", lambda j: gate.wait(5))          # queued behind s1
+    summary = r.submit("summary", "c", lambda j: "done")
+    _settled(summary, timeout=2)
+    assert summary.status == JobStatus.DONE and summary.result == "done"
+    gate.set()
+    _settled(s1)
+    _settled(s2)
+
+
+def test_a14_expiry_on_lookup():
+    r = JobRegistry(max_workers=1, ttl_seconds=0)
+    job = r.submit("search", "u", lambda j: [1] * 1000)
+    _settled(job)
+    found, reason = r.lookup(job.id, "u")
+    assert found is None and reason == JobLookup.EXPIRED
+    assert job.id not in r._jobs            # the results are no longer held
+
+
+def test_a14_lanes_from_config():
+    from src.llm_config import job_lanes
+    assert job_lanes({"jobs": {"search_workers": 5, "model_workers": 7}}) == {"search": 5, "model": 7}
+    assert job_lanes({}) == {}
+    r = JobRegistry(lanes={"search": 5})
+    assert r._pools["search"]._max_workers == 5 and r._pools["model"]._max_workers == 3
+
+
+def test_a7_running_jobs_listed(signed_in, ctx):
+    gate = threading.Event()
+    me = signed_in.get("/api/me").json()["user_id"]
+    ctx.jobs.submit("summary", me, lambda j: gate.wait(5), key=("paper", "10.1/x"))
+    ctx.jobs.submit("review", me, lambda j: gate.wait(5), key=("review", 7))
+    try:
+        jobs = signed_in.get("/api/jobs/running").json()["jobs"]
+        assert sorted((j["kind"], j.get("paper"), j.get("list_id")) for j in jobs) == \
+            [("review", None, 7), ("summary", "10.1/x", None)]
+    finally:
+        gate.set()

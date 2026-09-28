@@ -12,11 +12,9 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from src import user_store
-from src.crypto import KeyEncryptionUnavailable
+from src import spend, user_store
 from src.jobs import Job, JobLookup
-from src.llm_config import non_article_kind, summary_daily_cap
-from src.llm_providers import LLMError, NoLLMCredentialError, resolve_client
+from src.llm_providers import LLMError, NoLLMCredentialError  # noqa: F401 (re-exported)
 from src.paper_meta import pdf_url, recover_abstract
 
 from .auth import current_user, get_context
@@ -44,85 +42,52 @@ class SummaryRequest(BaseModel):
     find_by_title: Optional[bool] = None
 
 
-# Every model call the web app makes is logged and capped under this one kind.
-# Discover shares it deliberately: it draws on the same daily allowance as a
-# summary, and _resolve_for is the shared admission gate for both. Logging the
-# two under different kinds would put one action in the log under two names
-# depending on who paid for it, and would take discover out of the cap's count.
-# Splitting them into separate budgets is a deliberate change, not a side
-# effect of token accounting — see TODO.
-USAGE_KIND = "summary"
+# Admission and settlement live in src/spend.py (review M12). These wrappers
+# turn its refusals into HTTP answers for every route that spends.
+USAGE_KIND = spend.USAGE_KIND
 
 
 def resolve_credentials(ctx: AppContext, user_id: str, inline_key: str = "",
                         inline_provider: str = "", inline_model: str = ""):
-    """Which client would run for this user, reserving nothing.
-
-    Split out of _resolve_for so anything that needs to know who would pay —
-    the pre-spend estimate, above all — asks the same question the spend path
-    asks. A second copy of this logic answered it differently for a key held
-    only in localStorage: the estimate named the wrong payer, showed an
-    allowance that did not apply, and could refuse a run the user's own key
-    would have paid for (gate 2026-09-21 finding 1). A surface that lies about
-    who is being charged is the one thing a spend dialog must never do.
-    """
-    if inline_key.strip():
-        # Inline path: key comes from localStorage, no server storage required.
-        return resolve_client(user_provider=inline_provider,
-                              user_key=inline_key.strip(),
-                              user_model=inline_model, config=ctx.llm_config)
-
+    """Which client would run for this user, reserving nothing (spend.resolve_credentials)."""
     try:
-        provider, key = user_store.get_llm_key(ctx.db, user_id)
-    except KeyEncryptionUnavailable as e:
-        # A stored key that will not decrypt must not silently fall through to
-        # the owner's credential (learnings P2).
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Your stored key could not be read: {e}",
-        ) from e
-
-    user_data = user_store.get_user(ctx.db, user_id) or {}
-    return resolve_client(user_provider=provider, user_key=key,
-                          user_model=user_data.get("preferred_model") or "",
-                          config=ctx.llm_config)
+        return spend.resolve_credentials(ctx.db, ctx.llm_config, user_id, inline_key,
+                                         inline_provider, inline_model)
+    except spend.SpendRefused as e:
+        raise HTTPException(status_code=e.status, detail=str(e)) from e
 
 
 def _resolve_for(ctx: AppContext, user_id: str,
                  inline_key: str = "", inline_provider: str = "",
                  inline_model: str = ""):
-    """Resolve this user's LLM client, honouring the owner-key spend cap.
+    """Resolve and admit a billed call (spend.admit): 400 no key, 429 cap, 503."""
+    try:
+        return spend.admit(ctx.db, ctx.llm_config, user_id, inline_key,
+                           inline_provider, inline_model)
+    except spend.SpendRefused as e:
+        raise HTTPException(status_code=e.status, detail=str(e)) from e
 
-    The cap exists because the access code is shared: without it, anyone holding
-    the code can spend the owner's credential without limit. A user on their own
-    key is not capped.
 
-    inline_key, when provided, is used directly without touching the database.
-    It is never stored — it travels from the browser's localStorage per-request.
+def submit_billed(ctx: AppContext, kind: str, user_id: str, work, usage_id,
+                  key=None):
+    """Queue a billed job, or answer 409 with the running one (review A7).
+
+    The reserved slot is given back if the job never runs, or if it is refused
+    here (review A14).
     """
-    resolved = resolve_credentials(ctx, user_id, inline_key, inline_provider,
-                                   inline_model)
-    if not resolved.billed_to_owner:
-        return resolved, None
-
-    usage_id = None
-    if resolved.billed_to_owner:
-        cap = summary_daily_cap(ctx.llm_config)
-        # Reserve the slot here, atomically. Reading the count now and writing
-        # the usage row after the job finishes is a check-then-act race: a burst
-        # of requests all observe the same count and all pass.
-        usage_id = user_store.reserve_owner_usage(
-            ctx.db, user_id, USAGE_KIND, cap, resolved.provider, resolved.model
-        )
-        if usage_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=(
-                    f"You have used today's {cap} summaries on the shared key. "
-                    "Add your own API key in LLM settings to continue."
-                ),
-            )
-    return resolved, usage_id
+    from fastapi.responses import JSONResponse
+    from src.jobs import JobAlreadyRunning
+    try:
+        return ctx.jobs.submit(kind, user_id, work, key=key,
+                               on_never_ran=lambda _j: spend.release_unused(ctx.db, usage_id))
+    except JobAlreadyRunning as e:
+        spend.release_unused(ctx.db, usage_id)
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={
+            "detail": f"This {kind} is already running — its result will show when it is done.",
+            "job_id": e.job.id})
+    except RuntimeError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="The server is restarting — try again in a minute.") from e
 
 
 # The finders' HTTP (OpenAlex, Semantic Scholar, Unpaywall). None = the real
@@ -192,9 +157,7 @@ def _run_summary(ctx: AppContext, user_id: str, ref: Dict[str, str], resolved,
                                summarize_paper)
 
     def work(job: Job) -> Dict[str, Any]:
-        provider_called = False
-        recorded = False
-        try:
+        with spend.BilledCall(ctx.db, user_id, resolved, usage_id, job) as call:
             job.phase = "Looking up the paper"
             try:
                 paper = resolve_paper(
@@ -215,8 +178,7 @@ def _run_summary(ctx: AppContext, user_id: str, ref: Dict[str, str], resolved,
                 return text, outcome.get("full_text", ""), outcome.get("text_source", "")
 
             def model_call():
-                nonlocal provider_called
-                provider_called = True
+                call.model_called()
                 job.phase = f"Summarizing with {resolved.provider}"
 
             def recover(p):
@@ -231,14 +193,6 @@ def _run_summary(ctx: AppContext, user_id: str, ref: Dict[str, str], resolved,
                 on_phase=lambda m: setattr(job, "phase", m),
                 on_model_call=model_call,
                 on_usage=lambda u: setattr(job, "token_usage", u))
-
-            if provider_called:
-                user_store.record_spend(ctx.db, user_id, USAGE_KIND, resolved.provider,
-                                        resolved.model, resolved.key_source,
-                                        usage_id, job.token_usage)
-                recorded = True
-            elif usage_id is not None:
-                user_store.release_usage(ctx.db, usage_id)   # nothing was spent
 
             result: Dict[str, Any] = {
                 "paper_id": outcome.paper_id,
@@ -263,27 +217,6 @@ def _run_summary(ctx: AppContext, user_id: str, ref: Dict[str, str], resolved,
                 result.update(provider=resolved.provider, model=resolved.model,
                               key_source=resolved.key_source)
             return result
-        except BaseException as exc:
-            # The slot was reserved at admission. Give it back only when the
-            # provider was never reached — a failure after the call may still
-            # have cost money, and a cap is a spend ceiling, not an attempt
-            # counter.
-            if not provider_called:
-                if usage_id is not None:
-                    user_store.release_usage(ctx.db, usage_id)
-            elif not recorded:
-                # The model ran and was billed. The summary is lost; the record
-                # of what it cost must not be (M1.B.3). A provider that raises
-                # on an unusable reply carries the usage on the exception.
-                spent = job.token_usage
-                if not spent.counted:
-                    spent = getattr(exc, "usage", None) or spent
-                user_store.record_spend(ctx.db, user_id, USAGE_KIND,
-                                        resolved.provider, resolved.model,
-                                        resolved.key_source, usage_id, spent)
-            raise
-        finally:
-            ctx.db.release()
 
     return work
 
@@ -302,32 +235,23 @@ def start_summary(body: SummaryRequest,
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"That paper is larger than {MAX_PAPER_BYTES:,} bytes.",
         )
-    try:
-        resolved, usage_id = _resolve_for(ctx, user_id,
-                                           inline_key=body.api_key,
-                                           inline_provider=body.provider,
-                                           inline_model=body.model)
-    except NoLLMCredentialError as e:
-        # The "no key at all" case (D2): a clean, actionable error, not a crash
-        # and not a job that fails opaquely a minute later.
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=str(e)) from e
-    except LLMError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail=str(e)) from e
-
     from src.summarize import paper_ref
     ref = paper_ref(body.paper)
     if not ref["doi"] and not ref["canonical_id"]:
-        if usage_id is not None:
-            user_store.release_usage(ctx.db, usage_id)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="The paper has no DOI or id, so it cannot be looked up.")
+    resolved, usage_id = _resolve_for(ctx, user_id, inline_key=body.api_key,
+                                      inline_provider=body.provider,
+                                      inline_model=body.model)
     # Only the paper's identity is taken from the request (review A1); its
-    # content comes from the server's own copy, resolved in the job.
-    job = ctx.jobs.submit("summary", user_id,
-                          _run_summary(ctx, user_id, ref, resolved, usage_id,
-                                       find_by_title=body.find_by_title))
+    # content comes from the server's own copy, resolved in the job. One run
+    # per paper per user at a time (review A7).
+    job = submit_billed(ctx, "summary", user_id,
+                        _run_summary(ctx, user_id, ref, resolved, usage_id,
+                                     find_by_title=body.find_by_title),
+                        usage_id, key=("paper", ref["doi"] or ref["canonical_id"]))
+    if not hasattr(job, "to_dict"):
+        return job                                   # the 409 response
     payload = job.to_dict()
     payload["provider"] = resolved.provider
     payload["model"] = resolved.model

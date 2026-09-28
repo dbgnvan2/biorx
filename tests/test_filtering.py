@@ -142,3 +142,14 @@ def test_b4_wildcard_escapes_regex_characters():
     from src.filtering import match_term
     assert match_term("c++*", "a c++ library")
     assert not match_term("a.b*", "axb")
+
+
+def test_m11_normalised_filter_is_not_normalised_again():
+    """Batch-1 gate note 1 (folded into M11): the enrichment gate calls
+    filter_papers once per record with a filter normalised up front."""
+    from unittest.mock import patch
+    from src import filtering
+    f = filtering.without_license({"text_groups": [{"both": "x"}], "license": "cc_by"})
+    assert f["license"] == "any"
+    with patch.object(filtering, "normalise_filter", side_effect=AssertionError("again")):
+        assert filtering.filter_papers([{"title": "x", "abstract": ""}], f, normalised=True)

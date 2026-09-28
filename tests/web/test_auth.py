@@ -26,7 +26,9 @@ PUBLIC = {
 # The exact number of authenticated operations. An exact count, not a floor:
 # a floor stays satisfied while the route table halves (learnings P29). Update
 # this deliberately when a route is added or removed.
-PROTECTED_ROUTE_COUNT = 40   # + GET /api/vocabulary (review S3): served to
+PROTECTED_ROUTE_COUNT = 41   # + GET /api/jobs/running (review A7): one user's
+                             # own jobs
+                             # + GET /api/vocabulary (review S3): served to
                              # the signed-in page with the filter editor
                              # + the four review routes (M4): POST /api/reviews,
                              # GET /api/reviews/{job}, and the stored-review and
