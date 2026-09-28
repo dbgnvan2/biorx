@@ -79,8 +79,12 @@ ROOT = Path(__file__).parent.parent.parent
 #   enrichment errors, unreadable records, outages raised, dedup surnames; the
 #   Europe PMC pubTypeList fix. Plan docs/implementation_plan_2026-09-28_review_fixes.md
 #   — W1.a required)
+# Updated from 493288a → eb2302d (review 2026-09-28 batch 2, A1: arxiv.py gains a
+#   working get_by_id (id_list) and crossref.py a record_for_doi, so the summary
+#   route can look a paper up server-side instead of trusting the request body
+#   — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "493288a"
+BASELINE = "eb2302d"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
