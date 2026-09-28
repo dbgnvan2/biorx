@@ -1,0 +1,151 @@
+# Filter vocabulary: the options each filter facet offers, and what they match.
+#
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#S3, #B5
+# Read by src/filter_vocabulary.py. The web page builds its dropdowns from this
+# file (GET /api/vocabulary), and the search code compares stored ids, never
+# display labels, so a label can be reworded here without changing what any
+# saved filter means.
+#
+# Each option: id (stored in the filter), label (shown), and for facets matched
+# against a paper, `match`: the record values it accepts.
+# `legacy` maps values saved by earlier versions to an id. A legacy value
+# mapped to null has no equivalent any more: it is dropped with a warning.
+# Every facet has an "any" option meaning "no restriction".
+
+paper_type:
+  # Matched against the record's document_type, which the source adapters set
+  # to article | review | trial | preprint | other.
+  options:
+    - {id: any,      label: "(any)"}
+    - {id: article,  label: "Research article", match: [article]}
+    - {id: review,   label: "Review",           match: [review]}
+    - {id: trial,    label: "Clinical trial",   match: [trial]}
+    - {id: preprint, label: "Preprint",         match: [preprint]}
+  # How a source's own publication types map to document_type. The first rule
+  # with a matching word wins; a record matching none is "other". Europe PMC
+  # and PubMed send a list (pubTypeList), e.g. ["Review", "Journal Article"].
+  source_types:
+    - {document_type: preprint, contains: [preprint]}
+    - {document_type: review,   contains: [review, meta-analysis]}
+    - {document_type: trial,    contains: [clinical trial, controlled trial]}
+    - {document_type: article,  contains: [journal article, research-article]}
+  legacy:
+    "(any)": any
+    "review article": review
+    # bioRxiv-only article types. No current source reports them.
+    "new results": null
+    "confirmatory results": null
+    "contradictory results": null
+
+version:
+  options:
+    - {id: any,     label: "(any)"}
+    - {id: first,   label: "1 (first submission only)"}
+    - {id: revised, label: "2+ (revised only)"}
+  legacy:
+    "(any)": any
+    "1 (first submission only)": first
+    "2+ (revised only)": revised
+
+published:
+  options:
+    - {id: any,      label: "(any)"}
+    - {id: preprint, label: "Preprints only (not in a journal)"}
+    - {id: journal,  label: "Published in a journal only"}
+  legacy:
+    "(any)": any
+    "preprints only (not in journal)": preprint
+    "published in journal only": journal
+
+license:
+  # A record's licence string is reduced to one of these ids before matching
+  # (src/filter_vocabulary.py license_id). Creative Commons strings and URLs
+  # are parsed; the aliases below cover the other spellings sources use.
+  options:
+    - {id: any,         label: "(any)"}
+    - {id: cc-by,       label: "CC BY"}
+    - {id: cc-by-sa,    label: "CC BY-SA"}
+    - {id: cc-by-nc,    label: "CC BY-NC"}
+    - {id: cc-by-nc-sa, label: "CC BY-NC-SA"}
+    - {id: cc-by-nd,    label: "CC BY-ND"}
+    - {id: cc-by-nc-nd, label: "CC BY-NC-ND"}
+    - {id: cc0,         label: "CC0 (public domain dedication)"}
+    - {id: pd,          label: "Public domain"}
+    - {id: none,        label: "No reuse licence"}
+  legacy:
+    "(any)": any
+    cc_by: cc-by
+    cc_by_nc: cc-by-nc
+    cc_by_nd: cc-by-nd
+    cc_no: none
+    pd: pd
+  aliases:
+    # Record licence strings (lowercased, trimmed) that are not Creative
+    # Commons names or URLs.
+    "public-domain": pd
+    "public domain": pd
+    "pd": pd
+    "cc_no": none
+    "no license": none
+    "no licence": none
+    "all rights reserved": none
+
+species:
+  # Applied by the Europe PMC and PubMed queries only.
+  options:
+    - {id: any,       label: "(any)"}
+    - {id: human,     label: "Human studies only"}
+    - {id: no-animal, label: "Exclude animal studies"}
+    - {id: animal,    label: "Animal studies only"}
+  legacy:
+    "(any)": any
+    "Human studies only": human
+    "Exclude animal studies": no-animal
+    "Animal studies only": animal
+  # Europe PMC's ANIMAL:y flag misses many animal studies, so "human" and
+  # "no-animal" also exclude these organisms by name.
+  excluded_organisms:
+    - Mus musculus
+    - Rattus norvegicus
+    - Mouse
+    - Rat
+    - Zebrafish
+    - Danio rerio
+    - Drosophila melanogaster
+    - Caenorhabditis elegans
+    - Macaca mulatta
+
+category:
+  # bioRxiv subject categories, sent to the bioRxiv/medRxiv API as they are.
+  # Other sources ignore this facet.
+  options:
+    - {id: any, label: "(any)"}
+    - {id: animal behavior and cognition, label: "animal behavior and cognition"}
+    - {id: biochemistry, label: "biochemistry"}
+    - {id: bioengineering, label: "bioengineering"}
+    - {id: bioinformatics, label: "bioinformatics"}
+    - {id: biophysics, label: "biophysics"}
+    - {id: cancer biology, label: "cancer biology"}
+    - {id: cell biology, label: "cell biology"}
+    - {id: clinical trials, label: "clinical trials"}
+    - {id: developmental biology, label: "developmental biology"}
+    - {id: ecology, label: "ecology"}
+    - {id: epidemiology, label: "epidemiology"}
+    - {id: evolutionary biology, label: "evolutionary biology"}
+    - {id: genetics, label: "genetics"}
+    - {id: genomics, label: "genomics"}
+    - {id: immunology, label: "immunology"}
+    - {id: microbiology, label: "microbiology"}
+    - {id: molecular biology, label: "molecular biology"}
+    - {id: neuroscience, label: "neuroscience"}
+    - {id: paleontology, label: "paleontology"}
+    - {id: pathology, label: "pathology"}
+    - {id: pharmacology and toxicology, label: "pharmacology and toxicology"}
+    - {id: physiology, label: "physiology"}
+    - {id: plant biology, label: "plant biology"}
+    - {id: scientific communication and education, label: "scientific communication and education"}
+    - {id: synthetic biology, label: "synthetic biology"}
+    - {id: systems biology, label: "systems biology"}
+    - {id: zoology, label: "zoology"}
+  legacy:
+    "(any)": any

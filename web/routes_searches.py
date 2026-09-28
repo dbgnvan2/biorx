@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from src import user_store
-from src.filtering import filter_papers, normalise_filter
+from src.filtering import filter_papers, normalise_filter, without_license
 from src.filters_store import EMPTY_FILTER_MESSAGE, filter_has_text
 from src.jobs import Job, JobLookup
 
@@ -123,6 +123,9 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
     """
     # The query builders read the canonical shape too, not only filter_papers.
     filter_dict = normalise_filter(filter_dict)
+    # Enrichment supplies the licence for many papers, so the licence is
+    # checked once enrichment has run, not as pages arrive (review B5).
+    pre_enrichment = without_license(filter_dict)
 
     def work(job: Job) -> List[Dict[str, Any]]:
         # Matched records are kept as objects and turned into dicts only after
@@ -134,7 +137,7 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
 
         def on_batch(records):
             papers = [r.to_dict() for r in records]
-            kept = {id(p) for p in filter_papers(papers, filter_dict)}
+            kept = {id(p) for p in filter_papers(papers, pre_enrichment)}
             for record, paper in zip(records, papers):
                 if id(paper) in kept:
                     matched.append(record)
@@ -173,7 +176,9 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
         finally:
             # This job ran on a pool thread that took a database connection.
             ctx.db.release()
-        return [r.to_dict() for r in matched]
+        results = filter_papers([r.to_dict() for r in matched], filter_dict)
+        job.matched = len(results)
+        return results
 
     return work
 

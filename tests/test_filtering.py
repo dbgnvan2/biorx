@@ -116,3 +116,29 @@ def test_gui_uses_the_shared_implementation():
     import gui
     assert gui._filter_papers is filter_papers
     assert gui._text_group_matches is text_group_matches
+
+
+# ── B4: a wildcard is a word prefix, not a text prefix ───────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B4
+# match_term used text.startswith(prefix), so "adolescen*" matched only titles
+# that begin with it and dropped "Stress in adolescents" on every front end.
+
+def test_b4_wildcard_matches_mid_title():
+    from src.filtering import filter_papers
+    paper = {"title": "Stress in adolescents", "abstract": ""}
+    f = {"text_groups": [{"title": "adolescen*", "abstract": "", "both": ""}]}
+    assert filter_papers([paper], f) == [paper]
+
+
+def test_b4_wildcard_does_not_match_inside_word():
+    """Adversarial: the prefix inside a longer word is not a word prefix."""
+    from src.filtering import match_term
+    assert not match_term("adolescen*", "preadolescent children")
+    assert match_term("adolescen*", "pre-adolescent children")   # hyphen is a word break
+    assert match_term("adolescen*", "adolescence")
+
+
+def test_b4_wildcard_escapes_regex_characters():
+    from src.filtering import match_term
+    assert match_term("c++*", "a c++ library")
+    assert not match_term("a.b*", "axb")

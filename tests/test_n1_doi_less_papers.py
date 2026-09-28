@@ -238,11 +238,28 @@ def test_n1_a_real_arxiv_record_round_trips_through_the_database(db):
         "abstract": "We study…", "authors": ["A. Park"], "published": "2026-09-10",
         "categories": ["cs.AI"],
     }).to_dict()
-    assert record["doi"] == ""
+    assert record["doi"] == "10.48550/arXiv.2609.01234"     # review M22
 
     pid = db.insert_paper(record)
     assert pid is not None
     assert db.find_paper(record)["id"] == pid
+
+
+def test_m22_arxiv_row_saved_without_doi_is_found_by_the_record_with_one(db):
+    """Rows stored before review M22 have no DOI. The same paper now arrives
+    with its DataCite DOI; it must resolve to the old row, not add a second."""
+    from src.sources.arxiv import ArxivAdapter
+    raw = {"arxiv_id_full": "2609.01234v2", "title": "Generative agents at scale",
+           "authors": ["A. Park"], "published": "2026-09-10"}
+    old = ArxivAdapter().normalize(raw).to_dict()
+    old["doi"] = ""
+    old_id = db.insert_paper(old)
+    assert old_id is not None
+
+    new = ArxivAdapter().normalize(raw).to_dict()
+    assert db.insert_paper(new) is None                 # not a second row
+    assert db.find_paper(new)["id"] == old_id
+    assert db.conn.execute("SELECT COUNT(*) FROM papers").fetchone()[0] == 1
 
 
 def test_n1_canonical_id_is_uniquely_indexed_on_a_clean_database(db):

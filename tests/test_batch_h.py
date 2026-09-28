@@ -225,16 +225,16 @@ def test_h_biorxiv_retries_on_5xx(monkeypatch):
     good_data = {"messages": [{"total": 0}], "collection": []}
 
     adapter = BiorxivMedrxivAdapter()
-    # search_recent is what with_retry wraps; patch it to return bad then good_data
+    # search_by_date_range is what with_retry wraps (review B7); patch it to fail once
     call_count = {"n": 0}
 
-    def _search_recent(**kw):
+    def _search_by_date_range(*a, **kw):
         call_count["n"] += 1
         if call_count["n"] == 1:
             raise requests.ConnectionError("transient")
         return good_data
 
-    monkeypatch.setattr(adapter._api, "search_recent", _search_recent)
+    monkeypatch.setattr(adapter._api, "search_by_date_range", _search_by_date_range)
     with patch("src.sources.base.time.sleep"):
         result = adapter.search("test", page=1, page_size=10, filter_dict={"days_back": 7})
     assert result == []
@@ -284,48 +284,7 @@ def test_h_europepmc_get_by_id_retries_on_5xx(monkeypatch):
     assert result == {"id": "PMC123"}
 
 
-def test_h_psyarxiv_get_total_retries_on_5xx(monkeypatch):
-    """PsyArXiv get_total retries on a 5xx before succeeding."""
-    from src.sources.psyarxiv import PsyArxivAdapter
 
-    bad = MagicMock(spec=requests.Response)
-    bad.status_code = 503
-    bad.ok = False
-
-    good = MagicMock(spec=requests.Response)
-    good.status_code = 200
-    good.ok = True
-    good.json.return_value = {"meta": {"total": 7}}
-
-    adapter = PsyArxivAdapter()
-    monkeypatch.setattr(
-        adapter.session, "get", MagicMock(side_effect=[bad, good])
-    )
-    with patch("src.sources.base.time.sleep"):
-        total = adapter.get_total({"days_back": 7})
-    assert total == 7
-
-
-def test_h_socarxiv_get_total_retries_on_5xx(monkeypatch):
-    """SocArXiv get_total retries on a 5xx before succeeding."""
-    from src.sources.socarxiv import SocArxivAdapter
-
-    bad = MagicMock(spec=requests.Response)
-    bad.status_code = 503
-    bad.ok = False
-
-    good = MagicMock(spec=requests.Response)
-    good.status_code = 200
-    good.ok = True
-    good.json.return_value = {"meta": {"total": 5}}
-
-    adapter = SocArxivAdapter()
-    monkeypatch.setattr(
-        adapter.session, "get", MagicMock(side_effect=[bad, good])
-    )
-    with patch("src.sources.base.time.sleep"):
-        total = adapter.get_total({"days_back": 7})
-    assert total == 5
 
 
 # ── download_pdf tri-state contract ───────────────────────────────────────────

@@ -57,6 +57,12 @@ full_text:
   # PDFs fetched per paper at most (each can take up to 30 s).
   max_downloads: 4
 
+# OSF preprint servers (PsyArXiv, SocArXiv) are asked for each title term
+# separately when every OR group of a filter has one. Above this many distinct
+# terms they are searched by date only and the filter is applied here.
+osf:
+  max_title_terms: 8
+
 # What the web app tells users when a source fails during a search, by the
 # failure kind the orchestrator reports. Wording only — edit freely.
 failure_explanations:
@@ -64,3 +70,4 @@ failure_explanations:
   error: "failed with an unexpected error (details are in the server log)"
   rate-limited: "is limiting how fast it can be searched; results from it are incomplete — try again in a few minutes"
   partial: "stopped responding part-way; results from it are incomplete"
+  truncated: "had more results than Max results allows; only the first ones were read — raise Max results or narrow the filter"

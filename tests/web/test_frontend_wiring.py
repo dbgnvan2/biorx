@@ -36,9 +36,13 @@ def _element_ids_in_html() -> set:
 def _ids_used_by_js() -> set:
     """Ids the client looks up, via its $() helper or getElementById."""
     source = APP_JS.read_text()
+    # The filter editor's facet selects are looked up through the FACET_FIELDS
+    # table (review S3), so their ids are read from it.
+    table = re.search(r"const FACET_FIELDS = \[(.*?)\];", source, re.DOTALL)
+    facet_ids = set(re.findall(r'\[\s*"([\w-]+)",', table.group(1))) if table else set()
     return set(re.findall(r'\$\("([^"]+)"\)', source)) | set(
         re.findall(r'getElementById\("([^"]+)"\)', source)
-    )
+    ) | facet_ids
 
 
 def _api_paths_called_by_js() -> set:
@@ -150,6 +154,7 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/references/{param}/review-preview",
         "/api/references/{param}/save",
         "/api/me/llm-model",
+        "/api/vocabulary",
         "/api/filters",
         "/api/filters/{param}",
         "/api/filters/{param}/test",
@@ -495,7 +500,8 @@ def test_fe2_filter_dict_uses_server_key_names():
     code = _js_without_comments()
     build = re.search(r"function buildFilterDict\(\) \{.*?\n\}", code, re.DOTALL).group(0)
     manual = re.search(r"function manualFilter\(\) \{.*?\n\}", code, re.DOTALL).group(0)
-    assert 'institution: $("filter-institution").value.trim()' in build
+    # Institution is gone from the editor: no source reports it (review B5).
+    assert "institution" not in build
     for body in (build, manual):
         assert "f.start_date" in body and "f.end_date" in body
         assert "f.date_from" not in body and "f.date_to" not in body
@@ -1831,7 +1837,7 @@ async function api(method, path, body) {
 const job = (status) => ({ status, fetched: 3, matched: 0, phase: "", sources_failed: [] });
 function notice() {} function renderSummariesPanel() {} function renderResults() {}
 function refreshSearchSummaries() {} function failedSourcesText() { return ""; }
-function populateCategorySelect() {} function getSourceSelection() { return { all: true }; }
+async function populateFacetSelect() {} function getSourceSelection() { return { all: true }; }
 const POLL_MS = 1000;
 const POLL_GIVE_UP = 8;
 globalThis.setInterval = () => 1; globalThis.clearInterval = () => {};
@@ -2391,3 +2397,80 @@ def test_ah1_the_placeholder_reads_as_an_example():
     html = (Path(__file__).parent.parent.parent / "web" / "static" / "index.html").read_text()
     tag = re.search(r'<input id="q-both"[^>]*>', html).group(0)
     assert 'placeholder="e.g. ' in tag
+
+
+# ── S3: facet dropdowns come from /api/vocabulary ────────────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#S3
+# The page kept its own copies of the option lists and stored display labels;
+# rewording one silently changed what saved filters matched.
+
+_SELECT_DOM = """
+const els = {};
+function makeSelect() {
+  const sel = { options: [], value: "",
+    appendChild(o) { this.options.push(o); if (this.options.length === 1) this.value = o.value; } };
+  Object.defineProperty(sel, "value", {
+    get() { return this._v ?? ""; },
+    set(v) { this._v = this.options.some(o => o.value === v) ? v : ""; } });
+  return sel;
+}
+const $ = id => (els[id] = els[id] || makeSelect());
+const document = { createElement: () => ({ value: "", textContent: "" }) };
+const notices = []; function notice(m) { notices.push(m); }
+const ANY = "any";
+"""
+
+
+
+def test_s3_dropdowns_built_from_vocabulary():
+    from src import filter_vocabulary
+    import json, shutil, subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    vocab = json.dumps(filter_vocabulary.for_client())
+    script = "\n".join([
+        _SELECT_DOM,
+        f"async function api(method, path) {{ if (path === '/api/vocabulary') return {vocab}; throw new Error(path); }}",
+        _js_block(r"let vocabPromise = null;.*?\nfunction vocabulary\(\) \{.*?\n\}"),
+        _js_block(r"async function populateFacetSelect\(selectId, facet\) \{.*?\n\}"),
+        "(async () => { await populateFacetSelect('filter-species', 'species');"
+        " console.log(JSON.stringify($('filter-species').options.map(o => [o.value, o.textContent]))); })();",
+    ])
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert out.returncode == 0, out.stderr
+    opts = json.loads(out.stdout)
+    assert opts[0] == ["any", "(any)"]
+    assert ["no-animal", "Exclude animal studies"] in opts
+
+
+def test_s3_stored_id_not_offered_is_kept_not_reset():
+    """Adversarial: an id the list lacks must survive a round trip, not become "any"."""
+    got = _node_eval(
+        [_SELECT_DOM, _js_block(r"function setFacetValue\(sel, value\) \{.*?\n\}")],
+        '(() => { const s = $("filter-license"); s.appendChild({value: "any", textContent: "(any)"});'
+        ' setFacetValue(s, "cc-by-sa"); const kept = s.value;'
+        ' setFacetValue(s, ""); return [kept, s.value]; })()')
+    assert got == ["cc-by-sa", "any"]
+
+
+def test_s3_failed_vocabulary_load_is_reported_and_retried():
+    import json, shutil, subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    script = "\n".join([
+        _SELECT_DOM,
+        "let calls = 0; async function api() { calls += 1; throw new Error('offline'); }",
+        _js_block(r"let vocabPromise = null;.*?\nfunction vocabulary\(\) \{.*?\n\}"),
+        "(async () => { const a = await vocabulary(); const b = await vocabulary();"
+        " console.log(JSON.stringify([a, b, calls, notices.length])); })();",
+    ])
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == [None, None, 2, 2]
+
+
+def test_s3_no_vocabulary_literals_in_app_js():
+    code = APP_JS.read_text()
+    for lit in ('"review article"', '"Human studies only"', '"cc_by"', '"(any)"',
+                '"2+ (revised only)"', '"evolutionary biology"'):
+        assert lit not in code, lit

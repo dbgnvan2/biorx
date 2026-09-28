@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.sources.orchestrator import SourceOrchestrator, FAILURE_STATUS_MARKER, _SOURCE_LABELS
 from src.sources.config import load_sources_config
-from src.filtering import filter_papers
+from src.filtering import filter_papers, without_license
 from src.filters_store import EMPTY_FILTER_MESSAGE, filter_has_text
 
 logger = logging.getLogger(__name__)
@@ -116,6 +116,7 @@ def run_search(
         return []
 
     source_selection = filter_dict.get("source_selection", {"all": True})
+    pre_enrichment = without_license(filter_dict)
 
     print(f"[{filter_name}] Searching...", file=sys.stderr)
 
@@ -141,7 +142,9 @@ def run_search(
         on_status=on_status,
         max_results=max_results,
         # Only papers the filter keeps are worth two HTTP calls (plan C2).
-        enrich_only=lambda r: bool(filter_papers([r.to_dict()], filter_dict)),
+        # The licence is left out here: enrichment is what supplies it for
+        # many papers, and the full filter runs below (review B5).
+        enrich_only=lambda r: bool(filter_papers([r.to_dict()], pre_enrichment)),
         on_enrich_problem=on_enrich_problem,
     )
 

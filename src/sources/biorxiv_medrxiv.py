@@ -18,8 +18,13 @@ from .base import RawRecord, with_retry
 from .schema import CanonicalRecord, AuthorRecord, SourceHit, RecordFlags, make_canonical_id
 from .errors import SourceUnavailableError, RateLimitedError
 from .config import polite_user_agent
+from .query_builder import get_date_range
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_SERVERS = ("biorxiv", "medrxiv")
+SERVER_LABELS = {"biorxiv": "bioRxiv", "medrxiv": "medRxiv"}
+API_PAGE_SIZE = 100    # the details endpoint returns 100 papers per cursor
 
 
 class BiorxivMedrxivAdapter:
@@ -29,50 +34,81 @@ class BiorxivMedrxivAdapter:
     source_trust_weight = 0.75
 
     def __init__(self, timeout: int = 30, sources_config: dict | None = None):
+        self.timeout = timeout
         self.sources_config = sources_config or {}
+        self.last_page_size = 0
+        self.last_total = 0
+        self._totals: Dict[str, int] = {}
+        self._exhausted: set = set()
         from src.biorxiv_api import BioRxivAPI
         self._api = BioRxivAPI(timeout=timeout, user_agent=polite_user_agent(self.sources_config))
+
+    def for_search(self) -> "BiorxivMedrxivAdapter":
+        """A new instance (and HTTP session) for one search (review B6)."""
+        return type(self)(timeout=self.timeout, sources_config=self.sources_config)
+
+    def _servers(self) -> List[str]:
+        cfg = (self.sources_config.get("biorxiv_medrxiv") or {})
+        servers = cfg.get("servers") or list(DEFAULT_SERVERS)
+        return [s for s in servers if s in DEFAULT_SERVERS]
 
     def search(
         self, query: str, page: int = 1, page_size: int = 100,
         filter_dict: Optional[Dict[str, Any]] = None,
     ) -> Sequence[RawRecord]:
         """
-        Fetch bioRxiv papers for the date range in filter_dict.
+        Fetch one page of bioRxiv and medRxiv papers for the filter's date range.
 
-        The bioRxiv API is date-range based, not keyword-based.
-        Text filtering happens client-side via _filter_papers().
-        `query` is accepted but ignored for the API call.
+        Purpose: Search every configured server over the filter's own dates.
+        Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#B7
+        Tests:   tests/test_adapters.py::test_b7_date_range_used,
+                 tests/test_adapters.py::test_b7_medrxiv_queried,
+                 tests/test_adapters.py::test_b7_pages_through_each_server
 
-        Args:
-            query:       Ignored (bioRxiv uses date-range, not keywords).
-            page:        Page number (maps to cursor = (page-1) * page_size).
-            page_size:   Papers per page (bioRxiv returns 100/page).
-            filter_dict: Filter dict with days_back / category.
-
-        Returns:
-            List of raw bioRxiv paper dicts (already parsed by BioRxivAPI.parse_papers).
+        The API is date-range based, not keyword-based; text filtering happens
+        client-side. `query` is accepted but not sent. The API returns 100
+        papers per cursor, so `page` maps to cursor (page-1)*100 on each server,
+        and the page returned is the union of the servers' pages. A server
+        whose last page was short is not asked again.
         """
-        import requests
-
         fd = filter_dict or {}
-        days_back = fd.get("days_back", 7)
-        category  = fd.get("category", "(any)")
-        category  = None if category == "(any)" else category
-        cursor    = (page - 1) * 100
+        start_date, end_date = get_date_range(fd)
+        category = fd.get("category", "(any)")
+        category = None if category in ("(any)", "", None) else category
+        cursor = (page - 1) * API_PAGE_SIZE
+        if page == 1:
+            self._totals = {}
+            self._exhausted = set()
 
-        resp = with_retry(
-            lambda: self._api.search_recent(days=days_back, category=category,
-                                            server="biorxiv", cursor=cursor),
-            source_label="bioRxiv",
-        )
-        papers = self._api.parse_papers(resp)
-        # Attach total to each paper dict for progress reporting
-        msgs  = resp.get("messages", [{}])
-        total = int(msgs[0].get("total", 0)) if msgs else 0
-        for p in papers:
-            p["_total"] = total
-        return papers
+        out: List[RawRecord] = []
+        returned = 0
+        for server in self._servers():
+            if server in self._exhausted:
+                continue
+            resp = with_retry(
+                lambda: self._api.search_by_date_range(
+                    start_date, end_date, category=category, server=server, cursor=cursor),
+                source_label=SERVER_LABELS[server],
+            )
+            papers = self._api.parse_papers(resp)
+            msgs = resp.get("messages", [{}]) or [{}]
+            try:
+                self._totals[server] = int(msgs[0].get("total", 0) or 0)
+            except (TypeError, ValueError):
+                self._totals[server] = 0
+            if len(papers) < API_PAGE_SIZE:
+                self._exhausted.add(server)
+            for p in papers:
+                if not p.get("server"):
+                    p["server"] = server
+            returned += len(papers)
+            out.extend(papers)
+        total = sum(self._totals.values())
+        # Page-end detection uses what the servers sent, and the summed totals
+        # as the source's total (the orchestrator reads both).
+        self.last_page_size = returned
+        self.last_total = total
+        return out
 
     def get_by_id(self, identifier: str) -> Optional[RawRecord]:
         """Fetch a single bioRxiv paper by DOI (not efficiently supported)."""
@@ -90,8 +126,11 @@ class BiorxivMedrxivAdapter:
             for i, a in enumerate(authors_raw):
                 authors.append(AuthorRecord(display_name=str(a), sequence=i + 1))
         elif isinstance(authors_raw, str) and authors_raw:
+            # "Smith, J.; Doe, A.": surname before the comma.
             for i, name in enumerate(authors_raw.split(";")):
-                authors.append(AuthorRecord(display_name=name.strip(), sequence=i + 1))
+                name = name.strip()
+                family = name.split(",")[0].strip() if "," in name else ""
+                authors.append(AuthorRecord(display_name=name, sequence=i + 1, family=family))
 
         first_author = authors[0].display_name.split()[-1] if authors else ""
 
@@ -101,7 +140,7 @@ class BiorxivMedrxivAdapter:
         except (ValueError, IndexError):
             year = 0
 
-        server = raw.get("server", "biorxiv")
+        server = raw.get("server") or "biorxiv"
         source_url = ""
         if doi:
             source_url = f"https://www.{server}.org/content/{doi}v{version}"
@@ -136,4 +175,5 @@ class BiorxivMedrxivAdapter:
             )],
             flags=RecordFlags(fulltext_reusable=True),  # bioRxiv is freely accessible
             source_trust_weight=self.source_trust_weight,
+            version=version,        # review M18: the revised-only filter reads it
         )

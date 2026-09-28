@@ -14,6 +14,9 @@ class AuthorRecord:
     display_name: str
     orcid: str = ""
     sequence: int = 1
+    # Surname when the source gives it separately (Europe PMC lastName,
+    # Crossref family, bioRxiv "Surname, Initials"). Dedup reads it (M22).
+    family: str = ""
 
 
 @dataclass
@@ -54,9 +57,10 @@ class CanonicalRecord:
     source_hits: List[SourceHit]
     flags: RecordFlags
     source_trust_weight: float = 1.0
-    # Preprint version number as a string (e.g. "2" for arXiv v2). Empty string
-    # means unknown/unversioned; to_dict() falls back to "1" for display.
-    arxiv_version: str = ""
+    # Preprint version number as a string (e.g. "2" for arXiv v2 or a bioRxiv
+    # revision). Empty string means unknown/unversioned; to_dict() falls back
+    # to "1" for display. Was arxiv_version until review M18 (bioRxiv has one too).
+    version: str = ""
 
     # ── Serialization ─────────────────────────────────────────────────────────
 
@@ -71,7 +75,7 @@ class CanonicalRecord:
             "author_corresponding":           self.authors[0].display_name if self.authors else "",
             "author_corresponding_institution": "",
             "type":                           self.document_type,
-            "version":                        self.arxiv_version or "1",
+            "version":                        self.version or "1",
             "published":                      "NA" if self.is_preprint else self.journal_or_server or "published",
             "license":                        self.license,
             # Display / metadata fields
@@ -148,6 +152,7 @@ class CanonicalRecord:
             source_hits=hits,
             flags=flags,
             source_trust_weight=d.get("source_trust_weight", 1.0),
+            version=str(d.get("version") or ""),
         )
 
 

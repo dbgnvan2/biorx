@@ -46,14 +46,32 @@ def _norm_title(title: str) -> str:
     return t
 
 
+def _surname(author) -> str:
+    """The first author's surname, read the same way whatever the source.
+
+    Purpose: Make the title key agree across sources' name formats.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#M22
+    Tests:   tests/test_dedup.py::test_m22_cross_source_surname_match
+
+    Uses the separate surname when the source gave one; else "Surname, I."
+    means the part before the comma; else the last word ("John Smith").
+    """
+    name = (getattr(author, "family", "") or "").strip()
+    if not name:
+        display = author.display_name.strip()
+        if "," in display:
+            name = display.split(",")[0]
+        else:
+            parts = display.split()
+            name = parts[-1] if parts else ""
+    return re.sub(r"[^\w]", "", name.lower())
+
+
 def _title_key(record: CanonicalRecord) -> Optional[str]:
     """Generate the title + first_author + year dedup key."""
     if not record.title:
         return None
-    first_author = ""
-    if record.authors:
-        parts = record.authors[0].display_name.strip().split()
-        first_author = parts[-1].lower() if parts else ""
+    first_author = _surname(record.authors[0]) if record.authors else ""
     nt = _norm_title(record.title)
     return f"{nt}|{first_author}|{record.year}"
 

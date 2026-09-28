@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Sequence, Optional, Dict, Any, List
 import logging
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 
@@ -58,6 +59,13 @@ def _is_withdrawn(summary: str) -> bool:
     return m is not None and m.start() < _WITHDRAWN_SEARCH_WINDOW
 
 
+# arXiv asks for at least min_request_interval between requests from one
+# client. Adapter instances are per search (review B6), so the spacing is kept
+# here, shared by every instance in the process.
+_REQUEST_LOCK = threading.Lock()
+_last_request_time = 0.0
+
+
 class ArxivAdapter:
     """Search adapter for arXiv.org preprint repository."""
 
@@ -69,7 +77,6 @@ class ArxivAdapter:
         self.timeout = timeout
         self.min_request_interval = min_request_interval
         self.sources_config = sources_config or {}
-        self.last_request_time = 0.0
         self.last_total = 0
         # Entries present in the last page BEFORE withdrawn ones were removed.
         # The orchestrator uses page size to detect the last page, so it must see
@@ -77,6 +84,22 @@ class ArxivAdapter:
         # withdrawn paper on a full page ends pagination early).
         self.last_page_size = 0
         self.last_dropped_withdrawn = 0
+
+    def for_search(self) -> "ArxivAdapter":
+        """A new instance for one search (review B6)."""
+        return type(self)(timeout=self.timeout,
+                          min_request_interval=self.min_request_interval,
+                          sources_config=self.sources_config)
+
+    def _wait_turn(self) -> None:
+        """Block until min_request_interval has passed since the last arXiv
+        request from any thread, then claim the slot (review B6)."""
+        global _last_request_time
+        with _REQUEST_LOCK:
+            wait = _last_request_time + self.min_request_interval - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            _last_request_time = time.time()
 
     def search(
         self, query: str, page: int = 1, page_size: int = 50,
@@ -98,11 +121,6 @@ class ArxivAdapter:
             SourceUnavailableError: API unreachable or 5xx
             RateLimitedError: 429 with Retry-After
         """
-        # Enforce minimum request interval
-        now = time.time()
-        elapsed = now - self.last_request_time
-        if elapsed < self.min_request_interval:
-            time.sleep(self.min_request_interval - elapsed)
 
         url = "https://export.arxiv.org/api/query"
         start = (page - 1) * page_size
@@ -124,7 +142,7 @@ class ArxivAdapter:
         while attempts < max_attempts:
             attempts += 1
             try:
-                self.last_request_time = time.time()
+                self._wait_turn()
                 resp = requests.get(url, params=params, headers=headers, timeout=self.timeout)
 
                 # Handle 429 (rate limited)
@@ -280,7 +298,10 @@ class ArxivAdapter:
             document_type="preprint",
             is_preprint=True,
             journal_or_server="arXiv",
-            doi="",
+            # arXiv registers a DataCite DOI for every paper. Carrying it lets
+            # the copy another source indexes merge by DOI (review M22). The
+            # canonical_id stays arxiv:<id>, which stored lists refer to.
+            doi=f"10.48550/arXiv.{arxiv_id_no_version}" if arxiv_id_no_version else "",
             pmid="",
             pmcid="",
             source_url=f"https://arxiv.org/abs/{arxiv_id_full}",
@@ -297,5 +318,5 @@ class ArxivAdapter:
             )],
             flags=RecordFlags(fulltext_reusable=True),
             source_trust_weight=self.source_trust_weight,
-            arxiv_version=arxiv_version,
+            version=arxiv_version,
         )

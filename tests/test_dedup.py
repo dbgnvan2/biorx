@@ -133,3 +133,53 @@ def test_trust_weight_takes_maximum():
     d.add(r2)
     d.add(r1)
     assert d.results()[0].source_trust_weight == 1.0
+
+
+# ── M22: the title key's surname is read the same way for every source ───────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M22
+# The key took the last word of display_name: Europe PMC's "Smith J" gave "j",
+# bioRxiv's "Smith, J." gave "j.", arXiv's "John Smith" gave "smith", so the
+# same paper from two sources was never merged by title.
+
+def _raw_epmc(title):
+    return {"title": title, "pubYear": "2024", "pubType": "preprint",
+            "authorList": {"author": [{"fullName": "Smith J", "lastName": "Smith",
+                                       "firstName": "John"}]}}
+
+
+def test_m22_cross_source_surname_match():
+    from src.sources.dedup import Deduplicator
+    from src.sources.europepmc import EuropePmcAdapter
+    from src.sources.arxiv import ArxivAdapter
+    from src.sources.biorxiv_medrxiv import BiorxivMedrxivAdapter
+
+    title = "Agents That Simulate Societies"
+    epmc = EuropePmcAdapter().normalize(_raw_epmc(title))
+    arx = ArxivAdapter.__new__(ArxivAdapter).normalize({
+        "arxiv_id_full": "2401.00001v1", "title": title, "authors": ["John Smith"],
+        "published": "2024-01-02"})
+    bx = BiorxivMedrxivAdapter.__new__(BiorxivMedrxivAdapter).normalize({
+        "title": title, "authors": "Smith, J.; Doe, A.", "pub_date": "2024-01-03",
+        "server": "biorxiv"})
+    d = Deduplicator()
+    for r in (epmc, arx, bx):
+        d.add(r)
+    assert len(d) == 1, [r.source_hits[0].source for r in d.results()]
+
+
+def test_m22_different_title_not_merged():
+    """Adversarial: same surname and year, different paper."""
+    from src.sources.dedup import Deduplicator
+    from src.sources.europepmc import EuropePmcAdapter
+    d = Deduplicator()
+    d.add(EuropePmcAdapter().normalize(_raw_epmc("Agents That Simulate Societies")))
+    d.add(EuropePmcAdapter().normalize(_raw_epmc("Agents That Simulate Markets")))
+    assert len(d) == 2
+
+
+def test_m22_arxiv_record_carries_its_datacite_doi():
+    from src.sources.arxiv import ArxivAdapter
+    r = ArxivAdapter.__new__(ArxivAdapter).normalize({
+        "arxiv_id_full": "2401.00001v2", "title": "T"})
+    assert r.doi == "10.48550/arXiv.2401.00001"
+    assert r.canonical_id == "arxiv:2401.00001"     # stored references unchanged

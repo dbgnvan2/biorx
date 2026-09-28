@@ -114,11 +114,13 @@ LEGACY = {"text_groups": [{"keywords": "zebrafish"}], "date_from": "2020-01-01",
 
 
 def test_lf1_legacy_filter_is_served_in_canonical_shape(signed_in):
-    fid = signed_in.post("/api/filters", json={"name": "Old", "filter": LEGACY}).json()["id"]
+    # Institution is refused on save since review B5 (no source reports it);
+    # the legacy list form is covered by test_b5_stored_institution_is_ignored.
+    legacy = {k: v for k, v in LEGACY.items() if k != "institution"}
+    fid = signed_in.post("/api/filters", json={"name": "Old", "filter": legacy}).json()["id"]
     f = next(x for x in signed_in.get("/api/filters").json()["filters"] if x["id"] == fid)
     assert f["text_groups"] == [{"both": "zebrafish"}]
     assert (f["start_date"], f["end_date"]) == ("2020-01-01", "2020-12-31")
-    assert f["institution"] == "Harvard"
     assert "date_from" not in f
 
 
@@ -144,3 +146,44 @@ def test_lf2_run_search_normalises_before_querying(ctx):
     work(MagicMock(sources_failed=[]))
     assert seen["fd"]["text_groups"] == [{"both": "zebrafish"}]
     assert seen["fd"]["start_date"] == "2020-01-01"
+
+
+# ── S3 / B5: facet values the search cannot apply are refused on save ────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#S3, #B5
+
+@pytest.mark.parametrize("facet,value", [
+    ("paper_type", "editorial"),
+    ("license", "cc_by_4"),
+    ("species", "Plants only"),
+    ("version", "3"),
+])
+def test_s3_unknown_facet_value_refused(signed_in, facet, value):
+    body = {"name": "Bad facet", "filter": dict(FILTER, **{facet: value})}
+    r = signed_in.post("/api/filters", json=body)
+    assert r.status_code == 400
+    assert facet in r.json()["detail"]
+    fid = signed_in.post("/api/filters", json={"name": "Good", "filter": FILTER}).json()["id"]
+    assert signed_in.put(f"/api/filters/{fid}", json=dict(body, name="Good")).status_code == 400
+
+
+def test_s3_legacy_labels_and_ids_both_accepted(signed_in):
+    """The current page sends display labels; the new one sends ids."""
+    for extra in ({"paper_type": "review article", "license": "cc_by"},
+                  {"paper_type": "review", "license": "cc-by"}):
+        r = signed_in.post("/api/filters", json={"name": str(extra), "filter": dict(FILTER, **extra)})
+        assert r.status_code == 201, r.json()
+        assert (r.json()["paper_type"], r.json()["license"]) == ("review", "cc-by")
+
+
+def test_b5_institution_refused(signed_in):
+    r = signed_in.post("/api/filters", json={
+        "name": "Inst", "filter": dict(FILTER, institution="Harvard")})
+    assert r.status_code == 400
+    assert "institution" in r.json()["detail"]
+
+
+def test_s3_vocabulary_served(signed_in):
+    from src import filter_vocabulary
+    body = signed_in.get("/api/vocabulary").json()
+    assert body == filter_vocabulary.for_client()
+    assert {"id": "no-animal", "label": "Exclude animal studies"} in body["species"]

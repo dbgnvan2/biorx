@@ -52,7 +52,9 @@ def test_filter_is_enabled(f, expected):
     ({"text_groups": [{"title": "", "abstract": "", "both": "   "}]}, False),
     ({"text_groups": []}, False),
     ({"text_groups": [], "authors": ["Park"]}, True),
-    ({"text_groups": [], "institution": "Stanford"}, True),
+    # No source reports institutions, so normalise_filter drops the field and an
+    # institution-only filter has nothing to search for (review B5).
+    ({"text_groups": [], "institution": "Stanford"}, False),
     ({"text_groups": [], "authors": [], "institution": ""}, False),
 ])
 def test_filter_has_text(f, expected):

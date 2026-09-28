@@ -15,7 +15,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from src import user_store
+from src import filter_vocabulary, user_store
 
 from .auth import current_user, get_context
 from .deps import AppContext
@@ -31,6 +31,30 @@ class FilterBody(BaseModel):
     filter: Dict[str, Any] = Field(default_factory=dict)
 
 
+def refuse_unusable_facets(filter_dict: Dict[str, Any]) -> None:
+    """Purpose: Refuse a filter whose facets the search cannot apply.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#S3, #B5
+    Tests:   tests/web/test_filters_routes.py::test_s3_unknown_facet_value_refused,
+             tests/web/test_filters_routes.py::test_b5_institution_refused
+
+    An unknown value used to fall through as "no restriction", so the filter
+    silently matched more than it said; an institution matched nothing.
+    """
+    problems = filter_vocabulary.problems(filter_dict)
+    if problems:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="This filter cannot be saved: " + "; ".join(problems))
+
+
+@router.get("/api/vocabulary")
+def get_vocabulary(user_id: str = Depends(current_user)):
+    """Purpose: The options for each filter facet, for the page's dropdowns.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#S3
+    Tests:   tests/web/test_filters_routes.py::test_s3_vocabulary_served
+    """
+    return filter_vocabulary.for_client()
+
+
 @router.get("/api/filters")
 def list_filters(ctx: AppContext = Depends(get_context),
                  user_id: str = Depends(current_user)):
@@ -41,6 +65,7 @@ def list_filters(ctx: AppContext = Depends(get_context),
 def create_filter(body: FilterBody,
                   ctx: AppContext = Depends(get_context),
                   user_id: str = Depends(current_user)):
+    refuse_unusable_facets(body.filter)
     filter_id = user_store.upsert_filter(
         ctx.db, user_id, body.name, body.filter, body.enabled
     )
@@ -55,6 +80,7 @@ def update_filter(filter_id: int, body: FilterBody,
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No such filter.")
+    refuse_unusable_facets(body.filter)
     # A rename is an upsert on the new name; delete the old row so a rename
     # does not silently leave two copies.
     new_id = user_store.upsert_filter(

@@ -1,0 +1,51 @@
+{
+  "run_at": "2026-09-28",
+  "command": "monitor.py --filter NAME --dry-run --max 200",
+  "filters": {
+    "Inflammation": {
+      "sources_searched": [
+        "Europe PMC",
+        "PubMed",
+        "PsyArXiv",
+        "SocArXiv",
+        "bioRxiv/medRxiv",
+        "arXiv"
+      ],
+      "per_source": {
+        "Europe PMC": 136,
+        "PubMed": 0,
+        "bioRxiv/medRxiv": 30,
+        "PsyArXiv": "skipped (unavailable)",
+        "SocArXiv": "skipped (unavailable)",
+        "arXiv": "skipped (unavailable)"
+      },
+      "unique": 166,
+      "matched": 136,
+      "http_errors": [
+        [
+          "PsyArXiv",
+          "400"
+        ],
+        [
+          "SocArXiv",
+          "400"
+        ],
+        [
+          "arXiv",
+          "500"
+        ]
+      ]
+    },
+    "Loneliness": {
+      "sources_searched": [
+        "Europe PMC"
+      ],
+      "per_source": {
+        "Europe PMC": 248
+      },
+      "unique": 248,
+      "matched": 0,
+      "http_errors": []
+    }
+  }
+}

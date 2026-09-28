@@ -365,9 +365,13 @@ def test_i3_enrichment_outage_is_reported(caplog):
             on_status=messages.append,
             on_enrich_problem=lambda *a: problems.append(a),
         )
-    assert problems == [("Crossref", 2, 2)]
-    assert "Crossref failed for 2 of 2 papers" in messages
-    assert any("Crossref lookups failed for 2 of 2" in r.message for r in caplog.records)
+    # Since review M19 an exception is a program error, reported on its own
+    # line, not counted as an outage the user should retry.
+    assert problems == [("Crossref", 1, 2)]
+    assert "Crossref failed for 1 of 2 papers" in messages
+    assert "Crossref lookups hit a program error for 1 of 2 papers (details in the server log)" in messages
+    assert any("Crossref lookups failed for 1 of 2" in r.message for r in caplog.records)
+    assert any(r.exc_info for r in caplog.records), "the error's traceback is logged"
 
 
 # ── Page-end detection must use the source's page size (review finding 2) ─────
@@ -500,3 +504,237 @@ def test_full_pages_advance_page_until_max_pages():
     assert adapter.pages_seen == list(range(1, orch.MAX_PAGES_PER_SOURCE + 1)), \
         adapter.pages_seen
     assert fetched == page_size * orch.MAX_PAGES_PER_SOURCE
+
+
+# ── B1: one source cannot use up the whole run's budget ──────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B1
+# Before the fix max_results was one budget shared by every source. Europe PMC
+# runs first, so a broad filter filled it and later sources were never queried,
+# with no status line (live: "Loneliness" searched Europe PMC only).
+
+class _PagedAdapter:
+    """Serves `total` distinct records in pages; reports hitCount like Europe PMC."""
+
+    def __init__(self, prefix, total):
+        self.prefix, self.total = prefix, total
+        self.last_page_size = 0
+        self.last_total = total
+        self.calls = 0
+
+    def search(self, query, page=1, page_size=50, **_):
+        self.calls += 1
+        start = (page - 1) * page_size
+        ids = list(range(start, min(start + page_size, self.total)))
+        self.last_page_size = len(ids)
+        return [{"i": i} for i in ids]
+
+    def normalize(self, raw):
+        return _make_record(doi=f"10.1/{self.prefix}{raw['i']}", source=self.prefix,
+                            title=f"{self.prefix} paper {raw['i']}")
+
+
+def _orch_with(adapters):
+    orch = SourceOrchestrator.__new__(SourceOrchestrator)
+    orch.config = {}
+    orch._crossref = None
+    orch._unpaywall = None
+    orch._search_adapters = adapters
+    return orch
+
+
+def test_b1_first_source_cannot_starve_later_sources():
+    big = _PagedAdapter("europepmc", total=1000)
+    later = _PagedAdapter("psyarxiv", total=30)
+    orch = _orch_with({"europepmc": big, "psyarxiv": later})
+
+    records = orch.search({"days_back": 7, "text_groups": [{"both": "x"}]},
+                          {"all": True, "selected": []}, max_results=200)
+
+    assert later.calls >= 1, "the second source was never queried"
+    sources = [r.source_hits[0].source for r in records]
+    assert sources.count("psyarxiv") == 30
+    assert sources.count("europepmc") == 200
+
+
+def test_b1_truncated_source_is_reported():
+    big = _PagedAdapter("europepmc", total=1000)
+    small = _PagedAdapter("psyarxiv", total=30)
+    statuses = []
+    orch = _orch_with({"europepmc": big, "psyarxiv": small})
+
+    orch.search({"days_back": 7, "text_groups": [{"both": "x"}]},
+                {"all": True, "selected": []}, max_results=200,
+                on_status=statuses.append)
+
+    from src.sources.orchestrator import FAILURE_STATUS_MARKER
+    truncated = [s for s in statuses if FAILURE_STATUS_MARKER in s and "(truncated)" in s]
+    assert truncated == ["Europe PMC — skipped (truncated)"], statuses
+    assert any("Europe PMC: 200 of 1,000 read" in s for s in statuses), statuses
+    # A source read to the end is not reported as truncated.
+    assert not any(s.startswith("PsyArXiv") and "truncated" in s for s in statuses)
+
+
+def test_b1_page_cap_truncation_is_reported():
+    big = _PagedAdapter("europepmc", total=5000)
+    statuses = []
+    orch = _orch_with({"europepmc": big})
+
+    orch.search({"days_back": 7, "text_groups": [{"both": "x"}]},
+                {"all": True, "selected": []}, max_results=2000,
+                on_status=statuses.append)
+
+    assert big.calls == orch.MAX_PAGES_PER_SOURCE
+    assert "Europe PMC — skipped (truncated)" in statuses, statuses
+
+
+def test_b1_exact_fit_is_not_truncation():
+    """A source with exactly max_results records was read to the end."""
+    exact = _PagedAdapter("europepmc", total=200)
+    statuses = []
+    orch = _orch_with({"europepmc": exact})
+    orch.search({"days_back": 7, "text_groups": [{"both": "x"}]},
+                {"all": True, "selected": []}, max_results=200,
+                on_status=statuses.append)
+    assert not any("truncated" in s for s in statuses), statuses
+
+
+# ── B6: concurrent searches do not share paging state ─────────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B6
+# One orchestrator (and its adapters) serves every job thread. Europe PMC kept
+# its cursor on the adapter, so two interleaved searches reset each other's
+# cursor and pages repeated or were skipped.
+
+def test_b6_concurrent_searches_do_not_share_cursor():
+    import threading
+    from unittest.mock import MagicMock
+    from src.sources.europepmc import EuropePmcAdapter
+
+    barrier = threading.Barrier(2, timeout=5)
+    per_page = 50
+    calls = []                      # (query, cursor) as the server saw them
+    lock = threading.Lock()
+
+    def fake_get(self, url, params=None, timeout=None):
+        # Server: two pages per query. Cursor "*" is page 1, "<query>|2" is
+        # page 2. Any other cursor is a client bug and returns nothing.
+        q, cursor = params["query"], params["cursorMark"]
+        tag = q.split(":")[0]
+        if cursor == "*":
+            ids, nxt = range(0, per_page), f"{q}|2"
+        elif cursor == f"{q}|2":
+            ids, nxt = range(per_page, 2 * per_page), f"{q}|3"
+        else:
+            ids, nxt = [], cursor
+        with lock:
+            first_call = (q, cursor) not in calls
+            calls.append((q, cursor))
+        if cursor == "*" and first_call:
+            try:
+                barrier.wait()      # both searches read page 1 together
+            except threading.BrokenBarrierError:
+                pass
+        resp = MagicMock(status_code=200, ok=True)
+        resp.json.return_value = {
+            "hitCount": 2 * per_page, "nextCursorMark": nxt,
+            "resultList": {"result": [
+                {"id": f"{tag}{i}", "doi": f"10.1/{tag}{i}", "title": f"{tag} {i}"}
+                for i in ids]},
+        }
+        return resp
+
+    orch = SourceOrchestrator.__new__(SourceOrchestrator)
+    orch.config, orch._crossref, orch._unpaywall = {}, None, None
+    orch._search_adapters = {"europepmc": EuropePmcAdapter()}
+
+    results = {}
+
+    def run(term):
+        # Each query differs, so a shared cursor would be reset between pages.
+        fd = {"days_back": 7, "text_groups": [{"title": term}]}
+        with patch("requests.Session.get", fake_get):
+            recs = orch.search(fd, {"all": True, "selected": []}, max_results=1000)
+        results[term] = sorted(r.doi for r in recs)
+
+    from unittest.mock import patch
+    threads = [threading.Thread(target=run, args=(t,)) for t in ("alpha", "beta")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+
+    # A shared cursor made one search re-read page 1 after the other's page 1.
+    for q in {c[0] for c in calls}:
+        assert calls.count((q, "*")) == 1, [c for c in calls if c[0] == q]
+    for term in ("alpha", "beta"):
+        got = results.get(term)
+        assert got is not None and len(got) == 2 * per_page, (term, len(got or []))
+        assert len(set(got)) == len(got)
+
+
+def test_b6_adapters_are_fresh_per_search():
+    """Every real adapter class gives the orchestrator a new instance per search."""
+    from src.sources.europepmc import EuropePmcAdapter
+    from src.sources.pubmed import PubMedAdapter
+    from src.sources.psyarxiv import PsyArxivAdapter
+    from src.sources.socarxiv import SocArxivAdapter
+    from src.sources.arxiv import ArxivAdapter
+    from src.sources.biorxiv_medrxiv import BiorxivMedrxivAdapter
+
+    cfg = {"contact_email": "t@example.org"}
+    for cls in (EuropePmcAdapter, PubMedAdapter, PsyArxivAdapter, SocArxivAdapter,
+                ArxivAdapter, BiorxivMedrxivAdapter):
+        a = cls(sources_config=cfg)
+        b = a.for_search()
+        assert type(b) is cls and b is not a, cls
+        assert b.sources_config == cfg, cls
+
+
+# ── M31: an enabled source with no adapter is not silently ignored ───────────
+
+def test_m31_enabled_source_without_adapter_warns():
+    """sources_config.yaml can enable openalex, which has no search adapter.
+    Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M31"""
+    cfg = {"publication_sources": {
+        "europepmc": {"enabled": True}, "openalex": {"enabled": True},
+        "crossref": {"enabled": False}, "unpaywall": {"enabled": False}},
+        "contact_email": "t@example.org"}
+    orch = SourceOrchestrator(cfg)
+    assert "openalex" not in orch.get_enabled_sources()
+    assert any("OpenAlex" in w and "no search adapter" in w for w in orch.warnings), orch.warnings
+
+
+# ── M20: records a source sent but we could not read are counted ─────────────
+
+class _BadRecordsAdapter(_PagedAdapter):
+    def __init__(self, total, bad_every):
+        super().__init__("europepmc", total)
+        self.bad_every = bad_every
+
+    def normalize(self, raw):
+        if raw["i"] % self.bad_every == 0:
+            raise KeyError("authorList")          # a schema change at the source
+        return super().normalize(raw)
+
+
+def test_m20_normalize_failures_reported(caplog):
+    """Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M20"""
+    import logging
+    statuses = []
+    orch = _orch_with({"europepmc": _BadRecordsAdapter(total=10, bad_every=5)})
+    with caplog.at_level(logging.WARNING, logger="src.sources.orchestrator"):
+        recs = orch.search({"days_back": 7, "text_groups": [{"both": "x"}]},
+                           {"all": True, "selected": []}, on_status=statuses.append)
+    assert len(recs) == 8
+    assert "Europe PMC: 2 of 10 records could not be read" in statuses
+    assert not any("— skipped" in s for s in statuses)
+    assert any("could not be read" in r.message for r in caplog.records)
+
+
+def test_m20_all_unreadable_is_a_source_failure():
+    """Adversarial: "0 fetched" must not look like a quiet week."""
+    statuses = []
+    orch = _orch_with({"europepmc": _BadRecordsAdapter(total=10, bad_every=1)})
+    orch.search({"days_back": 7, "text_groups": [{"both": "x"}]},
+                {"all": True, "selected": []}, on_status=statuses.append)
+    assert "Europe PMC: 10 of 10 records could not be read" in statuses
+    assert "Europe PMC — skipped (error)" in statuses

@@ -400,7 +400,7 @@ def test_i_biorxiv_medrxiv_retries_on_5xx(monkeypatch):
     good_resp = {"collection": [], "messages": [{"total": 0}]}
 
     call_count = [0]
-    def fake_search_recent(**kw):
+    def fake_search_by_date_range(*a, **kw):
         call_count[0] += 1
         if call_count[0] == 1:
             # Return a 5xx Response; with_retry detects status >= 500 and retries
@@ -410,9 +410,9 @@ def test_i_biorxiv_medrxiv_retries_on_5xx(monkeypatch):
             return resp
         return good_resp
 
-    adapter = BiorxivMedrxivAdapter.__new__(BiorxivMedrxivAdapter)
+    adapter = BiorxivMedrxivAdapter(sources_config={"biorxiv_medrxiv": {"servers": ["biorxiv"]}})
     adapter._api = MagicMock()
-    adapter._api.search_recent.side_effect = fake_search_recent
+    adapter._api.search_by_date_range.side_effect = fake_search_by_date_range
     adapter._api.parse_papers.return_value = []
 
     with patch("src.sources.base.time.sleep"):
@@ -600,7 +600,9 @@ def test_i_search_source_continues_paging_after_fully_filtered_full_page():
 
 
 def test_i_biorxiv_total_is_reported_to_progress():
-    """bioRxiv _total field on raw records is passed to on_progress as src_total."""
+    """bioRxiv's total reaches on_progress as src_total. Since review M31 it is
+    reported through last_total like every other adapter, not a _total field
+    the orchestrator looked for by source name."""
     from src.sources.dedup import Deduplicator
     from src.sources.orchestrator import SourceOrchestrator
 
@@ -614,7 +616,8 @@ def test_i_biorxiv_total_is_reported_to_progress():
 
         def search(self, query, page=1, page_size=None, **kw):
             self.last_page_size = 1  # short page (< PAGE_SIZE) → stop after one call
-            return [{"i": 0, "_total": 42}]
+            self.last_total = 42
+            return [{"i": 0}]
 
         def normalize(self, raw):
             return _make_record(f"10.1234/bio{raw['i']}")
@@ -628,5 +631,5 @@ def test_i_biorxiv_total_is_reported_to_progress():
     assert progress_reports, "expected at least one progress report"
     totals = [total for _, total in progress_reports]
     assert any(t == 42 for t in totals), (
-        f"expected src_total=42 from _total field; got: {progress_reports}"
+        f"expected src_total=42 from last_total; got: {progress_reports}"
     )

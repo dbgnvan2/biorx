@@ -63,18 +63,14 @@ def _group_to_lucene(group: Dict[str, str]) -> str:
     return " AND ".join(f"({p})" for p in parts) if len(parts) > 1 else parts[0]
 
 
-_ANIMAL_ORGANISM_EXCLUSIONS = (
-    "NOT ANIMAL:y "
-    'NOT ORGANISM:"Mus musculus" '
-    'NOT ORGANISM:"Rattus norvegicus" '
-    'NOT ORGANISM:Mouse '
-    'NOT ORGANISM:Rat '
-    'NOT ORGANISM:Zebrafish '
-    'NOT ORGANISM:"Danio rerio" '
-    'NOT ORGANISM:"Drosophila melanogaster" '
-    'NOT ORGANISM:"Caenorhabditis elegans" '
-    'NOT ORGANISM:"Macaca mulatta"'
-)
+def _animal_organism_exclusions() -> str:
+    """NOT clauses for Europe PMC's animal flag and the organisms listed in
+    filter_vocabulary.yaml (species.excluded_organisms)."""
+    from src import filter_vocabulary as vocab
+    parts = ["NOT ANIMAL:y"]
+    for org in vocab.excluded_organisms():
+        parts.append(f'NOT ORGANISM:"{org}"' if " " in org else f"NOT ORGANISM:{org}")
+    return " ".join(parts)
 
 
 def _species_clause(species: str) -> str:
@@ -83,12 +79,19 @@ def _species_clause(species: str) -> str:
     ANIMAL:y is a curated Europe PMC flag but is incomplete — many animal studies
     lack it.  We supplement with explicit ORGANISM exclusions for the most common
     model organisms so that untagged rodent/fish/fly papers are also excluded.
+    Accepts a vocabulary id or a legacy label (review S3).
     """
-    if species in ("Human studies only", "Exclude animal studies"):
-        return _ANIMAL_ORGANISM_EXCLUSIONS
-    if species == "Animal studies only":
+    from src import filter_vocabulary as vocab
+    try:
+        species_id = vocab.normalise_value("species", species)
+    except vocab.UnknownValue:
+        logger.warning("Unknown species value %r; no species restriction applied", species)
+        return ""
+    if species_id in ("human", "no-animal"):
+        return _animal_organism_exclusions()
+    if species_id == "animal":
         return "ANIMAL:y"
-    return ""  # "(any)" → no constraint
+    return ""  # any → no constraint
 
 
 def _date_clause(days_back: int, start_date: str = "", end_date: str = "") -> str:
@@ -166,14 +169,60 @@ def build_psyarxiv_query(filter_dict: Dict[str, Any]) -> str:
     return " ".join(unique)
 
 
+def osf_title_terms(filter_dict: Dict[str, Any], max_terms: int) -> List[str]:
+    """Title terms to send to an OSF provider as filter[title], or [] for none.
+
+    Purpose: Narrow OSF requests by title only where that cannot lose a match.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#B3
+    Tests:   tests/test_adapters.py::test_b3_every_or_group_reaches_osf,
+             tests/test_adapters.py::test_b3_group_without_title_term_fetches_by_date
+
+    Groups are OR'd, and within a group every non-empty field must match. A
+    group with a title term therefore only matches papers whose title contains
+    one of its title terms. When every group has one, the union of the title
+    terms covers every possible match. When any group has none (or there are
+    more distinct terms than max_terms), return [] so the caller fetches by
+    date alone. Multi-word terms are kept whole; a trailing wildcard is
+    dropped, since filter[title] is already a contains-match.
+    """
+    groups = filter_dict.get("text_groups") or []
+    non_empty = [g for g in groups
+                 if any((g.get(k) or "").strip() for k in ("title", "abstract", "both"))]
+    if not non_empty:
+        return []
+    terms: List[str] = []
+    seen: set = set()
+    for g in non_empty:
+        title_terms = [t.rstrip("*").strip() for t in _split_terms(g.get("title") or "")]
+        title_terms = [t for t in title_terms if t]
+        if not title_terms:
+            return []
+        for t in title_terms:
+            if t.lower() not in seen:
+                seen.add(t.lower())
+                terms.append(t)
+    if len(terms) > max_terms:
+        logger.info("OSF: %d title terms is over the limit of %d; fetching by date only",
+                    len(terms), max_terms)
+        return []
+    return terms
+
+
 def get_date_range(filter_dict: Dict[str, Any]) -> tuple:
-    """Return (start_date, end_date) strings from a filter_dict."""
-    days_back = filter_dict.get("days_back", 7)
-    end_date  = filter_dict.get("end_date",  datetime.today().strftime("%Y-%m-%d"))
-    start_date = filter_dict.get(
-        "start_date",
-        (datetime.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-    )
+    """Return (start_date, end_date) strings from a filter_dict.
+
+    Purpose: One date window for every source that takes a date range.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#B2
+    Tests:   tests/test_query_builder.py::test_b2_empty_string_dates_use_days_back_arxiv,
+             tests/test_query_builder.py::test_b2_empty_string_dates_use_days_back_osf
+
+    An empty or None date means "not set", as in _date_clause: saved filters
+    and the web editor store "" for an unused date.
+    """
+    days_back = filter_dict.get("days_back", 7) or 0
+    end_date = filter_dict.get("end_date") or datetime.today().strftime("%Y-%m-%d")
+    start_date = (filter_dict.get("start_date")
+                  or (datetime.today() - timedelta(days=days_back)).strftime("%Y-%m-%d"))
     return start_date, end_date
 
 

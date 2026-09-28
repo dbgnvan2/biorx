@@ -120,7 +120,8 @@ class CrossrefAdapter:
 
         # Fill missing journal_or_server
         if not record.journal_or_server:
-            record.journal_or_server = msg.get("container-title", [""])[0] or ""
+            # Often an empty list for posted content (review M19).
+            record.journal_or_server = (msg.get("container-title") or [""])[0] or ""
 
         # Fill missing authors from Crossref
         if not record.authors:
@@ -133,6 +134,7 @@ class CrossrefAdapter:
                         display_name=name,
                         orcid=a.get("ORCID", "").replace("http://orcid.org/", ""),
                         sequence=i + 1,
+                        family=a.get("family", "") or "",
                     ))
 
         logger.debug("Crossref enriched: %s", record.doi)

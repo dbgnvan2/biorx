@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements-web.txt
 COPY src/ ./src/
 COPY web/ ./web/
 COPY agents/ ./agents/
-COPY llm_config.yaml sources_config.yaml filters.json ./
+COPY llm_config.yaml sources_config.yaml filter_vocabulary.yaml filters.json ./
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 

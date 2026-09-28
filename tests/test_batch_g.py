@@ -116,14 +116,10 @@ def test_g_europepmc_imports_with_retry():
     assert hasattr(europepmc, "with_retry")
 
 
-def test_g_psyarxiv_imports_with_retry():
-    from src.sources import psyarxiv
-    assert hasattr(psyarxiv, "with_retry")
-
-
-def test_g_socarxiv_imports_with_retry():
-    from src.sources import socarxiv
-    assert hasattr(socarxiv, "with_retry")
+def test_g_osf_imports_with_retry():
+    """PsyArXiv and SocArXiv share one OSF adapter since review M31."""
+    from src.sources import osf
+    assert hasattr(osf, "with_retry")
 
 
 def test_g_crossref_imports_with_retry():
@@ -312,9 +308,9 @@ def test_g_biorxiv_normalize_roundtrip():
     assert "Doe" in d["authors"]
     assert d["is_preprint"] is True
     assert d["category"] == "neuroscience"
-    # biorxiv_medrxiv uses its own version field, not the arxiv_version slot;
-    # to_dict() version falls back to "1" when arxiv_version is unset
-    assert d["version"] == "1"
+    # The bioRxiv version reaches the record (review M18; it was dropped and
+    # every bioRxiv paper reported version 1).
+    assert d["version"] == "2"
     assert rec.year == 2024
 
 
@@ -390,7 +386,7 @@ def test_g_schema_to_dict_roundtrip():
     assert d["flags"]["fulltext_reusable"] is True
     assert d["source"] == "biorxiv"
     assert d["category"] == "biology"
-    assert d["version"] == "1"     # arxiv_version default
+    assert d["version"] == "1"     # version default
     assert d["published"] == "NA"  # is_preprint=True → "NA"
 
 

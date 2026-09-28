@@ -202,7 +202,7 @@ def test_arxiv_search_raises_unavailable_on_5xx():
     from src.sources.arxiv import ArxivAdapter
     from src.sources.errors import SourceUnavailableError
 
-    adapter = ArxivAdapter()
+    adapter = ArxivAdapter(min_request_interval=0)
 
     mock_resp = MagicMock()
     mock_resp.status_code = 502
@@ -352,3 +352,27 @@ def test_arxiv_normalize_strips_version_from_old_style_identifier():
     from src.sources.arxiv import ArxivAdapter
     rec = ArxivAdapter().normalize({"arxiv_id_full": "cs.CV/0701001v1", "title": "t"})
     assert rec.canonical_id == "arxiv:cs.CV/0701001"
+
+
+def test_b6_spacing_enforced_across_threads():
+    """B6: adapters are per search, so arXiv's request spacing must hold across
+    instances and threads. Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B6"""
+    import threading, time as _time
+    from src.sources import arxiv as arxiv_mod
+
+    stamps = []
+    a = arxiv_mod.ArxivAdapter(min_request_interval=0.2)
+    b = a.for_search()
+
+    def go(adapter):
+        adapter._wait_turn()
+        stamps.append(_time.time())
+
+    threads = [threading.Thread(target=go, args=(x,)) for x in (a, b, a.for_search())]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(5)
+    stamps.sort()
+    gaps = [later - earlier for earlier, later in zip(stamps, stamps[1:])]
+    assert len(stamps) == 3 and all(g >= 0.19 for g in gaps), gaps

@@ -15,7 +15,13 @@ re-application; it makes no API calls.
 
 from __future__ import annotations
 
+import logging
+import re
 from typing import Any, Dict, List
+
+from src import filter_vocabulary as vocab
+
+logger = logging.getLogger(__name__)
 
 
 def normalise_filter(f: Dict[str, Any]) -> Dict[str, Any]:
@@ -56,6 +62,46 @@ def normalise_filter(f: Dict[str, Any]) -> Dict[str, Any]:
         out["institution"] = ", ".join(str(i).strip() for i in inst if str(i).strip())
     elif inst is None and "institution" in out:
         out["institution"] = ""
+    # No source reports author institutions (review B5): an institution term
+    # matched nothing, so a filter with one returned no papers. Saving one is
+    # refused (filter_vocabulary.problems); a stored one is ignored, loudly.
+    if (out.get("institution") or "").strip():
+        logger.warning("Filter %r: ignoring institution %r — no source reports it",
+                       out.get("name", ""), out["institution"])
+        out["institution"] = ""
+    # Facet values are vocabulary ids (review S3). Legacy display labels map
+    # to ids; a value with no equivalent any more, or an unknown one, is
+    # dropped with a warning rather than guessed at.
+    for facet in vocab.FACETS:
+        if facet not in out:
+            continue
+        try:
+            value = vocab.normalise_value(facet, out[facet])
+        except vocab.UnknownValue as exc:
+            logger.warning("Filter %r: ignoring %s", out.get("name", ""), exc)
+            value = vocab.ANY
+        if value is None:
+            logger.warning("Filter %r: %s %r is no longer supported; ignoring it",
+                           out.get("name", ""), facet, out[facet])
+            value = vocab.ANY
+        out[facet] = value
+    return out
+
+
+def without_license(f: Dict[str, Any]) -> Dict[str, Any]:
+    """The filter minus its licence condition, for use before enrichment.
+
+    Purpose: Keep papers whose licence only enrichment can supply.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#B5
+    Tests:   tests/test_monitor.py::test_b5_license_filter_sees_enriched_license,
+             tests/web/test_searches_routes.py::test_b5_license_filter_sees_enriched_license
+
+    Unpaywall and Crossref fill in a licence the search source did not
+    report. Callers choose what to enrich with this, and apply the full
+    filter once enrichment has run.
+    """
+    out = dict(f or {})
+    out["license"] = vocab.ANY
     return out
 
 
@@ -93,9 +139,19 @@ def normalize_authors(value: Any) -> List[str]:
 
 
 def match_term(term: str, text: str) -> bool:
-    """Match a single term against text. term ending in '*' = begins-with / prefix match."""
+    """Match a single term against text. term ending in '*' = prefix of any word.
+
+    Purpose: One meaning for a wildcard term on every front end.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#B4
+    Tests:   tests/test_filtering.py::test_b4_wildcard_matches_mid_title,
+             tests/test_filtering.py::test_b4_wildcard_does_not_match_inside_word
+
+    "adolescen*" matches "Stress in adolescents" but not "preadolescent", as
+    Europe PMC's Lucene wildcard does. A plain term is a substring match.
+    """
     if term.endswith("*"):
-        return text.startswith(term[:-1])
+        prefix = term[:-1]
+        return re.search(r"(?<!\w)" + re.escape(prefix), text) is not None
     return term in text
 
 
@@ -123,45 +179,44 @@ def text_group_matches(paper: Dict[str, Any], group: Dict[str, str]) -> bool:
 
 
 def filter_papers(papers: List[Dict[str, Any]], f: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Apply filter criteria to a list of papers. No API calls."""
+    """Apply filter criteria to a list of papers. No API calls.
+
+    Facets compare vocabulary ids (filter_vocabulary.yaml) against the
+    record's own values: paper type against document_type, licence after
+    reduction to an id (review S3/B5).
+    """
     f = normalise_filter(f)
     text_groups = f.get("text_groups", [])
     if not text_groups and f.get("keywords"):
         text_groups = [{"title": "", "abstract": "", "both": ", ".join(f["keywords"])}]
 
     authors     = normalize_authors(f.get("authors"))
-    institution = f.get("institution", "").strip().lower()
-    paper_type  = f.get("paper_type", "(any)")
-    version     = f.get("version", "(any)")
-    published   = f.get("published", "(any)")
-    license_    = f.get("license", "(any)")
+    paper_type  = f.get("paper_type", vocab.ANY)
+    version     = f.get("version", vocab.ANY)
+    published   = f.get("published", vocab.ANY)
+    license_    = f.get("license", vocab.ANY)
 
     out = []
     for p in papers:
         auth_str = f"{p.get('authors','').lower()} {p.get('author_corresponding','').lower()}"
-        inst_str = (p.get("author_corresponding_institution") or "").lower()
-        ptype    = (p.get("type") or "").lower()
         ver      = str(p.get("version") or "")
         pub      = (p.get("published") or "NA")
-        lic      = (p.get("license") or "").lower()
 
         if text_groups and not any(text_group_matches(p, g) for g in text_groups):
             continue
         if authors and not any(match_term(a.lower(), auth_str) for a in authors):
             continue
-        if institution and not match_term(institution, inst_str):
+        if paper_type != vocab.ANY and not vocab.paper_type_matches(paper_type, p.get("type") or ""):
             continue
-        if paper_type != "(any)" and paper_type.lower() not in ptype:
+        if version == "first" and ver != "1":
             continue
-        if version == "1 (first submission only)" and ver != "1":
+        if version == "revised" and (not ver.isdigit() or int(ver) < 2):
             continue
-        if version == "2+ (revised only)" and (not ver.isdigit() or int(ver) < 2):
+        if published == "preprint" and pub != "NA":
             continue
-        if published == "preprints only (not in journal)" and pub != "NA":
+        if published == "journal" and pub == "NA":
             continue
-        if published == "published in journal only" and pub == "NA":
-            continue
-        if license_ != "(any)" and license_.lower() not in lic:
+        if license_ != vocab.ANY and vocab.license_id(p.get("license") or "") != license_:
             continue
         out.append(p)
     return out

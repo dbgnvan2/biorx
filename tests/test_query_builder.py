@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from src.sources.query_builder import build_europepmc_query, build_psyarxiv_query, build_arxiv_query, _species_clause, _ANIMAL_ORGANISM_EXCLUSIONS
+from src.sources.query_builder import build_europepmc_query, build_psyarxiv_query, build_arxiv_query, _species_clause, _animal_organism_exclusions
 
 
 def _q(text_groups=None, days_back=7, keywords=None):
@@ -113,7 +113,21 @@ def test_species_exclude_animal_same_as_human_only():
 
 def test_species_exclude_animal_uses_full_exclusion_list():
     clause = _species_clause("Exclude animal studies")
-    assert clause == _ANIMAL_ORGANISM_EXCLUSIONS
+    assert clause == _animal_organism_exclusions()
+    # The organism list moved to filter_vocabulary.yaml (review S3); the
+    # clause sent to Europe PMC must be what it was when it lived in code.
+    assert clause == (
+        'NOT ANIMAL:y NOT ORGANISM:"Mus musculus" NOT ORGANISM:"Rattus norvegicus" '
+        'NOT ORGANISM:Mouse NOT ORGANISM:Rat NOT ORGANISM:Zebrafish '
+        'NOT ORGANISM:"Danio rerio" NOT ORGANISM:"Drosophila melanogaster" '
+        'NOT ORGANISM:"Caenorhabditis elegans" NOT ORGANISM:"Macaca mulatta"')
+
+
+def test_s3_species_ids_and_legacy_labels_agree():
+    assert _species_clause("no-animal") == _species_clause("Exclude animal studies")
+    assert _species_clause("human") == _species_clause("Human studies only")
+    assert _species_clause("animal") == "ANIMAL:y"
+    assert _species_clause("any") == ""
 
 
 def test_species_animal_only():
@@ -307,3 +321,47 @@ def test_arxiv_query_builds_for_every_saved_filter():
     for f in saved:
         q = build_arxiv_query(f)           # must not raise on any real filter
         assert "submittedDate:[" in q
+
+
+# ── B2: empty-string dates mean "not set" ─────────────────────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B2
+# Saved filters and the web editor store "" for an unused date. Before the fix
+# get_date_range returned "" as the date, arXiv got submittedDate:[0000 TO 2359]
+# (HTTP 500 live) and the OSF sources got an empty date_created filter (HTTP 400).
+
+def _empty_date_filter(days_back=7):
+    return {"text_groups": [{"title": "inflammation", "abstract": "", "both": ""}],
+            "days_back": days_back, "start_date": "", "end_date": ""}
+
+
+def test_b2_empty_string_dates_use_days_back_arxiv():
+    from datetime import datetime, timedelta
+    q = build_arxiv_query(_empty_date_filter(7))
+    start = (datetime.today() - timedelta(days=7)).strftime("%Y%m%d")
+    end = datetime.today().strftime("%Y%m%d")
+    assert f"submittedDate:[{start}0000 TO {end}2359]" in q
+    assert "[0000 TO" not in q
+
+
+def test_b2_empty_string_dates_use_days_back_osf():
+    from datetime import datetime, timedelta
+    from unittest.mock import MagicMock
+    from src.sources.psyarxiv import PsyArxivAdapter
+
+    adapter = PsyArxivAdapter()
+    resp = MagicMock(status_code=200, ok=True)
+    resp.json.return_value = {"data": []}
+    adapter.session.get = MagicMock(return_value=resp)
+
+    adapter.search("inflammation", filter_dict=_empty_date_filter(7))
+
+    params = adapter.session.get.call_args.kwargs["params"]
+    assert params["filter[date_created][gte]"] == \
+        (datetime.today() - timedelta(days=7)).strftime("%Y-%m-%d")
+    assert params["filter[date_created][lte]"] == datetime.today().strftime("%Y-%m-%d")
+
+
+def test_b2_none_dates_treated_as_missing():
+    from src.sources.query_builder import get_date_range
+    start, end = get_date_range({"days_back": 3, "start_date": None, "end_date": None})
+    assert start and end and start < end

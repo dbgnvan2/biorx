@@ -192,31 +192,48 @@ def fetch_openalex_abstract(doi: str) -> str:
     Fetch abstract from OpenAlex via its inverted-index format.
     OpenAlex stores abstracts as {word: [position, ...]} dicts to work around
     publisher restrictions; we reconstruct the plain text here.
-    Returns empty string on any failure.
+
+    Purpose: Recover an abstract from OpenAlex, telling "none" from "unreachable".
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#M21
+    Tests:   tests/test_paper_meta.py::test_m21_openalex_retried,
+             tests/test_paper_meta.py::test_m21_outage_reported_as_failed
+
+    Returns "" when OpenAlex has no such work or no abstract. Raises
+    SourceUnavailableError (after retries) or RateLimitedError when OpenAlex
+    could not answer, so the caller reports it as a failure to retry (P1).
     """
-    try:
-        clean = re.sub(r"^https?://doi\.org/", "", doi.strip())
-        resp = requests.get(
+    from src.sources.base import with_retry
+    from src.sources.errors import RateLimitedError, SourceUnavailableError
+
+    clean = re.sub(r"^https?://doi\.org/", "", doi.strip())
+    resp = with_retry(
+        lambda: requests.get(
             f"https://api.openalex.org/works/doi:{clean}",
             params={"select": "abstract_inverted_index"},
             headers={"User-Agent": openalex_user_agent()},
             timeout=OPENALEX_TIMEOUT,
-        )
-        if not resp.ok:
-            return ""
-        idx = resp.json().get("abstract_inverted_index") or {}
-        if not idx:
-            return ""
-        # Reconstruct: sort (position, word) pairs and join
-        pairs = sorted(
-            (pos, word)
-            for word, positions in idx.items()
-            for pos in positions
-        )
-        return " ".join(word for _, word in pairs)
-    except Exception as e:
-        logger.debug("OpenAlex abstract fetch failed for %s: %s", doi, e)
+        ),
+        source_label="OpenAlex",
+    )
+    if resp.status_code == 404:
         return ""
+    if resp.status_code == 429:
+        raise RateLimitedError("OpenAlex rate limit hit")
+    if not resp.ok:
+        raise SourceUnavailableError(f"OpenAlex returned {resp.status_code}")
+    try:
+        idx = resp.json().get("abstract_inverted_index") or {}
+    except ValueError as exc:
+        raise SourceUnavailableError(f"OpenAlex sent an unreadable reply: {exc}") from exc
+    if not idx:
+        return ""
+    # Reconstruct: sort (position, word) pairs and join
+    pairs = sorted(
+        (pos, word)
+        for word, positions in idx.items()
+        for pos in positions
+    )
+    return " ".join(word for _, word in pairs)
 
 
 # ── Recovering a missing abstract ─────────────────────────────────────────────

@@ -268,3 +268,21 @@ def _never_load_the_real_env_file(tmp_path, monkeypatch):
     # Tests choose a provider with LLM_PROVIDER; a DEFAULT_LLM_PROVIDER from the
     # developer's shell would silently outrank them.
     monkeypatch.delenv("DEFAULT_LLM_PROVIDER", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_arxiv_spacing():
+    """arXiv's request spacing is process-wide since review B6, so one test's
+    request would make the next test wait out the interval. Start each test
+    as if no arXiv request had been made, and put the value back after."""
+    import sys
+    mod = sys.modules.get("src.sources.arxiv")
+    if mod is None:
+        yield
+        return
+    saved = mod._last_request_time
+    mod._last_request_time = 0.0
+    try:
+        yield
+    finally:
+        mod._last_request_time = saved

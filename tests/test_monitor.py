@@ -143,3 +143,43 @@ def test_r1_monitor_enriches_only_matching_papers():
     enrich_only = orch.search.call_args.kwargs["enrich_only"]
     assert enrich_only(_record("Generative agents")) is True
     assert enrich_only(_record("Protein folding")) is False
+
+
+def test_b1_truncation_sets_exit_2(capsys):
+    """B1: a source cut off at the result limit fails the cron run (exit 2),
+    as other partial results do. Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B1"""
+    from unittest.mock import patch
+    from src.sources.orchestrator import FAILURE_STATUS_MARKER
+
+    def fake_search(filter_dict, on_status=None, **_):
+        on_status("Europe PMC: 200 of 1,000 read (result limit reached)")
+        on_status(f"Europe PMC {FAILURE_STATUS_MARKER} (truncated)")
+        return []
+
+    orch = MagicMock()
+    orch.search.side_effect = fake_search
+    with patch.object(monitor, "load_sources_config", return_value={}), \
+         patch.object(monitor, "SourceOrchestrator", return_value=orch), \
+         patch.object(monitor, "load_filters", return_value=[
+             {"name": "T", "enabled": True, "text_groups": [{"both": "stress"}], "authors": []}]):
+        code = monitor.main(["--all"])
+    assert code == 2
+    assert "Failed sources: europepmc" in capsys.readouterr().err
+
+
+def test_b5_license_filter_sees_enriched_license():
+    """B5: monitor enriches papers whose only unmet condition is the licence,
+    then applies the licence. Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B5"""
+    rec = _record("Generative Agents in Simulation", "personas")
+    rec.license = ""
+
+    def fake_search(filter_dict, enrich_only=None, **_):
+        assert enrich_only(rec), "a licence-only miss must still be enriched"
+        rec.license = "CC BY 4.0"          # what Unpaywall/Crossref found
+        return [rec]
+
+    orch = MagicMock()
+    orch.search.side_effect = fake_search
+    out = monitor.run_search(orch, {"text_groups": [{"both": "generative agents"}],
+                                    "license": "cc-by"}, "t")
+    assert [p["title"] for p in out] == ["Generative Agents in Simulation"]

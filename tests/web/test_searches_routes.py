@@ -306,7 +306,7 @@ def test_the_failure_parser_handles_all_sources_and_qualifiers():
     from src.sources.orchestrator import FAILURE_STATUS_MARKER, _SOURCE_LABELS
     from web.routes_searches import source_from_failure_status
 
-    qualifiers = ("unavailable", "error", "rate-limited", "partial")
+    qualifiers = ("unavailable", "error", "rate-limited", "partial", "truncated")
     for name, label in _SOURCE_LABELS.items():
         for q in qualifiers:
             msg = f"{label} {FAILURE_STATUS_MARKER} ({q})"
@@ -373,6 +373,7 @@ def test_one_user_cannot_read_or_cancel_anothers_search(ctx, app):
     ("rate-limited", "limiting how fast"),
     ("error", "unexpected error"),
     ("partial", "part-way"),
+    ("truncated", "raise Max results"),     # B1
     ("something-new", "could not be reached"),     # unknown kind: honest fallback
 ])
 def test_d2_failure_reason_from_config(kind, expect):
@@ -420,3 +421,29 @@ def test_i3_enrichment_outage_reaches_the_poll(ctx, signed_in):
     job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
     body = _await_status(signed_in, job_id)
     assert body["enrich_problems"] == {"Crossref": [1, 1]}
+
+
+# ── B5: the licence filter sees the licence enrichment found ─────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B5
+
+def test_b5_license_filter_sees_enriched_license(ctx, signed_in):
+    """Europe PMC often reports no licence; Unpaywall supplies one. Filtering
+    before enrichment dropped such papers, and never enriched them either."""
+    orch = _real_orchestrator([
+        _doi_record("Generative Agents A", "10.1/a"),     # Unpaywall says cc-by
+        _doi_record("Generative Agents B", "10.1/b"),     # Unpaywall says cc-by-nc
+    ])
+    licences = {"10.1/a": "cc-by", "10.1/b": "cc-by-nc"}
+
+    def unpaywall_enrich(record):
+        record.license = licences[record.doi]
+    orch._unpaywall.enrich.side_effect = unpaywall_enrich
+    ctx.orchestrator = orch
+
+    job_id = signed_in.post("/api/searches",
+                            json={"filter": dict(FILTER, license="cc-by")}).json()["job_id"]
+    body = _await_status(signed_in, job_id)
+    results = signed_in.get(f"/api/searches/{job_id}/results").json()["results"]
+    assert [r["doi"] for r in results] == ["10.1/a"]
+    assert body["matched"] == 1
+    assert sorted(c.args[0].doi for c in orch._unpaywall.enrich.call_args_list) == ["10.1/a", "10.1/b"]

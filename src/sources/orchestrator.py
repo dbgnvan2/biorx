@@ -19,10 +19,10 @@ from typing import Dict, Any, List, Callable, Optional
 
 from .schema import CanonicalRecord
 from .dedup import Deduplicator
-from .query_builder import build_europepmc_query, build_psyarxiv_query, build_arxiv_query, get_date_range
+from .query_builder import build_europepmc_query, build_psyarxiv_query, build_arxiv_query
 from .errors import SourceUnavailableError, RateLimitedError
 from .config import (
-    get_enabled_search_sources, is_source_enabled,
+    SOURCE_LABELS, get_enabled_search_sources, is_source_enabled,
     get_unpaywall_email, get_crossref_user_agent,
 )
 
@@ -31,18 +31,6 @@ logger = logging.getLogger(__name__)
 # Marker present in every failure status message emitted via on_status.
 # monitor.py imports this so a wording change is a visible diff, not silent drift (P19).
 FAILURE_STATUS_MARKER = "— skipped"
-
-# Source trust weights for ranking (peer-reviewed > PMC-backed > preprints)
-_SOURCE_TRUST: Dict[str, float] = {
-    "europepmc":       1.00,
-    "pubmed":          1.00,
-    "crossref":        0.85,
-    "psyarxiv":        0.75,
-    "socarxiv":        0.75,
-    "biorxiv_medrxiv": 0.75,
-    "arxiv":           0.75,
-    "openalex":        0.70,
-}
 
 # Human-readable source names for status messages (spec E2.1)
 _SOURCE_LABELS: Dict[str, str] = {
@@ -132,6 +120,15 @@ class SourceOrchestrator:
                 logger.warning(msg)
                 self.warnings.append(msg)
 
+        # A source enabled in sources_config.yaml with no adapter here (OpenAlex
+        # is only an abstract lookup) would otherwise do nothing, silently (M31).
+        for name in get_enabled_search_sources(self.config):
+            if name not in self._search_adapters:
+                msg = (f"{SOURCE_LABELS.get(name, name)} is enabled in sources_config.yaml "
+                       "but has no search adapter, so it is not searched.")
+                logger.warning(msg)
+                self.warnings.append(msg)
+
         # All polite-pool APIs degrade to bare biorx/1.0 UA when no contact email.
         # OpenAlex always runs (via paper_meta.py); other sources are config-gated.
         # Surface this unconditionally so callers and the web app can warn users (P2/P5).
@@ -172,7 +169,9 @@ class SourceOrchestrator:
             on_status:        Callback called with a human-readable phase string
                               (e.g. "Searching Europe PMC…", "Enriching 120 papers…").
             should_stop:      Callable returning True when search should abort.
-            max_results:      Maximum total records to return.
+            max_results:      Maximum records read from each source. A source
+                              cut off by it (or by MAX_PAGES_PER_SOURCE) is
+                              reported through on_status as truncated.
             enrich_only:      If given, only records it accepts are enriched.
                               Callers that filter locally pass their match test
                               so a run does not spend two HTTP calls on every
@@ -202,14 +201,17 @@ class SourceOrchestrator:
             if should_stop and should_stop():
                 break
 
-            adapter = self._search_adapters[source_name]
+            adapter = self._adapter_for_search(self._search_adapters[source_name])
             query   = self._build_query(source_name, filter_dict)
             label   = _source_label(source_name)
             logger.info("Searching %s: %s", source_name, query[:80])
             if on_status:
                 on_status(f"Searching {label}…")
 
-            budget = max_results - total_fetched
+            # max_results applies to each source on its own. One shared budget
+            # let the first source (Europe PMC) use it all, so later sources
+            # were never queried and nothing said so (review B1).
+            budget = max_results
 
             # Per-source progress wrapper: translate this source's local
             # (fetched, total) into cumulative numbers so the bar advances
@@ -252,9 +254,6 @@ class SourceOrchestrator:
                     on_status(f"{label} {FAILURE_STATUS_MARKER} (error)")
                 continue
 
-            if total_fetched >= max_results:
-                break
-
         # Enrichment phase (only for records that have DOIs)
         records = dedup.results()
         self._enrich(records, on_status=on_status,
@@ -263,6 +262,23 @@ class SourceOrchestrator:
                      on_problem=on_enrich_problem)
 
         return self._rank(records)
+
+    @staticmethod
+    def _adapter_for_search(adapter: Any) -> Any:
+        """Return the adapter instance one search should use.
+
+        Purpose: Keep per-search paging state out of the shared adapters.
+        Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#B6
+        Tests:   tests/test_orchestrator.py::test_b6_concurrent_searches_do_not_share_cursor
+
+        Adapters keep cursors, totals and page sizes on the instance, and one
+        orchestrator serves every job thread. Real adapters define for_search()
+        to hand out a fresh instance. The check is on the class so a test
+        double (MagicMock answers every attribute) is used as it is.
+        """
+        if callable(getattr(type(adapter), "for_search", None)):
+            return adapter.for_search()
+        return adapter
 
     # ── Source routing ────────────────────────────────────────────────────────
 
@@ -303,14 +319,29 @@ class SourceOrchestrator:
         max_results: int,
         on_status: Optional[Callable] = None,
     ) -> int:
-        """Paginate through a single source and add results to dedup. Returns count fetched."""
-        fetched = 0
-        page    = 1
+        """Paginate through a single source and add results to dedup. Returns count fetched.
 
-        while page <= self.MAX_PAGES_PER_SOURCE:
+        Purpose: Read one source up to its limits, and say so when a limit cut it off.
+        Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#B1
+        Tests:   tests/test_orchestrator.py::test_b1_truncated_source_is_reported,
+                 tests/test_orchestrator.py::test_b1_page_cap_truncation_is_reported
+        """
+        fetched   = 0
+        page      = 1
+        unreadable = 0       # records normalize() could not read
+        seen_raw  = 0        # records the source sent, duplicates included
+        src_total = 0
+        last_page_full = False
+        limited   = False    # stopped by max_results or the page cap, not by the source
+
+        while True:
+            if page > self.MAX_PAGES_PER_SOURCE:
+                limited = True
+                break
             if should_stop and should_stop():
                 break
             if fetched >= max_results:
+                limited = True
                 break
 
             try:
@@ -342,11 +373,13 @@ class SourceOrchestrator:
             # source sent. Page-end detection must use the source's own page
             # size or a full page minus one withdrawn paper ends the search.
             page_size_seen = getattr(adapter, "last_page_size", None)
-            if page_size_seen is None:
+            if not isinstance(page_size_seen, int):
                 page_size_seen = len(raw_records)
 
             if not page_size_seen:
                 break
+            seen_raw += page_size_seen
+            last_page_full = page_size_seen >= self.PAGE_SIZE
 
             if not raw_records:
                 # Whole page filtered out but the source has more — keep paging.
@@ -371,6 +404,9 @@ class SourceOrchestrator:
                     batch.append(canonical)
                     fetched += 1
                 except Exception as e:
+                    # Counted and reported below: a schema change at a source
+                    # must not look like a source with no results (M20).
+                    unreadable += 1
                     logger.debug("Normalization error (%s): %s", source_name, e)
                     continue
 
@@ -379,14 +415,10 @@ class SourceOrchestrator:
 
             # Determine this source's total hit count when the source reports one,
             # so the progress bar can advance against a real target (spec E2.2).
-            src_total = 0
-            if source_name == "biorxiv_medrxiv" and raw_records:
-                # bioRxiv returns raw dicts with _total attached
-                if isinstance(raw_records[0], dict):
-                    src_total = raw_records[0].get("_total", 0) or 0
-            else:
-                # EuropePMC/PubMed expose hitCount as adapter.last_total
-                src_total = getattr(adapter, "last_total", None) or 0
+            # Every adapter that knows its hit count reports it as last_total.
+            src_total = getattr(adapter, "last_total", None)
+            if not isinstance(src_total, int):
+                src_total = 0   # the adapter does not report a total
 
             if on_progress:
                 on_progress(fetched, src_total)  # src_total == 0 means "unknown"
@@ -400,6 +432,23 @@ class SourceOrchestrator:
             page += 1
 
         logger.info("Source %s: %d records fetched", source_name, fetched)
+        if unreadable:
+            label = _source_label(source_name)
+            got = seen_raw or unreadable
+            logger.warning("Source %s: %d of %d records could not be read",
+                           source_name, unreadable, got)
+            if on_status:
+                on_status(f"{label}: {unreadable:,} of {got:,} records could not be read")
+                if unreadable >= got:     # every record failed, not just some
+                    on_status(f"{label} {FAILURE_STATUS_MARKER} (error)")
+        more_left = (seen_raw < src_total) if src_total else last_page_full
+        if limited and more_left:
+            label = _source_label(source_name)
+            of_total = f" of {src_total:,}" if src_total else ""
+            logger.warning("Source %s truncated: %d%s read", source_name, seen_raw, of_total)
+            if on_status:
+                on_status(f"{label}: {seen_raw:,}{of_total} read (result limit reached)")
+                on_status(f"{label} {FAILURE_STATUS_MARKER} (truncated)")
         return fetched
 
     # ── Enrichment ─────────────────────────────────────────────────────────────
@@ -441,7 +490,8 @@ class SourceOrchestrator:
         if on_progress:
             on_progress(0, total)
 
-        failed = {"Crossref": 0, "Unpaywall": 0}
+        failed = {"Crossref": 0, "Unpaywall": 0}   # lookup failed: retry later
+        errors = {"Crossref": 0, "Unpaywall": 0}   # our code raised: a bug (M19)
         attempted = 0
         for i, record in enumerate(targets, start=1):
             if should_stop and should_stop():
@@ -453,9 +503,13 @@ class SourceOrchestrator:
                 try:
                     if adapter.enrich(record) is False:
                         failed[label] += 1
-                except Exception as e:
-                    failed[label] += 1
-                    logger.debug("%s error for %s: %s", label, record.doi, e)
+                except Exception:
+                    # The adapters turn network and service failures into a
+                    # False return. An exception here is a defect in reading
+                    # the response, not an outage, so it is not counted as one.
+                    errors[label] += 1
+                    logger.warning("%s enrichment raised for %s", label, record.doi,
+                                   exc_info=True)
             # Update every 25 records (and on the final one) to limit UI churn.
             if on_progress and (i % 25 == 0 or i == total):
                 on_progress(i, total)
@@ -471,6 +525,11 @@ class SourceOrchestrator:
                 on_status(f"{label} failed for {count:,} of {attempted:,} papers")
             if on_problem:
                 on_problem(label, count, attempted)
+
+        for label, count in errors.items():
+            if count and on_status:
+                on_status(f"{label} lookups hit a program error for {count:,} of "
+                          f"{attempted:,} papers (details in the server log)")
 
     # ── Ranking ────────────────────────────────────────────────────────────────
 

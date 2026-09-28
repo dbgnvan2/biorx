@@ -289,3 +289,223 @@ def test_i3_crossref_enrich_reports_a_failed_lookup():
         assert adapter.enrich(record()) is False
     with patch.object(adapter.session, "get", return_value=MagicMock(ok=False, status_code=404)):
         assert adapter.enrich(record()) is True
+
+
+# ── B3: OSF sources see every term, or no title filter at all ────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B3
+# Before the fix only query.split()[0] was sent as filter[title]: for
+# "Loneliness" every "social isolation" preprint was dropped by the server.
+
+def _osf_adapter(pages_by_title=None, cfg=None):
+    """PsyArXiv adapter whose session.get answers from pages_by_title[term]."""
+    from unittest.mock import MagicMock
+    from src.sources.psyarxiv import PsyArxivAdapter
+
+    adapter = PsyArxivAdapter(sources_config=cfg or {})
+    pages_by_title = pages_by_title or {}
+
+    def get(url, params=None, timeout=None):
+        term = params.get("filter[title]")
+        data = pages_by_title.get(term, [])
+        resp = MagicMock(status_code=200, ok=True)
+        resp.json.return_value = {"data": data, "meta": {"total": len(data)}}
+        return resp
+
+    adapter.session.get = MagicMock(side_effect=get)
+    return adapter
+
+
+def _sent_titles(adapter):
+    return [c.kwargs["params"].get("filter[title]") for c in adapter.session.get.call_args_list]
+
+
+def _two_group_filter():
+    return {"days_back": 7, "start_date": "", "end_date": "",
+            "text_groups": [
+                {"title": "loneliness", "abstract": "family", "both": ""},
+                {"title": "social Isolation", "abstract": "family", "both": ""},
+            ]}
+
+
+def test_b3_every_or_group_reaches_osf():
+    adapter = _osf_adapter({"loneliness": [{"id": "a"}],
+                            "social Isolation": [{"id": "b"}, {"id": "a"}]})
+    out = adapter.search("ignored", filter_dict=_two_group_filter())
+
+    assert _sent_titles(adapter) == ["loneliness", "social Isolation"]
+    assert [r["id"] for r in out] == ["a", "b"]          # merged, no repeat
+    assert adapter.last_page_size == 3                   # what the source sent
+
+
+def test_b3_multiword_term_sent_whole():
+    adapter = _osf_adapter()
+    adapter.search("maternal deprivation", filter_dict={
+        "days_back": 7, "text_groups": [{"title": "Maternal deprivation*"}]})
+    assert _sent_titles(adapter) == ["Maternal deprivation"]
+
+
+def test_b3_group_without_title_term_fetches_by_date():
+    """A group matching on abstract only could be lost by a title filter."""
+    adapter = _osf_adapter()
+    adapter.search("x", filter_dict={"days_back": 7, "text_groups": [
+        {"title": "stress"}, {"abstract": "cortisol"}]})
+    assert _sent_titles(adapter) == [None]
+
+
+def test_b3_terms_over_cap_fall_back_to_date_only():
+    groups = [{"title": f"term{i}"} for i in range(4)]
+    adapter = _osf_adapter(cfg={"osf": {"max_title_terms": 3}})
+    adapter.search("x", filter_dict={"days_back": 7, "text_groups": groups})
+    assert _sent_titles(adapter) == [None]
+
+
+def test_b3_exhausted_term_not_requested_again():
+    full = [{"id": f"x{i}"} for i in range(50)]
+    adapter = _osf_adapter({"a": full, "b": [{"id": "y"}]})
+    fd = {"days_back": 7, "text_groups": [{"title": "a"}, {"title": "b"}]}
+    adapter.search("q", page=1, page_size=50, filter_dict=fd)
+    adapter.session.get.reset_mock()
+    adapter.search("q", page=2, page_size=50, filter_dict=fd)
+    assert _sent_titles(adapter) == ["a"]     # "b" ended on page 1
+
+
+# ── B7 / M18: bioRxiv and medRxiv, over the filter's own dates ───────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B7, #M18
+# Before the fix the adapter called search_recent(days=days_back, server="biorxiv"):
+# a saved date range was ignored (days_back 0 meant "today only") and medRxiv
+# was never asked.
+
+def _biorxiv_adapter(collections, cfg=None):
+    """collections[(server, cursor)] -> list of raw papers the API returns."""
+    from src.sources.biorxiv_medrxiv import BiorxivMedrxivAdapter
+    adapter = BiorxivMedrxivAdapter(sources_config=cfg or {})
+    calls = []
+
+    def by_range(start_date, end_date, category=None, server="biorxiv", cursor=0, **_):
+        calls.append((server, start_date, end_date, cursor))
+        coll = collections.get((server, cursor), [])
+        total = sum(len(v) for (s, _c), v in collections.items() if s == server)
+        return {"messages": [{"total": total}],
+                "collection": [dict(p, server=server) for p in coll]}
+
+    adapter._api.search_by_date_range = by_range
+    adapter._api.search_recent = MagicMock(side_effect=AssertionError("search_recent used"))
+    return adapter, calls
+
+
+def test_b7_date_range_used():
+    adapter, calls = _biorxiv_adapter({})
+    adapter.search("x", filter_dict={"days_back": 0, "start_date": "2020-06-01",
+                                     "end_date": "2026-06-08"})
+    assert calls and all(c[1:3] == ("2020-06-01", "2026-06-08") for c in calls)
+
+
+def test_b7_medrxiv_queried():
+    adapter, calls = _biorxiv_adapter({
+        ("biorxiv", 0): [{"doi": "10.1101/b1", "title": "B", "version": "1"}],
+        ("medrxiv", 0): [{"doi": "10.1101/m1", "title": "M", "version": "1"}],
+    })
+    out = adapter.search("x", filter_dict={"days_back": 7})
+    assert {c[0] for c in calls} == {"biorxiv", "medrxiv"}
+    recs = [adapter.normalize(r) for r in out]
+    assert {r.journal_or_server for r in recs} == {"biorxiv", "medrxiv"}
+    assert any(r.source_url.startswith("https://www.medrxiv.org/") for r in recs)
+
+
+def test_b7_servers_configurable():
+    adapter, calls = _biorxiv_adapter({}, cfg={"biorxiv_medrxiv": {"servers": ["medrxiv"]}})
+    adapter.search("x", filter_dict={"days_back": 7})
+    assert {c[0] for c in calls} == {"medrxiv"}
+
+
+def test_b7_pages_through_each_server():
+    full = [{"doi": f"10.1101/b{i}", "title": f"B{i}", "version": "1"} for i in range(100)]
+    adapter, calls = _biorxiv_adapter({("biorxiv", 0): full,
+                                       ("biorxiv", 100): full[:5],
+                                       ("medrxiv", 0): full[:3]})
+    fd = {"days_back": 7}
+    adapter.search("x", page=1, filter_dict=fd)
+    adapter.search("x", page=2, filter_dict=fd)
+    assert ("biorxiv", 100) in [(c[0], c[3]) for c in calls]
+    # medRxiv's short first page ended it: not asked again on page 2.
+    assert [(c[0], c[3]) for c in calls].count(("medrxiv", 100)) == 0
+
+
+def test_m18_biorxiv_version_carried():
+    from src.sources.biorxiv_medrxiv import BiorxivMedrxivAdapter
+    from src.filtering import filter_papers
+    rec = BiorxivMedrxivAdapter.__new__(BiorxivMedrxivAdapter).normalize({
+        "doi": "10.1101/x", "title": "Revised", "version": "2", "server": "biorxiv"})
+    d = rec.to_dict()
+    assert d["version"] == "2"
+    assert filter_papers([d], {"version": "2+ (revised only)"}) == [d]
+    assert filter_papers([d], {"version": "1 (first submission only)"}) == []
+
+
+# ── M19: an empty container-title is not a Crossref outage ───────────────────
+
+def test_m19_empty_container_title():
+    """Crossref returns "container-title": [] for many posted-content DOIs.
+    Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M19"""
+    from src.sources.crossref import CrossrefAdapter
+    from src.sources.schema import CanonicalRecord, RecordFlags
+
+    adapter = CrossrefAdapter()
+    adapter.get_by_id = MagicMock(return_value={
+        "container-title": [], "author": [{"given": "Ann", "family": "Lee"}]})
+    rec = CanonicalRecord(
+        canonical_id="doi:10.1/x", title="T", abstract="", authors=[], year=2024,
+        published_date="2024-01-01", document_type="preprint", is_preprint=True,
+        journal_or_server="", doi="10.1/x", pmid="", pmcid="", source_url="",
+        best_oa_url="", pdf_url="", license="", oa_status="", subjects=[],
+        keywords=[], source_hits=[], flags=RecordFlags())
+    assert adapter.enrich(rec) is True
+    assert rec.journal_or_server == ""
+    assert [a.display_name for a in rec.authors] == ["Ann Lee"]   # backfill still ran
+
+
+# ── B5 (found live): Europe PMC types come from pubTypeList ──────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B5
+# tests/fixtures/europepmc_core_sample.json is trimmed from real core-format
+# responses (2026-09-28). The adapter read a `pubType` field the API does not
+# send, so every record was "other" and no Europe PMC preprint was flagged.
+
+def _epmc_sample():
+    import json
+    path = Path(__file__).parent / "fixtures" / "europepmc_core_sample.json"
+    return json.loads(path.read_text())
+
+
+def test_b5_europepmc_types_from_real_response():
+    from src.sources.europepmc import EuropePmcAdapter
+    a = EuropePmcAdapter()
+    got = {tuple(r["pubTypeList"]["pubType"]): a.normalize(r) for r in _epmc_sample()}
+    assert got[("Journal Article",)].document_type == "article"
+    assert got[("Review", "Journal Article")].document_type == "review"
+    assert got[("Editorial",)].document_type == "other"
+    pre = got[("Preprint",)]
+    assert pre.document_type == "preprint" and pre.is_preprint
+    assert pre.to_dict()["published"] == "NA"
+
+
+def test_b5_real_review_matches_review_filter():
+    """Adversarial: the saved "Loneliness" filter matched 0 of 709 live."""
+    from src.sources.europepmc import EuropePmcAdapter
+    from src.filtering import filter_papers
+    papers = [EuropePmcAdapter().normalize(r).to_dict() for r in _epmc_sample()]
+    reviews = filter_papers(papers, {"paper_type": "review article"})
+    assert [p["type"] for p in reviews] == ["review"]
+
+
+def test_b5_trial_type_mapped():
+    from src.sources.europepmc import EuropePmcAdapter
+    r = EuropePmcAdapter().normalize({"title": "t", "pubTypeList": {
+        "pubType": ["Randomized Controlled Trial", "Journal Article"]}})
+    assert r.document_type == "trial"
+
+
+def test_b5_real_licences_read():
+    from src.sources.europepmc import EuropePmcAdapter
+    from src import filter_vocabulary as vocab
+    ids = {vocab.license_id(EuropePmcAdapter().normalize(r).license) for r in _epmc_sample()}
+    assert {"cc-by", "cc0", "cc-by-nc-nd", "cc-by-nd"} <= ids

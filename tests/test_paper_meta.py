@@ -149,13 +149,22 @@ def test_openalex_strips_a_doi_url_prefix():
     assert g.call_args.args[0].endswith("works/doi:10.1/x")
 
 
-def test_openalex_returns_empty_on_error_missing_index_or_exception():
-    with patch("src.paper_meta.requests.get", return_value=_json_resp({}, ok=False)):
+def test_openalex_empty_when_not_found_or_no_index_raises_when_unreachable():
+    """Since review M21 "not found" is "", but an outage raises, so abstract
+    recovery lists OpenAlex as failed rather than as having nothing."""
+    import requests as _rq
+    from src.sources.errors import SourceUnavailableError
+    with patch("src.paper_meta.requests.get", return_value=_status_resp(404)):
         assert fetch_openalex_abstract("10.1/x") == ""
-    with patch("src.paper_meta.requests.get", return_value=_json_resp({})):
+    with patch("src.paper_meta.requests.get", return_value=_status_resp(200, {})):
         assert fetch_openalex_abstract("10.1/x") == ""
-    with patch("src.paper_meta.requests.get", side_effect=OSError("boom")):
-        assert fetch_openalex_abstract("10.1/x") == ""
+    with patch("src.paper_meta.requests.get", side_effect=_rq.ConnectionError("boom")), \
+         patch("src.sources.base.time.sleep"):
+        with pytest.raises(SourceUnavailableError):
+            fetch_openalex_abstract("10.1/x")
+    with patch("src.paper_meta.requests.get", return_value=_status_resp(403)):
+        with pytest.raises(SourceUnavailableError):
+            fetch_openalex_abstract("10.1/x")
 
 
 def test_openalex_sets_a_timeout_and_identifies_itself(monkeypatch):
@@ -200,3 +209,63 @@ def test_gui_uses_the_shared_helpers():
     assert gui._paper_link is paper_link
     assert gui._scrape_abstract_from_url is scrape_abstract_from_url
     assert gui._fetch_openalex_abstract is fetch_openalex_abstract
+
+
+# ── M21: an outage is reported as an outage, not as "nothing found" ──────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M21
+# The Europe PMC, PMC full-text and OpenAlex helpers caught every exception and
+# returned None/"", so recover_abstract never listed them in `failed`, and the
+# user was told the sources had nothing instead of "try again".
+
+def _status_resp(code, payload=None):
+    import requests as _rq
+    m = MagicMock(spec=_rq.Response)
+    m.status_code = code
+    m.ok = code < 400
+    m.json.return_value = payload or {}
+    m.text = ""
+    return m
+
+
+def test_m21_outage_reported_as_failed():
+    import requests as _rq
+    from src.paper_meta import recover_abstract
+    from src.sources.europepmc import EuropePmcAdapter
+
+    epmc = EuropePmcAdapter()
+    epmc.session.get = MagicMock(side_effect=_rq.ConnectionError("down"))
+    with patch("src.paper_meta._europepmc", return_value=epmc), \
+         patch("src.paper_meta._crossref_abstract", return_value=""), \
+         patch("src.paper_meta.requests.get", return_value=_status_resp(503)), \
+         patch("src.sources.base.time.sleep"), \
+         patch("src.paper_meta.scrape_abstract_from_url", return_value=""):
+        result = recover_abstract({"doi": "10.1/x", "pmcid": "PMC1"})
+    assert not result.found
+    assert {"europepmc", "pmc_fulltext", "openalex"} <= set(result.failed), result.failed
+
+
+def test_m21_not_found_is_not_a_failure():
+    """Adversarial: a 404 is a real "nothing there", not an outage."""
+    from src.paper_meta import recover_abstract
+    from src.sources.europepmc import EuropePmcAdapter
+
+    epmc = EuropePmcAdapter()
+    epmc.session.get = MagicMock(side_effect=lambda url, **kw: (
+        _status_resp(404) if "fullTextXML" in url
+        else _status_resp(200, {"resultList": {"result": []}})))
+    with patch("src.paper_meta._europepmc", return_value=epmc), \
+         patch("src.paper_meta._crossref_abstract", return_value=""), \
+         patch("src.paper_meta.requests.get", return_value=_status_resp(404)), \
+         patch("src.paper_meta.scrape_abstract_from_url", return_value=""):
+        result = recover_abstract({"doi": "10.1/x", "pmcid": "PMC1"})
+    assert not result.found
+    assert result.failed == []
+
+
+def test_m21_openalex_retried():
+    idx = {"abstract_inverted_index": {"recovered": [0]}}
+    with patch("src.paper_meta.requests.get",
+               side_effect=[_status_resp(503), _status_resp(200, idx)]) as g, \
+         patch("src.sources.base.time.sleep"):
+        assert fetch_openalex_abstract("10.1/x") == "recovered"
+    assert g.call_count == 2

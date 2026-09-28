@@ -11,20 +11,19 @@ const POLL_MS   = 1500;
 // (~12 s at POLL_MS). A single blip must not end a search that is still running.
 const POLL_GIVE_UP = 8;
 
-const BIORXIV_CATEGORIES = [
-  "(any)","animal behavior and cognition","biochemistry","bioengineering",
-  "bioinformatics","biophysics","cancer biology","cell biology","clinical trials",
-  "developmental biology","ecology","epidemiology","evolutionary biology",
-  "genetics","genomics","immunology","microbiology","molecular biology",
-  "neuroscience","paleontology","pathology","pharmacology and toxicology",
-  "physiology","plant biology","scientific communication and education",
-  "synthetic biology","systems biology","zoology",
+/* Filter facet options (category, paper type, version, published, licence,
+   species) come from the server's filter_vocabulary.yaml via /api/vocabulary.
+   Filters store the option ids; the labels are only shown (review S3). */
+const ANY = "any";
+// Filter-editor <select> ids and the facet (filter key) each one edits.
+const FACET_FIELDS = [
+  ["filter-category",   "category"],
+  ["filter-paper-type", "paper_type"],
+  ["filter-version",    "version"],
+  ["filter-published",  "published"],
+  ["filter-license",    "license"],
+  ["filter-species",    "species"],
 ];
-const PAPER_TYPES = ["(any)","new results","confirmatory results","contradictory results","review article"];
-const VERSIONS    = ["(any)","1 (first submission only)","2+ (revised only)"];
-const PUBLISHED   = ["(any)","preprints only (not in journal)","published in journal only"];
-const LICENSES    = ["(any)","cc_by","cc_by_nc","cc_by_nd","cc_no","pd"];
-const SPECIES     = ["(any)","Human studies only","Exclude animal studies","Animal studies only"];
 
 /* A paper's URL comes from an external API. Assigning it to href without
  * checking the scheme would let a "javascript:" URL run in a colleague's
@@ -646,33 +645,54 @@ function getSourceSelection(container) {
 
 /* ── Search tab ──────────────────────────────────────────────────────────── */
 
-function populateCategorySelect(selectId) {
+let vocabPromise = null;
+
+/* The facet options, fetched once. A failed fetch is reported and tried again
+   on the next call rather than cached as empty. */
+function vocabulary() {
+  if (!vocabPromise) {
+    vocabPromise = api("GET", "/api/vocabulary").catch(e => {
+      vocabPromise = null;
+      notice(`Could not load the filter options: ${e.message}`, "warn");
+      return null;
+    });
+  }
+  return vocabPromise;
+}
+
+/* Fill a facet's <select> with id values and label text, once. */
+async function populateFacetSelect(selectId, facet) {
   const sel = $(selectId);
   if (!sel || sel.options.length > 0) return;
-  for (const cat of BIORXIV_CATEGORIES) {
+  const vocab = await vocabulary();
+  if (!vocab || sel.options.length > 0) return;
+  for (const o of vocab[facet] || []) {
     const opt = document.createElement("option");
-    opt.value = cat;
-    opt.textContent = cat;
+    opt.value = o.id;
+    opt.textContent = o.label;
     sel.appendChild(opt);
   }
 }
 
-function populateSelect(selectId, options) {
-  const sel = $(selectId);
-  if (!sel || sel.options.length > 0) return;
-  for (const val of options) {
+/* Show a stored facet id. An id the list does not offer (options failed to
+   load, or a value from a newer server) is added as it is, so saving the
+   filter again keeps it instead of silently resetting it to "any". */
+function setFacetValue(sel, value) {
+  const v = value || ANY;
+  if (!Array.from(sel.options).some(o => o.value === v)) {
     const opt = document.createElement("option");
-    opt.value = val;
-    opt.textContent = val;
+    opt.value = v;
+    opt.textContent = v;
     sel.appendChild(opt);
   }
+  sel.value = v;
 }
 
 /* E2: the saved filters are a Select Filter dropdown, not a list that grows
    without end. The selection survives a rebuild of the list (a filter saved on
    the Filters tab) as long as that filter still exists. */
 async function loadSearchFilters() {
-  populateCategorySelect("search-category");
+  await populateFacetSelect("search-category", "category");
   const sel = $("search-filter-select");
   const previous = sel.value;
   sel.textContent = "";
@@ -783,7 +803,7 @@ function manualFilter() {
     authors: [],
   };
   const cat = $("search-category").value;
-  if (cat && cat !== "(any)") f.category = cat;
+  if (cat && cat !== ANY) f.category = cat;
   if (useRange) {
     f.start_date = $("search-start-date").value;
     f.end_date   = $("search-end-date").value;
@@ -1450,12 +1470,7 @@ function closeModal() {
 /* ── Filters tab ─────────────────────────────────────────────────────────── */
 
 async function loadFilterTab() {
-  populateCategorySelect("filter-category");
-  populateSelect("filter-paper-type", PAPER_TYPES);
-  populateSelect("filter-version", VERSIONS);
-  populateSelect("filter-published", PUBLISHED);
-  populateSelect("filter-license", LICENSES);
-  populateSelect("filter-species", SPECIES);
+  for (const [elId, facet] of FACET_FIELDS) await populateFacetSelect(elId, facet);
   renderSourcePicker($("filter-sources-picker"), state.sources, defaultSourceIds());
   await reloadFilterList();
 }
@@ -1499,8 +1514,6 @@ function selectFilter(filterId) {
   $("filter-enabled").checked = f.enabled !== false;
 
   const fd = filterFields(f);
-  const cat = fd.category || "(any)";
-  $("filter-category").value = cat;
 
   // start_date/end_date are what the query builder reads; date_from/date_to
   // were written by an earlier web build and are read here only to migrate.
@@ -1515,14 +1528,8 @@ function selectFilter(filterId) {
   $("filter-end-date").value   = endDate;
 
   $("filter-authors").value    = (fd.authors    || []).join(", ");
-  // A string in the desktop format; an earlier web build saved a list.
-  $("filter-institution").value = Array.isArray(fd.institution)
-    ? fd.institution.join(", ") : (fd.institution || "");
-  $("filter-paper-type").value = fd.paper_type || "(any)";
-  $("filter-version").value    = fd.version    || "(any)";
-  $("filter-published").value  = fd.published  || "(any)";
-  $("filter-license").value    = fd.license    || "(any)";
-  $("filter-species").value    = fd.species    || "(any)";
+  // The server sends vocabulary ids (it maps older labels on read).
+  for (const [elId, facet] of FACET_FIELDS) setFacetValue($(elId), fd[facet]);
 
   renderTextGroups(fd.text_groups || [{}]);
 
@@ -1618,26 +1625,17 @@ function buildFilterDict() {
   const f = {
     text_groups: collectTextGroups(),
     authors:     $("filter-authors").value.split(",").map(s => s.trim()).filter(Boolean),
-    institution: $("filter-institution").value.trim(),   // a string: filtering.py calls .strip()
     source_selection: getSourceSelection($("filter-sources-picker")),
   };
-  const cat = $("filter-category").value;
-  if (cat && cat !== "(any)") f.category = cat;
   if (useRange) {
     f.start_date = $("filter-start-date").value;
     f.end_date   = $("filter-end-date").value;
   } else {
     f.days_back = Number($("filter-days").value) || 7;
   }
-  for (const [key, elId, defVal] of [
-    ["paper_type", "filter-paper-type", "(any)"],
-    ["version",    "filter-version",    "(any)"],
-    ["published",  "filter-published",  "(any)"],
-    ["license",    "filter-license",    "(any)"],
-    ["species",    "filter-species",    "(any)"],
-  ]) {
+  for (const [elId, facet] of FACET_FIELDS) {
     const val = $(elId).value;
-    if (val && val !== defVal) f[key] = val;
+    if (val && val !== ANY) f[facet] = val;
   }
   return f;
 }
@@ -1651,7 +1649,6 @@ async function newFilter() {
   $("filter-days-wrap").classList.remove("hidden");
   $("filter-date-range-wrap").classList.add("hidden");
   $("filter-authors").value = "";
-  $("filter-institution").value = "";
   renderTextGroups([{}]);
   renderSourcePicker($("filter-sources-picker"), state.sources, defaultSourceIds());
   $("filter-name").focus();

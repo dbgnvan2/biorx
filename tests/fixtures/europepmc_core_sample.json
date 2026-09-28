@@ -1,0 +1,308 @@
+[
+ {
+  "id": "38603494",
+  "source": "MED",
+  "pmid": "38603494",
+  "doi": "10.1126/science.adp6654",
+  "title": "A loneliness cure.",
+  "authorString": "Teng D.",
+  "authorList": {
+   "author": [
+    {
+     "fullName": "Teng D",
+     "lastName": "Teng",
+     "firstName": "Dequn",
+     "initials": "D",
+     "authorAffiliationDetailsList": {
+      "authorAffiliation": [
+       {
+        "affiliation": "Dequn Teng is a Ph.D. candidate at the University of Cambridge. Send your career story to SciCareerEditor@aaas.org."
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "pubYear": "2024",
+  "firstPublicationDate": "2024-04-11",
+  "pubTypeList": {
+   "pubType": [
+    "Journal Article"
+   ]
+  },
+  "isOpenAccess": "N",
+  "abstractText": ""
+ },
+ {
+  "id": "38300245",
+  "source": "MED",
+  "pmid": "38300245",
+  "doi": "10.12968/bjcn.2024.29.2.60",
+  "title": "Loneliness in older adults.",
+  "authorString": "da Silva THR.",
+  "authorList": {
+   "author": [
+    {
+     "fullName": "da Silva THR",
+     "lastName": "da Silva",
+     "firstName": "Tiago Horta Reis",
+     "initials": "THR",
+     "authorAffiliationDetailsList": {
+      "authorAffiliation": [
+       {
+        "affiliation": "Lecturer in Nursing Education AEP, Department of Adult Nursing, Florence Nightingale Faculty of Nursing, Midwifery and Palliative Care, King's College London."
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "pubYear": "2024",
+  "firstPublicationDate": "2024-02-01",
+  "pubTypeList": {
+   "pubType": [
+    "Review",
+    "Journal Article"
+   ]
+  },
+  "isOpenAccess": "N",
+  "abstractText": "This article aims to provide an overview on loneliness in older people, with an emphasis on how insights from this body of literature can significantly contribute to the enhancement of care provided by community nurses. This review aims to provide a nuanced understanding of the factors contributing "
+ },
+ {
+  "id": "PPR986600",
+  "source": "PPR",
+  "doi": "10.31234/osf.io/yecrm_v1",
+  "title": "Loneliness and Personality: Noise- and Bias-free True Correlations Between Loneliness and the Big Five Personality Domains",
+  "authorString": "Maher P, Dragostinov Y, Vainik U, Cooper AJ, Realo A, Allik J, M\u00f5ttus R.",
+  "authorList": {
+   "author": [
+    {
+     "fullName": "Maher P",
+     "lastName": "Maher",
+     "firstName": "Paddy",
+     "initials": "P",
+     "authorId": {
+      "type": "ORCID",
+      "value": "0000-0003-4354-3550"
+     }
+    },
+    {
+     "fullName": "Dragostinov Y",
+     "lastName": "Dragostinov",
+     "firstName": "Yavor",
+     "initials": "Y"
+    }
+   ]
+  },
+  "pubYear": "2024",
+  "firstPublicationDate": "2024-03-07",
+  "pubTypeList": {
+   "pubType": [
+    "Preprint"
+   ]
+  },
+  "isOpenAccess": "N",
+  "license": "cc0",
+  "abstractText": "<p>Loneliness is intertwined with many mental and physical health problems. While its origins remain unclear, loneliness has been linked to personality traits. Combining self- and informant ratings in multiple samples, we conducted the largest study to date to examine the true correlations (rtrues) "
+ },
+ {
+  "id": "PPR855425",
+  "source": "PPR",
+  "doi": "10.31234/osf.io/gmus3",
+  "title": "Loneliness, World Beliefs, and Daily Social Interaction",
+  "authorString": "Lemay E, Cutri J, Or RT, Davis A, Xiao Z.",
+  "authorList": {
+   "author": [
+    {
+     "fullName": "Lemay E",
+     "lastName": "Lemay",
+     "firstName": "Edward",
+     "initials": "E"
+    },
+    {
+     "fullName": "Cutri J",
+     "lastName": "Cutri",
+     "firstName": "Jennifer",
+     "initials": "J"
+    }
+   ]
+  },
+  "pubYear": "2024",
+  "firstPublicationDate": "2024-05-20",
+  "pubTypeList": {
+   "pubType": [
+    "Preprint"
+   ]
+  },
+  "isOpenAccess": "N",
+  "license": "cc by",
+  "abstractText": "<p>Introduction: Lonely people often crave social connection, but their social interactions fall short of fulfilling their needs. Although loneliness has been associated with negative views of the world, it is not clear whether these world beliefs contribute to the unfulfilling social interaction pa"
+ },
+ {
+  "id": "38596635",
+  "source": "MED",
+  "pmid": "38596635",
+  "pmcid": "PMC11002202",
+  "doi": "10.3389/fpsyt.2024.1401798",
+  "title": "Editorial: New insights into social isolation and loneliness.",
+  "authorString": "Kotozaki Y, Levy-Storms L.",
+  "authorList": {
+   "author": [
+    {
+     "fullName": "Kotozaki Y",
+     "lastName": "Kotozaki",
+     "firstName": "Yuka",
+     "initials": "Y",
+     "authorAffiliationDetailsList": {
+      "authorAffiliation": [
+       {
+        "affiliation": "Iwate Medical University, Yahaba, Japan."
+       }
+      ]
+     }
+    },
+    {
+     "fullName": "Levy-Storms L",
+     "lastName": "Levy-Storms",
+     "firstName": "Len\u00e9",
+     "initials": "L",
+     "authorAffiliationDetailsList": {
+      "authorAffiliation": [
+       {
+        "affiliation": "University of California, Los Angeles, Los Angeles, CA, United States."
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "pubYear": "2024",
+  "firstPublicationDate": "2024-03-26",
+  "pubTypeList": {
+   "pubType": [
+    "Editorial"
+   ]
+  },
+  "isOpenAccess": "Y",
+  "license": "cc by",
+  "abstractText": ""
+ },
+ {
+  "id": "PPR749963",
+  "source": "PPR",
+  "doi": "10.1101/2023.10.30.23297746",
+  "title": "Oxytocin-augmented modular-based group intervention for loneliness: A proof-of-concept randomized-controlled trial",
+  "authorString": "Berger R, Hurlemann R, Shamay-Tsoory SG, Kantermann A, Brauser M, Gorni J, Luhmann M, Schramm E, Schultz J, Philipsen A, Lieberz J, Scheele D.",
+  "authorList": {
+   "author": [
+    {
+     "fullName": "Berger R",
+     "lastName": "Berger",
+     "firstName": "Ruben",
+     "initials": "R"
+    },
+    {
+     "fullName": "Hurlemann R",
+     "lastName": "Hurlemann",
+     "firstName": "Rene",
+     "initials": "R",
+     "authorId": {
+      "type": "ORCID",
+      "value": "0000-0003-2628-565X"
+     }
+    }
+   ]
+  },
+  "pubYear": "2023",
+  "firstPublicationDate": "2023-10-30",
+  "pubTypeList": {
+   "pubType": [
+    "Preprint"
+   ]
+  },
+  "isOpenAccess": "N",
+  "abstractText": "<h4>Introduction</h4> Loneliness poses a significant health problem and existing psychological interventions have shown only limited positive effects on loneliness. Based on preliminary evidence for impaired oxytocin signaling in trait-like loneliness, the current proof-of-concept study used a rando"
+ },
+ {
+  "id": "PPR1278194",
+  "source": "PPR",
+  "doi": "10.64898/2026.07.08.26357424",
+  "title": "Loneliness among US adults in the 2024 National Health Interview Survey",
+  "authorString": "Sikder P.",
+  "authorList": {
+   "author": [
+    {
+     "fullName": "Sikder P",
+     "lastName": "Sikder",
+     "firstName": "Pranta",
+     "initials": "P",
+     "authorId": {
+      "type": "ORCID",
+      "value": "0009-0000-8569-2541"
+     }
+    }
+   ]
+  },
+  "pubYear": "2026",
+  "firstPublicationDate": "2026-07-13",
+  "pubTypeList": {
+   "pubType": [
+    "Preprint"
+   ]
+  },
+  "isOpenAccess": "N",
+  "license": "cc by-nc-nd",
+  "abstractText": "<h4>Rationale</h4>  Loneliness is associated with premature mortality and poor mental health and was declared an epidemic by the US Surgeon General in 2023, yet national surveillance has relied on state-based or experimental online surveys. In 2024, the National Health Interview Survey (NHIS), the p"
+ },
+ {
+  "id": "PPR1266154",
+  "source": "PPR",
+  "doi": "10.64898/2026.04.08.26350416",
+  "title": "Genetic predisposition to loneliness increases schizophrenia and depression risk through inflammatory pathways: a Mendelian randomization study",
+  "authorString": "Romualdo-Perez CI, Khandaker GM, Sanderson E, Lau JY, Carvalho LA.",
+  "authorList": {
+   "author": [
+    {
+     "fullName": "Romualdo-Perez CI",
+     "lastName": "Romualdo-Perez",
+     "firstName": "Coral",
+     "initials": "CI",
+     "authorAffiliationDetailsList": {
+      "authorAffiliation": [
+       {
+        "affiliation": "Translational Pharmacology Lab, , Charterhouse Square, , ,"
+       }
+      ]
+     }
+    },
+    {
+     "fullName": "Khandaker GM",
+     "lastName": "Khandaker",
+     "firstName": "Golam",
+     "initials": "GM",
+     "authorId": {
+      "type": "ORCID",
+      "value": "0000-0002-4935-9220"
+     },
+     "authorAffiliationDetailsList": {
+      "authorAffiliation": [
+       {
+        "affiliation": ", , ,"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "pubYear": "2026",
+  "firstPublicationDate": "2026-04-10",
+  "pubTypeList": {
+   "pubType": [
+    "Preprint"
+   ]
+  },
+  "isOpenAccess": "Y",
+  "license": "cc by-nd",
+  "abstractText": "<h4>Background</h4>  Loneliness is a psychosocial stressor associated with elevated risk of severe mental illness (SMI), including major depressive disorder (MDD), schizophrenia (SCZ), and bipolar disorder (BD). Loneliness is theorized to become biologically embedded via inflammation-related mechani"
+ }
+]

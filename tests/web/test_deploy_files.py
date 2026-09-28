@@ -456,3 +456,11 @@ def test_downloaded_pdfs_go_to_the_data_volume(monkeypatch, tmp_path):
 
     monkeypatch.delenv("DATA_DIR")
     assert default_pdf_dir() == DEFAULT_PDF_DIR      # the desktop location
+
+
+def test_s3_image_ships_filter_vocabulary():
+    """src/filter_vocabulary.py reads filter_vocabulary.yaml at the repo root;
+    without it in the image every search fails (review S3)."""
+    text = (ROOT / "Dockerfile").read_text()
+    copy_lines = [l for l in text.splitlines() if l.upper().startswith("COPY ")]
+    assert any("filter_vocabulary.yaml" in l.split() for l in copy_lines)

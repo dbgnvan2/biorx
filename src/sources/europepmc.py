@@ -107,6 +107,11 @@ class EuropePmcAdapter:
         # Surfaced for progress reporting (spec E2.2). None until first search.
         self.last_total: Optional[int] = None
 
+    def for_search(self) -> "EuropePmcAdapter":
+        """A new instance for one search: the cursor lives on the instance, and
+        concurrent searches must not share it (review B6)."""
+        return type(self)(timeout=self.timeout, sources_config=self.sources_config)
+
     def search(
         self, query: str, page: int = 1, page_size: int = 25
     ) -> Sequence[RawRecord]:
@@ -179,25 +184,31 @@ class EuropePmcAdapter:
         return 0
 
     def get_by_id(self, identifier: str) -> Optional[RawRecord]:
-        """Fetch a single record by PMID or DOI."""
-        # Determine query form
+        """Fetch a single record by PMID or DOI.
+
+        Returns None when Europe PMC has no such record. Raises
+        SourceUnavailableError / RateLimitedError when it could not answer, so
+        callers can say "try again" rather than "not found" (review M21).
+        """
         if identifier.startswith("10."):
             query = f'DOI:"{identifier}"'
         else:
             query = f"EXT_ID:{identifier} AND SRC:MED"
 
         params = {"query": query, "resultType": "core", "pageSize": 1, "format": "json"}
-        try:
-            resp = with_retry(
-                lambda: self.session.get(BASE_URL, params=params, timeout=self.timeout),
-                source_label="Europe PMC get_by_id",
-            )
-            if resp.ok:
-                results = resp.json().get("resultList", {}).get("result", [])
-                return results[0] if results else None
-        except Exception as e:
-            logger.error("Europe PMC get_by_id error: %s", e)
-        return None
+        resp = with_retry(
+            lambda: self.session.get(BASE_URL, params=params, timeout=self.timeout),
+            source_label="Europe PMC get_by_id",
+        )
+        if resp.status_code == 429:
+            raise RateLimitedError("Europe PMC rate limit hit")
+        if not resp.ok:
+            # A 4xx here is a query Europe PMC would not take (an odd DOI), not
+            # an outage; 5xx was already retried and raised by with_retry.
+            logger.warning("Europe PMC get_by_id(%s) returned %s", identifier, resp.status_code)
+            return None
+        results = resp.json().get("resultList", {}).get("result", [])
+        return results[0] if results else None
 
     def fetch_abstract_from_fulltext(self, pmcid: str) -> str:
         """
@@ -209,7 +220,9 @@ class EuropePmcAdapter:
         structured abstracts with <sec> subsections.
 
         Returns:
-            Formatted abstract string, or "" on failure.
+            Formatted abstract string, or "" when there is no full text.
+        Raises:
+            SourceUnavailableError when Europe PMC could not answer (review M21).
         """
         if not pmcid:
             return ""
@@ -219,18 +232,13 @@ class EuropePmcAdapter:
             pmcid_clean = f"PMC{pmcid_clean}"
 
         url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid_clean}/fullTextXML"
-        try:
-            resp = with_retry(
-                lambda: self.session.get(url, timeout=20),
-                source_label="Europe PMC fullTextXML",
-            )
-            if not resp.ok:
-                logger.debug("Full-text XML not available for %s: %s", pmcid_clean, resp.status_code)
-                return ""
-        except Exception as e:
-            logger.debug("Full-text XML fetch failed for %s: %s", pmcid_clean, e)
+        resp = with_retry(
+            lambda: self.session.get(url, timeout=20),
+            source_label="Europe PMC fullTextXML",
+        )
+        if not resp.ok:
+            logger.debug("Full-text XML not available for %s: %s", pmcid_clean, resp.status_code)
             return ""
-
         return _extract_abstract_from_jats_xml(resp.text)
 
     def normalize(self, raw: RawRecord) -> CanonicalRecord:
@@ -253,10 +261,14 @@ class EuropePmcAdapter:
                     display_name=display,
                     orcid=a.get("authorId", {}).get("value", "") if isinstance(a.get("authorId"), dict) else "",
                     sequence=i + 1,
+                    family=a.get("lastName", "") or "",
                 ))
         elif raw.get("authorString"):
+            # "Smith J, Jones A": surname first, then initials.
             for i, name in enumerate(raw["authorString"].split(",")):
-                authors.append(AuthorRecord(display_name=name.strip(), sequence=i + 1))
+                name = name.strip()
+                authors.append(AuthorRecord(display_name=name, sequence=i + 1,
+                                            family=name.split()[0] if name else ""))
 
         first_author = authors[0].display_name.split()[-1] if authors else ""
 
@@ -268,22 +280,20 @@ class EuropePmcAdapter:
         except (ValueError, IndexError):
             year = 0
 
-        # Document type / preprint flag
-        pub_type = (raw.get("pubType") or "").lower()
-        is_preprint = (
-            raw.get("isPreprint", "N") == "Y"
-            or "preprint" in pub_type
-        )
+        # Document type / preprint flag. The core result lists its types in
+        # pubTypeList.pubType; a bare pubType field is not sent (it was read
+        # here, so every record was "other" and no preprint was flagged —
+        # found by the live run for review B5).
+        from src import filter_vocabulary
+        type_list = (raw.get("pubTypeList") or {}).get("pubType") or []
+        if isinstance(type_list, str):
+            type_list = [type_list]
+        if raw.get("pubType"):
+            type_list = [*type_list, raw["pubType"]]
+        doc_type = filter_vocabulary.document_type_for(type_list)
+        is_preprint = raw.get("isPreprint", "N") == "Y" or doc_type == "preprint"
         if is_preprint:
             doc_type = "preprint"
-        elif "review" in pub_type:
-            doc_type = "review"
-        elif "clinical trial" in pub_type:
-            doc_type = "trial"
-        elif pub_type in ("journal article", "research-article"):
-            doc_type = "article"
-        else:
-            doc_type = "other"
 
         # Trust weight: peer-reviewed gets 1.0, PMC-backed gets 0.98
         source_field = raw.get("source", "")

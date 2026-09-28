@@ -402,7 +402,10 @@ def test_n1_arxiv_summary_is_saved_and_looked_up(ctx, signed_in, monkeypatch, wi
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
     ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
     paper = _arxiv_paper()
-    assert paper["doi"] == ""
+    # arXiv records carry their DataCite DOI since review M22. A paper can
+    # still arrive without one (OSF preprints; arXiv rows saved earlier), so
+    # this test keeps exercising the DOI-less path explicitly.
+    paper["doi"] = ""
 
     with patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
         job_id = signed_in.post("/api/summaries", json={"paper": paper}).json()["job_id"]
