@@ -228,6 +228,15 @@ class JobRegistry:
             raise
         return job
 
+    def find_running(self, owner: str, key: Any) -> Optional["Job"]:
+        """This owner's queued or running job with this key, or None."""
+        with self._lock:
+            for jid, (o, k) in self._keys.items():
+                job = self._jobs.get(jid)
+                if o == owner and k == key and job is not None and job.status not in TERMINAL:
+                    return job
+        return None
+
     def running(self, owner: str) -> List["Job"]:
         """This owner's queued or running jobs, with the key each was submitted
         under (as job_key), so a reloaded page can show what is still going (A7)."""

@@ -68,6 +68,26 @@ def _resolve_for(ctx: AppContext, user_id: str,
         raise HTTPException(status_code=e.status, detail=str(e)) from e
 
 
+def already_running(ctx: AppContext, kind: str, user_id: str, key):
+    """A 409 answer if this user's job with this key is still going, else None.
+
+    Checked before admission (batch-4 gate finding 1): admission reserves a
+    slot, so at the cap limit a duplicate was answered 429 "add your own key"
+    instead of "already running".
+    """
+    from fastapi.responses import JSONResponse
+    job = ctx.jobs.find_running(user_id, key)
+    if job is None:
+        return None
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={
+        "detail": f"This {kind} is already running — its result will show when it is done.",
+        "job_id": job.id})
+
+
+# A run that needs no model call (a stored full-text summary is returned).
+_NO_SPEND = spend.NO_SPEND
+
+
 def submit_billed(ctx: AppContext, kind: str, user_id: str, work, usage_id,
                   key=None):
     """Queue a billed job, or answer 409 with the running one (review A7).
@@ -88,6 +108,10 @@ def submit_billed(ctx: AppContext, kind: str, user_id: str, work, usage_id,
     except RuntimeError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail="The server is restarting — try again in a minute.") from e
+    finally:
+        # The request thread used a connection for admission; give it back on
+        # every path, not only the 409 one (batch-4 gate finding 2).
+        ctx.db.release()
 
 
 # The finders' HTTP (OpenAlex, Semantic Scholar, Unpaywall). None = the real
@@ -240,16 +264,28 @@ def start_summary(body: SummaryRequest,
     if not ref["doi"] and not ref["canonical_id"]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="The paper has no DOI or id, so it cannot be looked up.")
-    resolved, usage_id = _resolve_for(ctx, user_id, inline_key=body.api_key,
-                                      inline_provider=body.provider,
-                                      inline_model=body.model)
+    key = ("paper", ref["doi"] or ref["canonical_id"])
+    running = already_running(ctx, "summary", user_id, key)
+    if running is not None:
+        return running
+    # A paper with a stored full-text summary gets it back without a model
+    # call, so it needs no key and no allowance — not even at the cap
+    # (batch-4 gate finding 1).
+    row = ctx.db.find_paper(ref)
+    stored = ctx.db.get_summary(row["id"]) if row else None
+    if stored and stored.get("source_text") == "full_text":
+        resolved, usage_id = _NO_SPEND, None
+    else:
+        resolved, usage_id = _resolve_for(ctx, user_id, inline_key=body.api_key,
+                                          inline_provider=body.provider,
+                                          inline_model=body.model)
     # Only the paper's identity is taken from the request (review A1); its
     # content comes from the server's own copy, resolved in the job. One run
     # per paper per user at a time (review A7).
     job = submit_billed(ctx, "summary", user_id,
                         _run_summary(ctx, user_id, ref, resolved, usage_id,
                                      find_by_title=body.find_by_title),
-                        usage_id, key=("paper", ref["doi"] or ref["canonical_id"]))
+                        usage_id, key=key)
     if not hasattr(job, "to_dict"):
         return job                                   # the 409 response
     payload = job.to_dict()

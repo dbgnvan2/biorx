@@ -28,7 +28,7 @@ from .deps import AppContext
 from .routes_references import _get_list_or_404, _parse_item_ids
 from src import spend
 
-from .routes_summaries import _resolve_for, submit_billed
+from .routes_summaries import _resolve_for, already_running, submit_billed
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +126,9 @@ def start_review(body: ReviewRequest,
     _get_list_or_404(ctx, user_id, body.list_id)
     # _resolve_for maps a missing key to 400 and a provider problem to 503 —
     # this route used to let them become a bare 500 (review M1).
+    running = already_running(ctx, JOB_KIND, user_id, ("review", body.list_id))
+    if running is not None:
+        return running
     resolved, usage_id = _resolve_for(ctx, user_id, body.api_key.strip(),
                                       body.provider, body.model)
     job = submit_billed(ctx, JOB_KIND, user_id,

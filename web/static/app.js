@@ -10,6 +10,8 @@ const POLL_MS   = 1500;
 // Consecutive failed status checks before a search is given up as lost
 // (~12 s at POLL_MS). A single blip must not end a search that is still running.
 const POLL_GIVE_UP = 8;
+// A JSON request that has not answered in this long is abandoned (A6).
+const API_TIMEOUT_MS = 30000;
 
 /* Filter facet options (category, paper type, version, published, licence,
    species) come from the server's filter_vocabulary.yaml via /api/vocabulary.
@@ -84,13 +86,26 @@ async function api(method, path, body, opts) {
     options.headers["Content-Type"] = "application/json";
     options.body = JSON.stringify(body);
   }
+  // A6: a request that never answers must not hold a poller (or a button)
+  // forever. JSON calls give up after API_TIMEOUT_MS and read as a blip
+  // (status 0); downloads (opts.raw) may legitimately take longer.
+  let timer = null;
+  if (!(opts && opts.raw) && typeof AbortController !== "undefined") {
+    const controller = new AbortController();
+    options.signal = controller.signal;
+    timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  }
   let response;
   try {
     response = await fetch(path, options);
   } catch (e) {
-    const error = new Error("Could not reach the server. Check your connection and try again.");
+    const error = new Error(e && e.name === "AbortError"
+      ? "The server took too long to answer. Try again."
+      : "Could not reach the server. Check your connection and try again.");
     error.status = 0;
     throw error;
+  } finally {
+    if (timer !== null) clearTimeout(timer);
   }
   if (opts && opts.raw) {
     // Downloads read the response themselves, but a signed-out session still
@@ -108,6 +123,7 @@ async function api(method, path, body, opts) {
     const detail = (payload && payload.detail) || `${response.status} ${response.statusText}`;
     const error = new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
     error.status = response.status;
+    error.payload = payload;     // a 409 names the job already running (A7)
     // Signed out mid-session (code expired or turned off, PC5): back to the
     // sign-in page with the reason, rather than a stray error banner.
     if (response.status === 401 && state.me && !path.startsWith("/api/session")) {
@@ -165,6 +181,9 @@ async function showGate(message) {
   // summaries, ticks or running timers carries over to whoever signs in next
   // on this device (csdp review 2026-09-18). The reason survives the reload.
   if (!$("app").classList.contains("hidden")) {
+    // A5: signed out (sign-out, expired session, code turned off): the
+    // browser-saved key goes too, before the page reloads for the next person.
+    clearLocalSettings();
     try { sessionStorage.setItem(SS_GATE_MESSAGE, message || ""); } catch (e) { /* ignore */ }
     location.reload();
     return;
@@ -285,6 +304,8 @@ function showRecoveryCode(code) {
 async function signOut() {
   try { await api("DELETE", "/api/session"); }
   catch (e) { notice(`Could not sign out: ${e.message}`); return; }
+  // A5: the key saved in this browser leaves with its owner.
+  clearLocalSettings();
   // The next person to sign in on this browser starts a new session and a new
   // window; leaving the old figure on screen would attribute it to them.
   $("token-meter").textContent = "";
@@ -292,6 +313,8 @@ async function signOut() {
 }
 
 function showApp() {
+  dropUnscopedKeys();
+  restoreRunningJobs();
   $("gate").classList.add("hidden");
   $("app").classList.remove("hidden");
   renderMe();
@@ -324,32 +347,54 @@ function findByTitle() {
   return state.findByTitleDefault !== false;
 }
 
+/* A5: a key saved in this browser belongs to one account. Stored under the
+   signed-in user's id, so the next person to sign in on a shared browser
+   cannot run model calls on it, and removed on sign-out. */
+function userScoped(base) {
+  const id = (state.me && state.me.user_id) || "";
+  return id ? `${base}:${id}` : "";
+}
+
+/* Keys saved before A5 were not tied to an account; handing one to whoever
+   signs in next is the bug A5 fixes, so they are deleted, not migrated. */
+function dropUnscopedKeys() {
+  try {
+    for (const base of [LS_KEY, LS_PROVIDER, LS_MODEL]) localStorage.removeItem(base);
+  } catch (e) { /* storage unavailable */ }
+}
+
 function localSettings() {
+  const k = userScoped(LS_KEY), p = userScoped(LS_PROVIDER), m = userScoped(LS_MODEL);
+  if (!k) return { key: "", provider: "", model: "" };
   try {
     return {
-      key:      localStorage.getItem(LS_KEY)      || "",
-      provider: localStorage.getItem(LS_PROVIDER) || "",
-      model:    localStorage.getItem(LS_MODEL)    || "",
+      key:      localStorage.getItem(k) || "",
+      provider: localStorage.getItem(p) || "",
+      model:    localStorage.getItem(m) || "",
     };
   } catch (e) { return { key: "", provider: "", model: "" }; }
 }
 
 function saveLocalSettings(provider, key, model) {
+  const k = userScoped(LS_KEY), p = userScoped(LS_PROVIDER), m = userScoped(LS_MODEL);
+  if (!k) return false;
   try {
-    if (key)      localStorage.setItem(LS_KEY, key);
-    else          localStorage.removeItem(LS_KEY);
-    if (provider) localStorage.setItem(LS_PROVIDER, provider);
-    if (model)    localStorage.setItem(LS_MODEL, model);
-    else          localStorage.removeItem(LS_MODEL);
+    if (key)      localStorage.setItem(k, key);
+    else          localStorage.removeItem(k);
+    if (provider) localStorage.setItem(p, provider);
+    if (model)    localStorage.setItem(m, model);
+    else          localStorage.removeItem(m);
     return true;
   } catch (e) { return false; }
 }
 
 function clearLocalSettings() {
   try {
-    localStorage.removeItem(LS_KEY);
-    localStorage.removeItem(LS_PROVIDER);
-    localStorage.removeItem(LS_MODEL);
+    for (const base of [LS_KEY, LS_PROVIDER, LS_MODEL]) {
+      const scoped = userScoped(base);
+      if (scoped) localStorage.removeItem(scoped);
+      localStorage.removeItem(base);
+    }
     return true;
   } catch (e) { return false; }
 }
@@ -862,12 +907,22 @@ async function startSearch(payload) {
   }
 }
 
+/* A6: one status request at a time, and a reply is used only for the job it
+   was asked about. A slow reply for an earlier search used to stop the new
+   search's poller and show it "done" with no results. */
 async function pollSearch() {
-  if (!state.jobId) return;
+  const jobId = state.jobId;
+  if (!jobId || state.searchPollBusy) return;
+  state.searchPollBusy = true;
+  try { await pollSearchFor(jobId); }
+  finally { state.searchPollBusy = false; }
+}
+
+async function pollSearchFor(jobId) {
   let job;
-  try { job = await api("GET", `/api/searches/${state.jobId}`); }
+  try { job = await api("GET", `/api/searches/${jobId}`); }
   catch (e) {
-    if (!state.polling) return;
+    if (!state.polling || state.jobId !== jobId) return;
     // Say "lost track", not "failed", when giving up: the search itself may
     // well have finished (shouldStopPolling).
     state.pollFailures += 1;
@@ -880,6 +935,7 @@ async function pollSearch() {
     searchFinished("lost");
     return;
   }
+  if (state.jobId !== jobId) return;           // a newer search started
   state.pollFailures = 0;
 
   $("phase").textContent = progressText(job);
@@ -919,6 +975,18 @@ function searchFinished(status) {
   $("cancel-search").disabled = true;
   $("progress-wrap").classList.add("hidden");
   if (status === "cancelled") notice("Search stopped.", "warn");
+}
+
+/* M15: a page that fails to load (e.g. the search expired) says so and leaves
+   the offset where the rows on screen are, instead of failing silently. */
+async function turnPage(delta) {
+  const previous = state.offset;
+  state.offset = Math.max(0, state.offset + delta);
+  try { await loadResults(); }
+  catch (e) {
+    state.offset = previous;
+    notice(`Could not load that page: ${e.message}`);
+  }
 }
 
 function stopPolling() {
@@ -1040,7 +1108,7 @@ function renderResults() {
     const summarize = document.createElement("button");
     // A redraw while a summary runs must not offer the button again: a second
     // click would bill the model twice (csdp review 2026-09-18).
-    const busy = state.summarizing.has(paperKey(paper));
+    const busy = isSummarizing(paper);
     summarize.textContent = busy ? "Summarizing…" : "Summarize";
     summarize.disabled = busy;
     summarize.dataset.canonicalId = paper.canonical_id || "";
@@ -1155,9 +1223,50 @@ function setSummarizeButtons(key, busy) {
   }
 }
 
+/* A7: summary runs the server still has going for this user, by the paper's
+   DOI or canonical id → job id. Filled on page load from /api/jobs/running
+   and from a 409, so a reload or a second tab cannot start (and bill) the
+   same paper twice, and the button shows busy until the run ends. */
+function serverSummaryJob(paper) {
+  const running = state.serverSummaries || {};
+  return running[paper.doi || ""] || running[paper.canonical_id || ""] || "";
+}
+
+function isSummarizing(paper) {
+  return state.summarizing.has(paperKey(paper)) || !!serverSummaryJob(paper);
+}
+
+async function restoreRunningJobs() {
+  let jobs = [];
+  try { jobs = (await api("GET", "/api/jobs/running")).jobs || []; }
+  catch (e) { return; }
+  state.serverSummaries = {};
+  for (const j of jobs) {
+    if (j.kind === "summary" && j.paper) state.serverSummaries[j.paper] = j.job_id;
+  }
+  const ids = Object.keys(state.serverSummaries);
+  if (!ids.length) return;
+  notice(`${ids.length} summary run(s) from before are still going.`, "warn");
+  const timer = setInterval(async () => {
+    for (const [paperId, jobId] of Object.entries(state.serverSummaries)) {
+      let s;
+      try { s = await api("GET", `/api/summaries/${jobId}`); }
+      catch (e) { if (e.status === 0) continue; s = { status: "error" }; }
+      if (["done", "error", "cancelled"].includes(s.status)) delete state.serverSummaries[paperId];
+    }
+    renderResults();
+    if (state.activeListId) renderRefItems();
+    if (!Object.keys(state.serverSummaries).length) {
+      clearInterval(timer);
+      refreshSearchSummaries();
+      if (state.activeListId) refreshRefSummaries(state.activeListId);
+    }
+  }, POLL_MS);
+}
+
 async function startSummary(paper, button) {
   const key = paperKey(paper);
-  if (state.summarizing.has(key)) return;
+  if (isSummarizing(paper)) return;
   notice("");
   state.summarizing.add(key);
   button.disabled = true;
@@ -1197,10 +1306,16 @@ async function startSummary(paper, button) {
     }
     job = await api("POST", "/api/summaries", summaryBody);
   } catch (e) {
-    notice(e.message);
-    if (modalShows(paper)) $("modal-summary-meta").textContent = e.message;
-    done();
-    return;
+    if (e.status === 409 && e.payload && e.payload.job_id) {
+      // A7: this paper's summary is already running (another tab, or before
+      // a reload). Follow that run instead of starting a second, billed one.
+      job = { job_id: e.payload.job_id, provider: "", model: "" };
+    } else {
+      notice(e.message);
+      if (modalShows(paper)) $("modal-summary-meta").textContent = e.message;
+      done();
+      return;
+    }
   }
   if (modalShows(paper)) $("modal-summary-meta").textContent = `${job.provider} · ${job.model}`;
 
@@ -1473,8 +1588,15 @@ function closeModal() {
 
 async function loadFilterTab() {
   for (const [elId, facet] of FACET_FIELDS) await populateFacetSelect(elId, facet);
-  renderSourcePicker($("filter-sources-picker"), state.sources, defaultSourceIds());
   await reloadFilterList();
+  // A4: with a saved filter open, redraw the editor from that filter. Drawing
+  // the default sources here replaced the open filter's own sources on the
+  // next Save or term click.
+  if (state.activeFilterId !== null && state.filters.some(f => f.id === state.activeFilterId)) {
+    selectFilter(state.activeFilterId);
+  } else {
+    renderSourcePicker($("filter-sources-picker"), state.sources, defaultSourceIds());
+  }
 }
 
 async function reloadFilterList() {
@@ -1651,21 +1773,35 @@ async function newFilter() {
   $("filter-days-wrap").classList.remove("hidden");
   $("filter-date-range-wrap").classList.add("hidden");
   $("filter-authors").value = "";
+  // A3: a new filter starts with no restrictions; the last filter's category,
+  // paper type, licence etc. were kept and saved into it unseen.
+  for (const [elId] of FACET_FIELDS) setFacetValue($(elId), ANY);
   renderTextGroups([{}]);
   renderSourcePicker($("filter-sources-picker"), state.sources, defaultSourceIds());
   $("filter-name").focus();
   renderDiscoverChipState();
 }
 
+/* A2: another of this user's filters with this name (any case), or null.
+   The server refuses the clash too (409); checking here says so before any
+   request. Pure, for the node-run test. */
+function filterNameClash(name, filters, ownId) {
+  const wanted = String(name || "").trim().toLowerCase();
+  return (filters || []).find(f => f.id !== ownId &&
+                               String(f.name || "").trim().toLowerCase() === wanted) || null;
+}
+
 async function saveFilter() {
   const name = $("filter-name").value.trim();
   if (!name) { notice("Enter a filter name."); return; }
+  if (filterNameClash(name, state.filters, state.activeFilterId)) {
+    notice(`A filter called "${name}" already exists. Choose another name.`);
+    return;
+  }
   const body = { name, enabled: $("filter-enabled").checked, filter: buildFilterDict() };
   try {
     if (state.activeFilterId) {
-      // A rename is saved as a new row and the old one deleted, so the id
-      // changes. Keep the one the server returns, or the next save PUTs to a
-      // deleted id and 404s.
+      // A rename keeps the id since review A2; the returned id is kept anyway.
       const saved = await api("PUT", `/api/filters/${state.activeFilterId}`, body);
       state.activeFilterId = saved.id;
     } else {
@@ -1679,8 +1815,12 @@ async function saveFilter() {
 }
 
 async function saveFilterAs() {
-  const name = prompt("Save as name:");
+  const name = (prompt("Save as name:") || "").trim();
   if (!name) return;
+  if (filterNameClash(name, state.filters, null)) {
+    notice(`A filter called "${name}" already exists. Choose another name.`);
+    return;
+  }
   const body = { name, enabled: $("filter-enabled").checked, filter: buildFilterDict() };
   try {
     const created = await api("POST", "/api/filters", body);
@@ -1710,21 +1850,34 @@ async function testFilter() {
   $("filter-test-status").textContent = "Starting test…";
   $("filter-test-body").textContent = "";
   if (state.filterTestPolling) clearInterval(state.filterTestPolling);
+  // A6 / global rule: a button that starts background work is disabled before
+  // the request leaves, and released when the test settles.
+  $("btn-filter-test").disabled = true;
   try {
     const job = await api("POST", `/api/filters/${state.activeFilterId}/test`);
     state.filterTestJobId = job.job_id;
     state.filterTestFailures = 0;
     state.filterTestPolling = setInterval(pollFilterTest, POLL_MS);
     pollFilterTest();
-  } catch (e) { $("filter-test-status").textContent = e.message; }
+  } catch (e) {
+    $("filter-test-status").textContent = e.message;
+    $("btn-filter-test").disabled = false;
+  }
 }
 
 async function pollFilterTest() {
-  if (!state.filterTestJobId) return;
+  const jobId = state.filterTestJobId;
+  if (!jobId || state.filterTestPollBusy) return;
+  state.filterTestPollBusy = true;
+  try { await pollFilterTestFor(jobId); }
+  finally { state.filterTestPollBusy = false; }
+}
+
+async function pollFilterTestFor(jobId) {
   let job;
-  try { job = await api("GET", `/api/searches/${state.filterTestJobId}`); }
+  try { job = await api("GET", `/api/searches/${jobId}`); }
   catch (e) {
-    if (!state.filterTestPolling) return;
+    if (!state.filterTestPolling || state.filterTestJobId !== jobId) return;
     state.filterTestFailures += 1;
     if (!shouldStopPolling(e, state.filterTestFailures)) {
       $("filter-test-status").textContent =
@@ -1733,25 +1886,29 @@ async function pollFilterTest() {
     }
     clearInterval(state.filterTestPolling);
     state.filterTestPolling = null;
+    $("btn-filter-test").disabled = false;
     $("filter-test-status").textContent = `Lost track of the test: ${e.message}`;
     return;
   }
+  if (state.filterTestJobId !== jobId) return;  // a newer test started (A6)
   state.filterTestFailures = 0;
   $("filter-test-status").textContent = progressText(job);
   if (["done", "error", "cancelled"].includes(job.status)) {
     clearInterval(state.filterTestPolling);
     state.filterTestPolling = null;
+    $("btn-filter-test").disabled = false;
     // Same rule as the main search: an unreachable source makes "0 matched"
     // mean "incomplete", not "this filter finds nothing".
     const failed = (job.sources_failed || []).length ? " " + failedSourcesText(job) : "";
     if (job.status === "done") {
       let page;
       try {
-        page = await api("GET", `/api/searches/${state.filterTestJobId}/results?limit=50`);
+        page = await api("GET", `/api/searches/${jobId}/results?limit=50`);
       } catch (e) {
         $("filter-test-status").textContent = `Could not load the results: ${e.message}`;
         return;
       }
+      if (state.filterTestJobId !== jobId) return;
       renderFilterTestResults(page.results || []);
       const enrichNote = enrichProblemsText(job);
       $("filter-test-status").textContent =
@@ -1824,11 +1981,22 @@ async function pollDiscover() {
   let job;
   try { job = await api("GET", `/api/discover-terms/${state.discoverJobId}`); }
   catch (e) {
+    // M16: a blip is not the end of the run — the job keeps going (and bills)
+    // on the server; give up only as the other pollers do (P1).
+    state.discoverFailures = (state.discoverFailures || 0) + 1;
+    if (!shouldStopPolling(e, state.discoverFailures)) {
+      $("discover-terms-chips").textContent =
+        `Lost contact with the server — retrying (${state.discoverFailures}/${POLL_GIVE_UP})…`;
+      return;
+    }
     clearInterval(state.discoverPolling);
-    $("discover-terms-chips").textContent = e.message;
+    state.discoverPolling = null;
+    state.discoverFailures = 0;
+    $("discover-terms-chips").textContent = `Lost track of Discover: ${e.message}`;
     $("btn-discover").disabled = false;
     return;
   }
+  state.discoverFailures = 0;
   if (["done", "error", "cancelled"].includes(job.status)) {
     clearInterval(state.discoverPolling);
     state.discoverPolling = null;
@@ -2054,6 +2222,9 @@ async function selectRefList(listId) {
   });
   try {
     const data = await api("GET", `/api/references/${listId}/items`);
+    // M14: another list was opened while this one loaded; drawing these rows
+    // under its title would let "Summarize checked" run on the wrong papers.
+    if (state.activeListId !== listId) return;
     state.refItems = data.items || [];
     state.refSummaries = [];
     renderRefItems();
@@ -2137,7 +2308,7 @@ function renderRefItems() {
     // RL2: generate a summary from the list, as from the Search results.
     const actTd = document.createElement("td");
     const summarize = document.createElement("button");
-    const busy = state.summarizing.has(paperKey(p));
+    const busy = isSummarizing(p);
     summarize.textContent = busy ? "Summarizing…" : "Summarize";
     summarize.disabled = busy;
     summarize.dataset.paperKey = paperKey(p);
@@ -2191,8 +2362,13 @@ async function deleteRefList() {
     await api("DELETE", `/api/references/${state.activeListId}`);
     state.activeListId = null;
     state.refItems = [];
+    state.refSummaries = [];
     $("ref-list-title").textContent = "Select a list";
     $("ref-papers-body").textContent = "";
+    // M17: the deleted list's review and batch status must not stay on screen.
+    $("ref-review").classList.add("hidden");
+    $("ref-dl-status").classList.add("hidden");
+    $("ref-dl-status").textContent = "";
     await loadRefTab();
   } catch (e) { notice(e.message); }
 }
@@ -2507,13 +2683,22 @@ async function summarizeChecked() {
 
   for (const [index, paper] of papers.entries()) {
     status.textContent = `Summarizing ${index + 1} of ${papers.length}…`;
+    // M13: a paper already being summarized (a row click) is not run again.
+    if (isSummarizing(paper)) { skipped++; continue; }
     try {
       const stored = await api("POST", "/api/summaries/lookup", { paper });
       if (stored && stored.source_text !== "abstract") { skipped++; continue; }
     } catch (e) {
       if (e.status !== 404) { failures.push(`${shortTitle(paper)}: ${e.message}`); continue; }
     }
-    const outcome = await summarizeOnePaper(paper);
+    // M13: while the batch runs this paper, its row button is busy too, so a
+    // click cannot start a second, billed run.
+    const key = paperKey(paper);
+    state.summarizing.add(key);
+    setSummarizeButtons(key, true);
+    let outcome;
+    try { outcome = await summarizeOnePaper(paper); }
+    finally { state.summarizing.delete(key); setSummarizeButtons(key, false); }
     if (outcome.cap) { stoppedByCap = true; break; }
     if (outcome.ok && outcome.abstractOnly) abstractOnly++;
     else if (outcome.ok) done++;
@@ -2579,7 +2764,9 @@ async function summarizeOnePaper(paper) {
   try { job = await api("POST", "/api/summaries", body); }
   catch (e) {
     if (e.status === 429) return { cap: true };
-    return { error: e.message };
+    // A7: already running (another tab, or a row click): follow that run.
+    if (e.status === 409 && e.payload && e.payload.job_id) job = { job_id: e.payload.job_id };
+    else return { error: e.message };
   }
   const settled = await pollJobUntilSettled(`/api/summaries/${job.job_id}`);
   if (settled.error) return { error: settled.error };
@@ -2665,7 +2852,8 @@ async function reviewChecked() {
   status.textContent = `Reviewing ${preview.papers} paper(s)…`;
 
   const local = localSettings();
-  const body = { list_id: state.activeListId };
+  const listId = state.activeListId;     // M14: the list this review is for
+  const body = { list_id: listId };
   if (ticked.length) body.item_ids = ticked.join(",");
   if (local.key) {
     body.api_key = local.key;
@@ -2688,7 +2876,9 @@ async function reviewChecked() {
       status.textContent = `Review failed: ${settled.error}`;
       return;
     }
-    renderReview(settled.status.result);
+    // M14: shown only if that list is still open; it is stored either way and
+    // loads with the list next time.
+    if (state.activeListId === listId) renderReview(settled.status.result);
     status.textContent = `Reviewed ${preview.papers} paper(s).`;
   } finally {
     setBatchRunning(false);
@@ -2807,14 +2997,8 @@ function wire() {
   $("btn-run-filter").addEventListener("click", runSelectedFilter);
   $("run-search").addEventListener("click", runAdHocSearch);
   $("cancel-search").addEventListener("click", cancelSearch);
-  $("prev-page").addEventListener("click", () => {
-    state.offset = Math.max(0, state.offset - PAGE_SIZE);
-    loadResults();
-  });
-  $("next-page").addEventListener("click", () => {
-    state.offset += PAGE_SIZE;
-    loadResults();
-  });
+  $("prev-page").addEventListener("click", () => turnPage(-PAGE_SIZE));
+  $("next-page").addEventListener("click", () => turnPage(PAGE_SIZE));
   $("select-all-results").addEventListener("change", (e) => toggleSelectAll(e.target.checked));
   $("btn-save-as-list").addEventListener("click", saveResults);
   $("btn-save-summaries-pdf").addEventListener("click", saveSummariesPdf);

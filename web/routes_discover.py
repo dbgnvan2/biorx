@@ -23,7 +23,7 @@ from .deps import AppContext
 from .routes_searches import record_failure
 from src import spend
 
-from .routes_summaries import _resolve_for, submit_billed
+from .routes_summaries import _resolve_for, already_running, submit_billed
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -141,6 +141,9 @@ def discover_terms(body: DiscoverRequest,
     if not query_to_keywords(body.description, settings.stop_words).strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Describe what you are looking for in a few words first.")
+    running = already_running(ctx, JOB_KIND, user_id, ("discover",))
+    if running is not None:
+        return running
     resolved, usage_id = _resolve_for(ctx, user_id, inline_key=body.api_key,
                                       inline_provider=body.provider,
                                       inline_model=body.model)

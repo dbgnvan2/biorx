@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 USAGE_KIND = "summary"
 
 
+# The "resolved client" for a job that will not call a model (a stored summary
+# is returned): nobody pays and nothing is reserved.
+from types import SimpleNamespace as _NS
+NO_SPEND = _NS(client=None, provider="", model="", key_source="none", billed_to_owner=False)
+
+
 class SpendRefused(Exception):
     """A billed call may not start. `status` is the HTTP status a route answers
     with; the message is the user-facing reason."""

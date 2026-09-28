@@ -100,8 +100,8 @@ def test_user_own_key_is_not_capped(signed_in, owner_key, enc_secret, no_pdf):
                   json={"provider": "deepseek", "api_key": "sk-user-OWNKEY"})
 
     with patch("src.llm_providers.build_client", return_value=_ok_client()):
-        for _ in range(5):          # well past the cap of 3
-            r = signed_in.post("/api/summaries", json={"paper": PAPER})
+        for n in range(5):          # well past the cap of 3
+            r = signed_in.post("/api/summaries", json={"paper": _paper(n)})
             assert r.status_code == 202
             assert r.json()["key_source"] == "user"
             _await(signed_in, r.json()["job_id"])
@@ -286,3 +286,58 @@ def test_a7_duplicate_job_409(ctx, signed_in, owner_key):
         assert signed_in.get("/api/me").json()["owner_summaries_remaining"] == 2
         gate.set()
         _await(signed_in, first.json()["job_id"])
+
+
+
+# ── Batch-4 gate findings: checks that come before admission ─────────────────
+
+def _spend_the_allowance(signed_in):
+    with patch("src.llm_providers.build_client", return_value=_ok_client()):
+        for n in range(3):
+            r = signed_in.post("/api/summaries", json={"paper": _paper(100 + n)})
+            _await(signed_in, r.json()["job_id"])
+
+
+def test_gate4_reuse_at_cap_is_free(signed_in, owner_key, no_pdf):
+    """A paper that already has a full-text summary gets it back even when the
+    day's allowance is used up (finding 1b)."""
+    _spend_the_allowance(signed_in)
+    client = MagicMock()
+    with patch("src.llm_providers.build_client", return_value=client):
+        r = signed_in.post("/api/summaries", json={"paper": _paper(100)})
+        assert r.status_code == 202, r.text
+        body = _await(signed_in, r.json()["job_id"])
+    assert body["result"]["reused"] is True
+    client.summarize_paper.assert_not_called()
+
+
+def test_gate4_duplicate_at_cap_is_409(ctx, signed_in, owner_key):
+    """A duplicate of a running paper is "already running", not "cap reached"
+    (finding 1a)."""
+    import threading
+    gate = threading.Event()
+
+    def slow(_ctx, paper, outcome=None, by_title=None):
+        gate.wait(5)
+        return _full_text(_ctx, paper, outcome, by_title)
+
+    with patch("web.routes_summaries._extract_text", side_effect=slow), \
+         patch("src.llm_providers.build_client", return_value=_ok_client()):
+        first = [signed_in.post("/api/summaries", json={"paper": _paper(n)}) for n in range(3)]
+        assert [r.status_code for r in first] == [202, 202, 202]     # allowance now used
+        again = signed_in.post("/api/summaries", json={"paper": _paper(0)})
+        assert again.status_code == 409 and again.json()["job_id"] == first[0].json()["job_id"]
+        gate.set()
+        for r in first:
+            _await(signed_in, r.json()["job_id"])
+
+
+def test_gate4_request_connection_released(ctx, signed_in, owner_key, no_pdf):
+    """Finding 2: the request thread's connection is released after a submit."""
+    released = []
+    real = ctx.db.release
+    with patch.object(ctx.db, "release", side_effect=lambda: released.append(1) or real()), \
+         patch("src.llm_providers.build_client", return_value=_ok_client()):
+        r = signed_in.post("/api/summaries", json={"paper": _paper(55)})
+        _await(signed_in, r.json()["job_id"])
+    assert len(released) >= 2        # the request thread and the worker thread

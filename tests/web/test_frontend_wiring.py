@@ -155,6 +155,7 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/references/{param}/save",
         "/api/me/llm-model",
         "/api/vocabulary",
+        "/api/jobs/running",
         "/api/filters",
         "/api/filters/{param}",
         "/api/filters/{param}/test",
@@ -542,7 +543,8 @@ def _run_handler(name, api_stub, extra=""):
     and DOM, returning the notices it produced."""
     source = APP_JS.read_text()
     fns = [re.search(rf"(async )?function {n}\(.*?\n\}}", source, re.DOTALL).group(0)
-           for n in ("localSettings", "saveLocalSettings", "clearLocalSettings", name)]
+           for n in ("userScoped", "localSettings", "saveLocalSettings",
+                     "clearLocalSettings", name)]
     consts = "\n".join(re.findall(r"^const LS_\w+\s*=.*$", source, re.MULTILINE))
     prelude = """
 const store = {};
@@ -554,7 +556,7 @@ const $ = id => (els[id] = els[id] || { value: "", placeholder: "", textContent:
 const notices = [];
 function notice(m, kind = "error") { notices.push([kind, m]); }
 function renderMe() {}
-const state = { me: { byo_enabled: true, preferred_model: "" } };
+const state = { me: { user_id: "u-1", byo_enabled: true, preferred_model: "" } };
 """ + api_stub + extra
     script = prelude + consts + "\n" + "\n".join(fns) + \
         f"\n{name}().then(() => console.log(JSON.stringify(notices)));"
@@ -596,7 +598,7 @@ def test_cs1_success_is_still_reported():
 
 def test_cs2_filter_test_reports_unreachable_sources():
     code = _js_without_comments()
-    body = re.search(r"async function pollFilterTest\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    body = re.search(r"async function pollFilterTestFor\(jobId\) \{.*?\n\}", code, re.DOTALL).group(0)
     assert "sources_failed" in body
     assert "failedSourcesText(job)" in body
 
@@ -1604,8 +1606,10 @@ def test_d2_failed_sources_text_names_source_and_reason():
 
 def test_d2_every_poller_uses_the_shared_text():
     code = _js_without_comments()
-    for fn in ("pollSearch", "pollFilterTest", "pollDiscover"):
-        body = re.search(rf"async function {fn}\(\) \{{.*?\n\}}", code, re.DOTALL).group(0)
+    # pollSearch / pollFilterTest delegate to their ...For(jobId) halves (A6).
+    for fn, args in (("pollSearchFor", "jobId"), ("pollFilterTestFor", "jobId"),
+                     ("pollDiscover", "")):
+        body = re.search(rf"async function {fn}\({args}\) \{{.*?\n\}}", code, re.DOTALL).group(0)
         assert "failedSourcesText(job)" in body, fn
 
 
@@ -1707,9 +1711,10 @@ def test_deepseek_help_button_toggles_the_guide():
 def test_a_redraw_does_not_re_offer_summarize_while_one_runs():
     code = _js_without_comments()
     render = re.search(r"function renderResults\(\) \{.*?\n\}", code, re.DOTALL).group(0)
-    assert "state.summarizing.has(paperKey(paper))" in render
+    # isSummarizing also covers runs the server reports after a reload (A7).
+    assert "isSummarizing(paper)" in render
     start = re.search(r"async function startSummary\(paper, button\) \{.*?\n\}", code, re.DOTALL).group(0)
-    assert "if (state.summarizing.has(key)) return;" in start
+    assert "if (isSummarizing(paper)) return;" in start
     assert "state.summarizing.delete(key)" in start
 
 
@@ -1725,7 +1730,7 @@ def test_downloads_handle_sign_out_and_network_errors():
     code = _js_without_comments()
     api = re.search(r"async function api\(.*?\n\}", code, re.DOTALL).group(0)
     assert "Could not reach the server" in api
-    raw = api[api.index("opts.raw"):]
+    raw = api[api.index("if (opts && opts.raw) {"):]   # the raw-download branch
     assert "showGate(detail)" in raw[:600]
     for fn in ("saveSummariesPdf", "exportRefSummariesPdf", "saveRefList"):
         body = re.search(rf"async function {fn}\(\) \{{.*?\n\}}", code, re.DOTALL).group(0)
@@ -1768,8 +1773,8 @@ def test_fr3_3_progress_text(job, text):
 
 def test_fr3_4_both_pollers_show_counts():
     code = _js_without_comments()
-    search = re.search(r"async function pollSearch\(\) \{.*?\n\}", code, re.DOTALL).group(0)
-    test = re.search(r"async function pollFilterTest\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    search = re.search(r"async function pollSearchFor\(jobId\) \{.*?\n\}", code, re.DOTALL).group(0)
+    test = re.search(r"async function pollFilterTestFor\(jobId\) \{.*?\n\}", code, re.DOTALL).group(0)
     assert re.search(r'^\s*\$\("phase"\)\.textContent = progressText\(job\);$', search, re.M)
     assert re.search(r'^\s*\$\("filter-test-status"\)\.textContent = progressText\(job\);$',
                      test, re.M)
@@ -1872,6 +1877,7 @@ def _run_flow(body):
         _js_block(r"function searchFinished\(status\) \{.*?\n\}"),
         _js_block(r"function stopPolling\(\) \{.*?\n\}"),
         _js_block(r"async function pollSearch\(\) \{.*?\n\}"),
+        _js_block(r"async function pollSearchFor\(jobId\) \{.*?\n\}"),
         _js_block(r"async function loadResults\(\) \{.*?\n\}"),
         _js_block(r"function progressText\(job\) \{.*?\n\}"),
         _js_block(r"function enrichProblemsText\(job\) \{.*?\n\}"),
@@ -2109,6 +2115,7 @@ function failedSourcesText() { return ""; } function renderFilterTestResults() {
         _js_block(r"function progressText\(job\) \{.*?\n\}"),
         _js_block(r"function enrichProblemsText\(job\) \{.*?\n\}"),
         _js_block(r"async function pollFilterTest\(\) \{.*?\n\}"),
+        _js_block(r"async function pollFilterTestFor\(jobId\) \{.*?\n\}"),
         "(async () => { const out = {}; state.filterTestJobId = 't'; state.filterTestPolling = 1;\n"
         + body + "\nconsole.log(JSON.stringify(out)); })();",
     ]
@@ -2194,6 +2201,8 @@ def _run_ref(body):
         _js_block(r"const state = \{.*?\n\};"),
         _REF_HARNESS,
         _js_block(r"function paperKey\(paper\) \{.*?\n\}"),
+        _js_block(r"function serverSummaryJob\(paper\) \{.*?\n\}"),
+        _js_block(r"function isSummarizing\(paper\) \{.*?\n\}"),
         _js_block(r"function summaryKey\(item\) \{.*?\n\}"),
         _js_block(r"function summaryFor\(paper, summaries = state\.searchSummaries\) \{.*?\n\}"),
         _js_block(r"function hasSummary\(paper, summaries = state\.searchSummaries\) \{.*?\n\}"),
@@ -2306,6 +2315,8 @@ function findByTitle() { return titleSearch; }
 """ % json.dumps(stored)
     parts = [harness,
              _js_block(r"function paperKey\(paper\) \{.*?\n\}"),
+             _js_block(r"function serverSummaryJob\(paper\) \{.*?\n\}"),
+             _js_block(r"function isSummarizing\(paper\) \{.*?\n\}"),
              _js_block(r"async function startSummary\(paper, button\) \{.*?\n\}"),
              """(async () => {
                 await startSummary({ title: "T", canonical_id: "doi:9" }, { disabled: false, textContent: "" });
@@ -2495,3 +2506,378 @@ def test_a8_batch_counts_not_saved_as_failure():
     assert out.returncode == 0, out.stderr
     got = json.loads(out.stdout)
     assert "ok" not in got and "could not be saved" in got["error"]
+
+
+
+# ── A5: a browser-saved key belongs to one account ───────────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#A5
+
+def _storage_script(body):
+    source = APP_JS.read_text()
+    fns = [re.search(rf"(async )?function {n}\(.*?\n\}}", source, re.DOTALL).group(0)
+           for n in ("userScoped", "dropUnscopedKeys", "localSettings",
+                     "saveLocalSettings", "clearLocalSettings")]
+    consts = "\n".join(re.findall(r"^const LS_\w+\s*=.*$", source, re.MULTILINE))
+    return """
+const store = {};
+globalThis.localStorage = { getItem: k => store[k] ?? null, setItem: (k, v) => { store[k] = v; },
+                            removeItem: k => { delete store[k]; } };
+const state = { me: null };
+""" + consts + "\n" + "\n".join(fns) + "\n" + body
+
+
+def _node_json(script):
+    import json, shutil, subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def test_a5_key_scoped_to_user():
+    got = _node_json(_storage_script("""
+state.me = { user_id: "alice" }; saveLocalSettings("deepseek", "sk-alice", "");
+state.me = { user_id: "bob" };
+console.log(JSON.stringify([localSettings().key, Object.keys(store)]));"""))
+    assert got[0] == ""                                  # bob cannot read alice's key
+    assert got[1] == ["biorx_local_key:alice", "biorx_local_provider:alice"]
+
+
+def test_a5_sign_out_clears_key():
+    got = _node_json(_storage_script("""
+state.me = { user_id: "alice" }; saveLocalSettings("deepseek", "sk-alice", "m");
+clearLocalSettings();
+console.log(JSON.stringify(Object.keys(store).filter(k => k.startsWith("biorx_local"))));"""))
+    assert got == []
+
+
+def test_a5_unscoped_legacy_key_is_dropped_not_migrated():
+    got = _node_json(_storage_script("""
+store["biorx_local_key"] = "sk-previous-person";
+state.me = { user_id: "bob" }; dropUnscopedKeys();
+console.log(JSON.stringify([localSettings().key, store["biorx_local_key"] ?? null]));"""))
+    assert got == ["", None]
+
+
+def test_a5_sign_out_and_401_call_clear():
+    code = _js_without_comments()
+    sign_out = re.search(r"async function signOut\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    gate = re.search(r"async function showGate\(message\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "clearLocalSettings()" in sign_out
+    assert gate.index("clearLocalSettings()") < gate.index("location.reload()")
+
+
+# ── A3 / A4: the filter editor shows and saves the filter it has open ────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#A3, #A4
+
+def _editor_script(body):
+    source = APP_JS.read_text()
+    names = ("filterFields", "selectFilter", "newFilter", "buildFilterDict",
+             "setFacetValue", "loadFilterTab")
+    fns = [re.search(rf"(async )?function {n}\(.*?\n\}}", source, re.DOTALL).group(0)
+           for n in names]
+    facet_fields = re.search(r"const FACET_FIELDS = \[.*?\];", source, re.DOTALL).group(0)
+    return """
+const ANY = "any";
+const els = {};
+function el() {
+  const e = { value: "", checked: false, children: [], dataset: {}, options: [],
+              classList: { add(){}, remove(){}, toggle(){} }, focus(){},
+              appendChild(o) { this.options.push(o); } };
+  Object.defineProperty(e, "value", {
+    get() { return this._v ?? ""; },
+    set(v) { this._v = (this.options.length && !this.options.some(o => o.value === v)) ? "" : v; } });
+  return e;
+}
+const $ = id => (els[id] = els[id] || el());
+const document = { createElement: () => ({ value: "", textContent: "" }) };
+const state = { filters: [], sources: [{id: "europepmc"}, {id: "pubmed"}], activeFilterId: null };
+let groups = [{}];
+function renderTextGroups(g) { groups = g; }
+function collectTextGroups() { return groups; }
+function renderSourcePicker(c, sources, ids) { c.picked = ids || sources.map(s => s.id); }
+function getSourceSelection(c) { return { all: false, selected: c.picked || [] }; }
+function defaultSourceIds() { return ["europepmc", "pubmed"]; }
+function renderDiscoverChipState() {}
+const VOCAB = { category: ["any", "neuroscience"], paper_type: ["any", "review"],
+                version: ["any", "revised"], published: ["any", "journal"],
+                license: ["any", "cc-by"], species: ["any", "no-animal"] };
+async function populateFacetSelect(id, facet) {
+  const s = $(id); if (s.options.length) return;
+  for (const v of VOCAB[facet]) s.appendChild({ value: v, textContent: v });
+  s.value = "any";
+}
+async function reloadFilterList() {}
+""" + facet_fields + "\n" + "\n".join(fns) + "\n" + body
+
+
+def test_a3_new_filter_resets_facets():
+    got = _node_json(_editor_script("""
+(async () => {
+  await loadFilterTab();
+  state.filters = [{ id: 1, name: "F", text_groups: [{both: "x"}], category: "neuroscience",
+                     paper_type: "review", version: "revised", published: "journal",
+                     license: "cc-by", species: "no-animal" }];
+  selectFilter(1);
+  await newFilter();
+  groups = [{both: "sleep"}];
+  console.log(JSON.stringify(buildFilterDict()));
+})();"""))
+    for facet in ("category", "paper_type", "version", "published", "license", "species"):
+        assert facet not in got, (facet, got)
+
+
+def test_a4_tab_return_keeps_filter_sources():
+    got = _node_json(_editor_script("""
+(async () => {
+  await loadFilterTab();
+  state.filters = [{ id: 1, name: "F", text_groups: [{both: "x"}],
+                     source_selection: { all: false, selected: ["pubmed"] } }];
+  selectFilter(1);
+  await loadFilterTab();                 // back to the Filters tab
+  console.log(JSON.stringify(buildFilterDict().source_selection));
+})();"""))
+    assert got == {"all": False, "selected": ["pubmed"]}
+
+
+# ── A6: a late reply for an earlier job is ignored ───────────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#A6
+
+_POLL_STUBS = """
+const els = {};
+const $ = id => (els[id] = els[id] || { textContent: "", disabled: false, value: 0, max: 0,
+                                         classList: { add(){}, remove(){} } });
+const calls = [];
+let release;
+async function api(method, path) {
+  calls.push(path);
+  return new Promise(r => { release = r; });
+}
+function stopPolling() { calls.push("stopPolling"); }
+async function loadResults() { calls.push("loadResults"); }
+function searchFinished(s) { calls.push("finished:" + s); }
+function progressText() { return ""; } function failedSourcesText() { return ""; }
+function enrichProblemsText() { return ""; } function notice() {}
+function shouldStopPolling() { return false; } function renderFilterTestResults() {}
+globalThis.clearInterval = () => calls.push("clearInterval");
+"""
+
+
+def test_a6_stale_search_response_ignored():
+    script = "\n".join([
+        _POLL_STUBS,
+        "const state = { jobId: 'A', polling: 1 };",
+        _js_block(r"async function pollSearch\(\) \{.*?\n\}"),
+        _js_block(r"async function pollSearchFor\(jobId\) \{.*?\n\}"),
+        """(async () => {
+  const p = pollSearch();          // asks about A
+  await pollSearch();              // a second tick while A's request is out: skipped
+  state.jobId = 'B';               // the user started search B
+  release({ status: 'done', fetched: 0 });
+  await p;
+  console.log(JSON.stringify(calls));
+})();""",
+    ])
+    got = _node_json(script)
+    assert got == ["/api/searches/A"], got     # no stop, no load, no "finished" for B
+
+
+def test_a6_stale_filter_test_response_ignored():
+    script = "\n".join([
+        _POLL_STUBS,
+        "const state = { filterTestJobId: 'A', filterTestPolling: 1 };",
+        _js_block(r"async function pollFilterTest\(\) \{.*?\n\}"),
+        _js_block(r"async function pollFilterTestFor\(jobId\) \{.*?\n\}"),
+        """(async () => {
+  const p = pollFilterTest();
+  state.filterTestJobId = 'B';
+  release({ status: 'done', fetched: 0 });
+  await p;
+  console.log(JSON.stringify(calls));
+})();""",
+    ])
+    got = _node_json(script)
+    assert got == ["/api/searches/A"], got
+
+
+def test_a6_api_gives_up_on_a_request_that_never_answers():
+    script = "\n".join([
+        "const state = { me: null }; const SIGN_IN_MESSAGE = ''; function showGate() {}",
+        "const API_TIMEOUT_MS = 50;",
+        "globalThis.fetch = (path, options) => new Promise((_, reject) => {",
+        "  options.signal.addEventListener('abort', () => { const e = new Error('aborted'); e.name = 'AbortError'; reject(e); });",
+        "});",
+        _js_block(r"async function api\(method, path, body, opts\) \{.*?\n\}"),
+        "api('GET', '/api/searches/x').catch(e => console.log(JSON.stringify([e.status, e.message])));",
+    ])
+    got = _node_json(script)
+    assert got[0] == 0 and "took too long" in got[1]
+
+
+# ── A7 (page side) / M13: a running summary is never started twice ───────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#A7, #M13
+
+def _summary_guard_script(body):
+    return "\n".join([
+        """
+const state = { summarizing: new Set(), serverSummaries: {}, activeListId: 5,
+                refItems: [{ item_id: 1, paper: { doi: "10.1/a", canonical_id: "doi:10.1/a", title: "A" } }],
+                me: { provider: "deepseek" }, batchRunning: false };
+const els = {};
+const $ = id => (els[id] = els[id] || { textContent: "", classList: { remove(){}, add(){} },
+  querySelectorAll: () => [{ dataset: { itemId: "1" } }] });
+const document = { querySelectorAll: () => [] };
+const calls = [];
+function notice() {} function refreshTokenMeter() {} async function selectRefList() {}
+function setBatchRunning(r) { state.batchRunning = r; } function batchSummaryReport() { return ""; }
+function estimateBody() { return {}; } async function confirmSpend() { return true; }
+function shortTitle(p) { return p.title; } const POLL_MS = 10;
+globalThis.setInterval = () => 1; globalThis.clearInterval = () => {};
+function renderResults() {} function renderRefItems() {}
+function refreshSearchSummaries() {} function refreshRefSummaries() {}
+""",
+        _js_block(r"function paperKey\(paper\) \{.*?\n\}"),
+        _js_block(r"function setSummarizeButtons\(key, busy\) \{.*?\n\}"),
+        _js_block(r"function serverSummaryJob\(paper\) \{.*?\n\}"),
+        _js_block(r"function isSummarizing\(paper\) \{.*?\n\}"),
+        _js_block(r"async function restoreRunningJobs\(\) \{.*?\n\}"),
+        _js_block(r"async function summarizeChecked\(\) \{.*?\n\}"),
+        body,
+    ])
+
+
+def test_a7_busy_state_restored_on_boot():
+    got = _node_json(_summary_guard_script("""
+async function api(method, path) {
+  if (path === "/api/jobs/running") return { jobs: [{ kind: "summary", paper: "10.1/a", job_id: "J1" }] };
+  return { status: "running" };
+}
+restoreRunningJobs().then(() => console.log(JSON.stringify([
+  isSummarizing({ doi: "10.1/a", canonical_id: "doi:10.1/a" }),
+  isSummarizing({ doi: "10.1/other" }), serverSummaryJob({ canonical_id: "x", doi: "10.1/a" })])));"""))
+    assert got == [True, False, "J1"]
+
+
+def test_a7_409_adopts_running_job():
+    script = "\n".join([
+        "const state = { me: { provider: 'deepseek' } };",
+        "function localSettings() { return {}; } function findByTitle() { return true; }",
+        "let polled = '';",
+        "async function api() { const e = new Error('already running'); e.status = 409;",
+        "  e.payload = { detail: 'already running', job_id: 'J7' }; throw e; }",
+        "async function pollJobUntilSettled(path) { polled = path;",
+        "  return { status: { result: { source_text: 'full_text' } } }; }",
+        _js_block(r"async function summarizeOnePaper\(paper\) \{.*?\n\}"),
+        "summarizeOnePaper({ doi: '10.1/a' }).then(r => console.log(JSON.stringify([r, polled])));",
+    ])
+    got = _node_json(script)
+    assert got == [{"ok": True, "abstractOnly": False}, "/api/summaries/J7"]
+
+
+def test_m13_row_click_blocked_during_batch():
+    got = _node_json(_summary_guard_script("""
+let busyDuringRun = null;
+async function api(method, path) {
+  if (path === "/api/usage/estimate") return {};
+  const e = new Error("none"); e.status = 404; throw e;      // no stored summary
+}
+async function summarizeOnePaper(p) { busyDuringRun = isSummarizing(p); return { ok: true }; }
+summarizeChecked().then(() => console.log(JSON.stringify([busyDuringRun,
+  isSummarizing(state.refItems[0].paper)])));"""))
+    assert got == [True, False]     # busy while the batch runs it, released after
+
+
+# ── M14–M17: late replies, discover blips, list deletion, paging ─────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M14, #M15, #M16, #M17
+
+_DOM = """
+const els = {};
+const $ = id => (els[id] = els[id] || { textContent: "", disabled: false, children: [],
+  classList: { hidden: false, add(c) { this.hidden = true; }, remove(c) { this.hidden = false; },
+               toggle() {} } });
+const notices = []; function notice(m) { notices.push(m); }
+"""
+
+
+def test_m14_stale_list_response_ignored():
+    got = _node_json("\n".join([
+        _DOM,
+        "const state = { activeListId: null, refLists: [{id: 1, name: 'A'}, {id: 2, name: 'B'}], refItems: [] };",
+        "let release; const rendered = [];",
+        "async function api(m, path) { if (path === '/api/references/1/items') return new Promise(r => { release = r; });",
+        "  return { items: [{ item_id: 9, paper: {title: 'from B'} }] }; }",
+        "function renderRefItems() { rendered.push(state.refItems.map(i => i.item_id)); }",
+        "async function refreshRefSummaries() {} async function loadStoredReview() {}",
+        _js_block(r"async function selectRefList\(listId\) \{.*?\n\}"),
+        """(async () => {
+  const a = selectRefList(1);          // slow
+  await selectRefList(2);              // the user opens B
+  release({ items: [{ item_id: 1, paper: {title: 'from A'} }] });
+  await a;
+  console.log(JSON.stringify([state.refItems.map(i => i.item_id), rendered]));
+})();""",
+    ]))
+    assert got == [[9], [[9]]]
+
+
+def test_m15_page_error_restores_offset():
+    got = _node_json("\n".join([
+        _DOM,
+        "const state = { offset: 25 };",
+        "async function loadResults() { const e = new Error('That search has expired'); e.status = 410; throw e; }",
+        _js_block(r"async function turnPage\(delta\) \{.*?\n\}"),
+        "turnPage(25).then(() => console.log(JSON.stringify([state.offset, notices])));",
+    ]))
+    assert got[0] == 25 and "expired" in got[1][0]
+
+
+def test_m16_discover_survives_blip():
+    got = _node_json("\n".join([
+        _DOM,
+        "const POLL_GIVE_UP = 8; let cleared = 0; globalThis.clearInterval = () => { cleared++; };",
+        "const state = { discoverJobId: 'D', discoverPolling: 1 };",
+        "async function api() { const e = new Error('offline'); e.status = 0; throw e; }",
+        "function refreshTokenMeter() {} function failedSourcesText() { return ''; }",
+        "function renderDiscoverChips() {}",
+        _js_block(r"function shouldStopPolling\(error, failuresInARow\) \{.*?\n\}"),
+        _js_block(r"async function pollDiscover\(\) \{.*?\n\}"),
+        "pollDiscover().then(() => console.log(JSON.stringify([cleared, state.discoverPolling, $('btn-discover').disabled])));",
+    ]))
+    assert got == [0, 1, False]
+
+
+def test_m17_delete_list_clears_review():
+    got = _node_json("\n".join([
+        _DOM,
+        "const state = { activeListId: 3, refItems: [1], refSummaries: [1] };",
+        "globalThis.confirm = () => true; async function api() { return {}; } async function loadRefTab() {}",
+        "$('ref-review').classList.remove(); $('ref-dl-status').classList.remove();",
+        "$('ref-dl-status').textContent = 'Reviewed 4 paper(s).';",
+        _js_block(r"async function deleteRefList\(\) \{.*?\n\}"),
+        "deleteRefList().then(() => console.log(JSON.stringify([$('ref-review').classList.hidden,",
+        "  $('ref-dl-status').classList.hidden, $('ref-dl-status').textContent, state.refSummaries])));",
+    ]))
+    assert got == [True, True, "", []]
+
+
+# ── A2 (page side): a name clash is refused before any request ───────────────
+
+def test_a2_client_blocks_name_clash():
+    got = _node_json("\n".join([
+        _DOM,
+        "const state = { activeFilterId: 1, filters: [{id: 1, name: 'A'}, {id: 2, name: 'Sleep'}] };",
+        "const sent = []; async function api(m, p) { sent.push(m + ' ' + p); return { id: 1 }; }",
+        "function buildFilterDict() { return {}; } async function reloadFilterList() {}",
+        "async function loadSearchFilters() {} globalThis.prompt = () => ' sleep ';",
+        _js_block(r"function filterNameClash\(name, filters, ownId\) \{.*?\n\}"),
+        _js_block(r"async function saveFilter\(\) \{.*?\n\}"),
+        _js_block(r"async function saveFilterAs\(\) \{.*?\n\}"),
+        """(async () => {
+  $('filter-name').value = 'SLEEP'; await saveFilter();        // rename onto another
+  await saveFilterAs();                                        // new filter, same name
+  $('filter-name').value = 'a'; await saveFilter();            // case change of its own name
+  console.log(JSON.stringify([sent, notices.filter(n => n.includes('already exists')).length]));
+})();""",
+    ]))
+    assert got == [["PUT /api/filters/1"], 2]
