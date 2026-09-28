@@ -85,8 +85,11 @@ ROOT = Path(__file__).parent.parent.parent
 #   — W1.a required)
 # Updated from eb2302d → de3c124 (batch-2 gate finding 3: EuropePmcAdapter.get_by_id
 #   queries a PMCID by field so pmcid: canonical ids can be looked up — W1.a required)
+# Updated from de3c124 → dd0f496 (review batch 3, S2: orchestrator.search normalises the
+#   filter, refuses an empty one, and reports source failures through
+#   on_source_failure; one label map via config.source_label — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "de3c124"
+BASELINE = "dd0f496"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
