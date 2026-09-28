@@ -83,8 +83,10 @@ ROOT = Path(__file__).parent.parent.parent
 #   working get_by_id (id_list) and crossref.py a record_for_doi, so the summary
 #   route can look a paper up server-side instead of trusting the request body
 #   — W1.a required)
+# Updated from eb2302d → de3c124 (batch-2 gate finding 3: EuropePmcAdapter.get_by_id
+#   queries a PMCID by field so pmcid: canonical ids can be looked up — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "eb2302d"
+BASELINE = "de3c124"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
