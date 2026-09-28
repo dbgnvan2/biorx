@@ -192,6 +192,8 @@ class EuropePmcAdapter:
         """
         if identifier.startswith("10."):
             query = f'DOI:"{identifier}"'
+        elif identifier.upper().startswith("PMC"):
+            query = f"PMCID:{identifier.upper()}"
         else:
             query = f"EXT_ID:{identifier} AND SRC:MED"
 

@@ -231,3 +231,30 @@ def test_a13_migration_clears_duplicate_text(tmp_path):
     d = Database(path)                           # and again: idempotent
     assert d.get_summary(pid)["key_findings"] == ["f1"]
     d.close()
+
+
+def test_a1_pmcid_resolved_via_europe_pmc():
+    """Gate 2026-09-28 batch 2, finding 3: pmcid: ids are looked up too."""
+    raw = {"pmcid": "PMC77", "title": "Found by PMCID", "pubTypeList": {"pubType": ["Review"]}}
+    with patch("src.sources.europepmc.EuropePmcAdapter.get_by_id", return_value=raw) as get:
+        paper = lookup_at_source({"doi": "", "canonical_id": "pmcid:PMC77"})
+    get.assert_called_once_with("PMC77")
+    assert paper["title"] == "Found by PMCID"
+
+
+def test_a1_europe_pmc_queries_pmcid_by_field():
+    from src.sources.europepmc import EuropePmcAdapter
+    a = EuropePmcAdapter()
+    resp = MagicMock(status_code=200, ok=True)
+    resp.json.return_value = {"resultList": {"result": []}}
+    a.session.get = MagicMock(return_value=resp)
+    a.get_by_id("pmc77")
+    assert a.session.get.call_args.kwargs["params"]["query"] == "PMCID:PMC77"
+
+
+def test_a1_title_fingerprint_says_why_it_cannot_be_looked_up(db):
+    from src.summarize import PaperNotFoundError, resolve_paper
+    lookup = MagicMock()
+    with pytest.raises(PaperNotFoundError, match="title fingerprint"):
+        resolve_paper(db, {"doi": "", "canonical_id": "title:abc123"}, lookup=lookup)
+    lookup.assert_not_called()

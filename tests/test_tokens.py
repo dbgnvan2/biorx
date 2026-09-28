@@ -617,3 +617,32 @@ def test_m5a1_missing_config_falls_back_rather_than_crashing():
     got = estimate_summary_tokens(3, {}, "claude-sonnet-5")
     assert got["low"] > 0 and got["high"] > got["low"]
     assert got["dollars_low"] is None
+
+
+
+@pytest.mark.parametrize("code", [408, 409, 429, 503])
+def test_m29_ollama_429_is_retried_then_unavailable(code):
+    """Gate 2026-09-28 batch 2, finding 1: retryable statuses match the hosted
+    clients' RETRYABLE_STATUS; they were a terminal error after one try."""
+    import requests as _requests
+    from src.llm_providers import ProviderUnavailableError
+    resp = MagicMock(status_code=code)
+    err = _requests.HTTPError(f"{code}", response=resp)
+    bad = MagicMock()
+    bad.raise_for_status.side_effect = err
+    with patch("src.llm.requests.post", return_value=bad) as post, \
+         patch("src.llm_providers._sleep_backoff"):
+        with pytest.raises(ProviderUnavailableError):
+            OllamaClient().generate("prompt")
+    assert post.call_count == 3
+
+
+def test_m29_ollama_400_is_not_retried():
+    import requests as _requests
+    from src.llm_providers import ProviderResponseError
+    bad = MagicMock()
+    bad.raise_for_status.side_effect = _requests.HTTPError("400", response=MagicMock(status_code=400))
+    with patch("src.llm.requests.post", return_value=bad) as post:
+        with pytest.raises(ProviderResponseError):
+            OllamaClient().generate("prompt")
+    assert post.call_count == 1

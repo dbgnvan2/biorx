@@ -88,11 +88,15 @@ def lookup_at_source(ref: Dict[str, str], sources_config: Optional[Dict[str, Any
             raw = adapter.get_by_id(cid[6:])
             if raw:
                 return adapter.normalize(raw).to_dict()
-        pmid = cid[5:] if cid.lower().startswith("pmid:") else ""
-        if doi or pmid:
+        # Europe PMC ids from make_canonical_id: pmid:<n> and pmcid:<PMCn>.
+        epmc_id = ""
+        for prefix in ("pmid:", "pmcid:"):
+            if cid.lower().startswith(prefix):
+                epmc_id = cid[len(prefix):]
+        if doi or epmc_id:
             from src.sources.europepmc import EuropePmcAdapter
             epmc = EuropePmcAdapter(sources_config=cfg)
-            raw = epmc.get_by_id(doi or pmid)
+            raw = epmc.get_by_id(doi or epmc_id)
             if raw:
                 record = epmc.normalize(raw)
                 if record.title:
@@ -130,6 +134,11 @@ def resolve_paper(db, ref: Dict[str, str], *,
         for paper in results or []:
             if isinstance(paper, dict) and _same_paper(paper, ref):
                 return dict(paper)
+    if not ref.get("doi") and ref.get("canonical_id", "").startswith("title:"):
+        # A title fingerprint cannot be turned back into a lookup.
+        raise PaperNotFoundError(
+            "it has no DOI or source id, only a title fingerprint, so it can be "
+            "summarized only from a search you ran in this session or a saved list")
     found = (lookup or lookup_at_source)(ref, sources_config)
     if not found:
         raise PaperNotFoundError(

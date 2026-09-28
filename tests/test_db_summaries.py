@@ -57,6 +57,9 @@ def test_a8_db_error_raises_summary_not_saved(db, monkeypatch):
         def cursor(self):
             raise sqlite3.OperationalError("database is locked")
 
+        def execute(self, *a, **k):
+            raise sqlite3.OperationalError("database is locked")
+
         def __getattr__(self, name):
             return getattr(self._real, name)
 
@@ -82,3 +85,24 @@ def test_m27_not_null_is_error_not_duplicate(db, caplog):
 def test_m27_duplicate_still_returns_none(db):
     assert _paper(db, "10.1/d") is not None
     assert _paper(db, "10.1/d") is None
+
+
+def test_a1_guard_sees_a_summary_committed_by_another_connection(tmp_path):
+    """Gate 2026-09-28 batch 2, finding 4: the guard is one statement, so a
+    full-text summary another worker committed is never overwritten."""
+    path = str(tmp_path / "shared.db")
+    a, b = Database(path), Database(path)
+    pid = a.insert_paper({"doi": "10.1/c", "title": "T", "canonical_id": "doi:10.1/c"})
+    b.insert_summary(pid, summary_text="", key_findings=["from b"], source_text="full_text")
+    with pytest.raises(SummaryDowngradeRefused):
+        a.insert_summary(pid, summary_text="abstract from a", source_text="abstract")
+    assert a.get_summary(pid)["key_findings"] == ["from b"]
+    a.close()
+    b.close()
+
+
+def test_a1_abstract_insert_on_a_new_paper_still_works(db):
+    pid = _paper(db, "10.1/new")
+    db.insert_summary(pid, summary_text="the abstract", source_text="abstract")
+    db.insert_summary(pid, summary_text="the abstract, again", source_text="abstract")
+    assert db.get_summary(pid)["summary_text"] == "the abstract, again"

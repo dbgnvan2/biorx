@@ -85,7 +85,7 @@ class OllamaClient:
             that is not JSON. It returned None before, which every caller had
             to remember to check (review A10/M29).
         """
-        from .llm_providers import (MAX_ATTEMPTS, ProviderResponseError,
+        from .llm_providers import (MAX_ATTEMPTS, RETRYABLE_STATUS, ProviderResponseError,
                                     ProviderUnavailableError, _sleep_backoff)
         payload: Dict[str, Any] = {"model": self.model, "prompt": prompt, "stream": False}
         if context:
@@ -100,7 +100,10 @@ class OllamaClient:
                 response.raise_for_status()
             except requests.RequestException as e:
                 status = getattr(getattr(e, "response", None), "status_code", None)
-                if status is not None and status < 500:
+                # The same retryable set as the hosted clients: a 429 from a
+                # busy local Ollama is "not right now", not a bad reply (gate
+                # 2026-09-28 batch 2, finding 1).
+                if status is not None and status not in RETRYABLE_STATUS:
                     raise ProviderResponseError(f"Ollama returned {status}: {e}") from e
                 logger.warning("Ollama request failed (attempt %d/%d): %s",
                                attempt, MAX_ATTEMPTS, e)

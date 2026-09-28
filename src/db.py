@@ -758,15 +758,40 @@ class Database:
                 None, which no caller checked, so a paid summary could be
                 reported as saved when it was not.
         """
+        values = (paper_id, summary_text,
+                  json.dumps(key_findings) if key_findings else None,
+                  methodology, conclusions, model_version, created_by_user_id,
+                  source_text, text_source)
         try:
             if source_text == "abstract":
-                row = self.conn.execute(
-                    "SELECT source_text FROM summaries WHERE paper_id = ?", (paper_id,)
-                ).fetchone()
-                if row is not None and row[0] == "full_text":
+                # One statement, so a full-text summary committed by another
+                # run between a check and a write cannot be overwritten (gate
+                # 2026-09-28 batch 2, finding 4).
+                cursor = self.conn.execute(
+                    """
+                    INSERT INTO summaries
+                    (paper_id, summary_text, key_findings, methodology,
+                     conclusions, model_version, created_by_user_id,
+                     source_text, text_source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(paper_id) DO UPDATE SET
+                        summary_text = excluded.summary_text,
+                        key_findings = excluded.key_findings,
+                        methodology = excluded.methodology,
+                        conclusions = excluded.conclusions,
+                        model_version = excluded.model_version,
+                        created_by_user_id = excluded.created_by_user_id,
+                        source_text = excluded.source_text,
+                        text_source = excluded.text_source,
+                        created_at = CURRENT_TIMESTAMP
+                    WHERE COALESCE(summaries.source_text, '') <> 'full_text'
+                    """, values)
+                self.conn.commit()
+                if cursor.rowcount == 0:
                     raise SummaryDowngradeRefused(
                         f"paper {paper_id} already has a full-text summary; "
                         "an abstract will not replace it")
+                return cursor.lastrowid
             cursor = self.conn.cursor()
             cursor.execute(
                 """
@@ -775,19 +800,7 @@ class Database:
                  conclusions, model_version, created_by_user_id,
                  source_text, text_source)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    paper_id,
-                    summary_text,
-                    json.dumps(key_findings) if key_findings else None,
-                    methodology,
-                    conclusions,
-                    model_version,
-                    created_by_user_id,
-                    source_text,
-                    text_source,
-                ),
-            )
+            """, values)
             self.conn.commit()
             return cursor.lastrowid
         except sqlite3.Error as e:
