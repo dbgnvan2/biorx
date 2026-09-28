@@ -3,6 +3,15 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the review batch-3 gate (`docs/cycles/2026-09-28_review-batch3-qa-gate.md`) — APPROVED, deferred
+
+- LOW / docs — `APP_SPEC.md`, `BUILD_SUMMARY.md`, `PROJECT_COMPLETE.md` and
+  `GEMINI.md` still name `agents/search_agent.py`. Folded into batch 8 (M34).
+- LOW / P2 — `seed_filters_from_file` still upserts, so two seed entries with the
+  same name collapse into one for a new account. M32 (batch 8) replaces the seed.
+- LOW — the filter-name clash check uses SQLite `lower()`, which folds ASCII only;
+  "CAFÉ" and "café" can both be saved.
+
 ## From the review batch-2 gates (`docs/cycles/2026-09-28_review-batch2-*qa-gate.md`) — APPROVED, deferred
 
 - Known GUI effect (retiring app, not fixed): `gui.py` `DiscoverTermsWorker`

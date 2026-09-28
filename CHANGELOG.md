@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-28 — filters: no silent overwrites, one set of run rules
+
+Review fixes, batch 3. Gate: `docs/cycles/2026-09-28_review-batch3-qa-gate.md` (APPROVED).
+
+### Fixed
+- **Saving or renaming a filter onto another filter's name is refused** ("A
+  filter called … already exists"), whatever the letter case. It used to
+  replace the other filter's contents and delete the one being edited, and say
+  it had saved. A rename now keeps the filter's id.
+- **Discover refuses a blank description** before it uses any of your daily
+  allowance, and no longer looks up extra details for papers it only reads the
+  titles of.
+
+### Changed
+- **Every way of running a filter follows the same rules**: the search engine
+  itself reads older filter shapes and refuses a filter with nothing to search
+  for, instead of each front end doing it (or not). Failed sources are passed to
+  the web app and `monitor.py` as data, so changing a status message's wording
+  can no longer stop failures being counted. Source names are spelled the same
+  everywhere ("bioRxiv / medRxiv").
+- **The old bioRxiv-only search agent and `key_terms.json` are gone.** It saved
+  every paper in a category (its profiles had no terms) and reported failures
+  as success. `./run.sh search` now runs `agents/monitor.py --all`; `./run.sh`
+  on its own prints the commands.
+
 ## 2026-09-28 — summaries: checked on the server, one pipeline
 
 Review fixes, batch 2. Gates: `docs/cycles/2026-09-28_review-batch2-qa-gate.md`
