@@ -3,6 +3,12 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the review batch-5 gate (`docs/cycles/2026-09-28_review-batch5-qa-gate.md`) — APPROVED
+
+- Both findings are fixed in review batch 6: the request connection is released
+  on the admission-failure and review-409 paths too, and a reuse job that finds
+  no stored summary fails with a plain message instead of an AttributeError.
+
 ## From the review batch-4 gate (`docs/cycles/2026-09-28_review-batch4-qa-gate.md`) — APPROVED
 
 - Both notes are fixed in review batch 5: at the cap limit a duplicate run got

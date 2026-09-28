@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-09-28 — the page shows and saves what is really there
+
+Review fixes, batch 5. Gate: `docs/cycles/2026-09-28_review-batch5-qa-gate.md` (APPROVED).
+
+### Fixed
+- **A new filter starts clean.** "+ New" (and a term click) no longer carries
+  over the last filter's category, paper type, licence or species.
+- **Coming back to the Filters tab keeps the open filter's sources.** They were
+  replaced with your defaults on the next save.
+- **An API key saved in this browser belongs to your account.** It is removed
+  when you sign out, and someone who signs in after you on the same browser
+  cannot use it. (A key saved before this update has to be entered again.)
+- **A slow reply can no longer end the wrong search.** A late answer about an
+  earlier search or filter test is ignored instead of marking the new one
+  "done" with no results; requests that never answer give up after 30 s; the
+  Test button is disabled while a test runs.
+- **After a reload, summaries still running show as busy**, and clicking
+  Summarize on one follows the running job instead of paying for a second.
+- **Summarize checked** marks its papers busy, so a row click cannot summarize
+  one twice.
+- A list's late reply or finished review is no longer drawn under another
+  list; a page that fails to load says so; one missed Discover check no longer
+  ends Discover; deleting a list clears its review.
+- **Save / Save as refuse a name another filter already has.**
+- At the daily limit, a second click on a running summary says "already
+  running", and a paper with a stored summary still gets it (both used to say
+  the limit was reached).
+
 ## 2026-09-28 — background work: one spend path, separate queues, no double runs
 
 Review fixes, batch 4. Gate: `docs/cycles/2026-09-28_review-batch4-qa-gate.md` (APPROVED).
