@@ -304,34 +304,14 @@
       "end_date": "",
       "text_groups": [
         {
-          "title": "",
+          "title": "agentic model",
           "abstract": "",
-          "both": "generative agents, multi-agent simulation, agent-based model, interactive simulacra"
-        },
-        {
-          "title": "",
-          "abstract": "",
-          "both": "algorithmic fidelity, silicon samples"
-        },
-        {
-          "title": "",
-          "abstract": "large language model",
-          "both": "persona, personality, emotion"
-        },
-        {
-          "title": "",
-          "abstract": "language model",
-          "both": "self-adapting, self-improving"
+          "both": "AI Simulation"
         },
         {
           "title": "",
           "abstract": "",
-          "both": "emergent misalignment"
-        },
-        {
-          "title": "",
-          "abstract": "reinforcement learning",
-          "both": "addiction"
+          "both": "agentic model"
         }
       ],
       "authors": [],
@@ -342,12 +322,8 @@
       "license": "(any)",
       "species": "(any)",
       "source_selection": {
-        "all": false,
-        "selected": [
-          "arxiv",
-          "psyarxiv",
-          "socarxiv"
-        ]
+        "all": true,
+        "selected": []
       }
     }
   ]

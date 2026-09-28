@@ -2342,3 +2342,52 @@ def test_f1_healthz_default_is_read_by_the_page():
     body = re.search(r"async function loadSources\(\) \{.*?\n\}", code, re.DOTALL).group(0)
     assert re.search(r"^\s*state\.findByTitleDefault = health\.find_by_title_default !== false;$",
                      body, re.M)
+
+
+# ── Ad Hoc Search with an empty box (reported 2026-09-26) ─────────────────────
+#
+# Pressing Search under Ad Hoc Search with the box empty sent a filter with no
+# terms, and the server refused it with "This filter has no search terms". The
+# saved filter picked above (Agent Simulation) did have terms, and the box's
+# grey placeholder read like typed ones, so the message looked wrong.
+
+def _adhoc_eval(expr):
+    return _node_eval(
+        [_js_block(r"function adHocSearchProblem\(text, selectedFilterName\) \{.*?\n\}")],
+        expr)
+
+
+@pytest.mark.parametrize("text", ["", "   ", ",", " , , "])
+def test_ah1_an_empty_box_is_refused_before_the_request(text):
+    import json
+    got = _adhoc_eval(f'adHocSearchProblem({json.dumps(text)}, "Agent Simulation")')
+    assert "Ad Hoc Search box" in got
+    # It names the Run button the user actually wanted, and the filter picked.
+    assert 'saved filter "Agent Simulation"' in got and "Run button" in got
+
+
+def test_ah1_a_typed_term_is_not_refused():
+    assert _adhoc_eval('adHocSearchProblem(" sleep ", "Agent Simulation")') == ""
+    assert _adhoc_eval('adHocSearchProblem(", apnea", "")') == ""
+
+
+def test_ah1_no_filter_picked_still_points_at_run():
+    got = _adhoc_eval('adHocSearchProblem("", "")')
+    assert "Run button beside Select Filter" in got and '""' not in got
+
+
+def test_ah1_search_button_checks_before_starting():
+    """The check must run before startSearch, which disables the buttons and
+    clears the previous results."""
+    code = _js_without_comments()
+    assert '$("run-search").addEventListener("click", runAdHocSearch)' in code
+    body = re.search(r"function runAdHocSearch\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    guard = body.index("if (problem)")
+    assert body.index("return;", guard) < body.index("startSearch(")
+
+
+def test_ah1_the_placeholder_reads_as_an_example():
+    """The placeholder looked like typed terms. It must say it is an example."""
+    html = (Path(__file__).parent.parent.parent / "web" / "static" / "index.html").read_text()
+    tag = re.search(r'<input id="q-both"[^>]*>', html).group(0)
+    assert 'placeholder="e.g. ' in tag

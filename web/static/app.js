@@ -748,6 +748,34 @@ function progressText(job) {
   return parts.join(" · ") + (step ? ` — ${step}` : "");
 }
 
+/* What is wrong with an Ad Hoc Search before it is sent, or "" if nothing.
+
+   An empty box used to go to the server, which refused it with the saved-
+   filter message "This filter has no search terms" — while the saved filter
+   picked above did have terms, and the box's grey placeholder looked like
+   typed ones. So the refusal names the box, and the Run button a saved
+   filter needs. Pure, for the node-run test. */
+function adHocSearchProblem(text, selectedFilterName) {
+  if (String(text || "").split(",").some(t => t.trim())) return "";
+  const saved = selectedFilterName
+    ? `To run the saved filter "${selectedFilterName}", use the Run button beside Select Filter.`
+    : "To run a saved filter, use the Run button beside Select Filter.";
+  return `Type at least one word in the Ad Hoc Search box first. ${saved}`;
+}
+
+function runAdHocSearch() {
+  const sel = $("search-filter-select");
+  const picked = sel.value ? (sel.options[sel.selectedIndex] || {}).text : "";
+  const problem = adHocSearchProblem($("q-both").value, picked);
+  if (problem) {
+    notice(problem, "warn");
+    $("q-both").focus();
+    return;
+  }
+  state.searchLabel = $("q-both").value;
+  return startSearch({ filter: manualFilter() });
+}
+
 function manualFilter() {
   const useRange = $("search-date-range-toggle").checked;
   const f = {
@@ -2776,10 +2804,7 @@ function wire() {
   });
   $("search-filter-select").addEventListener("change", renderFilterRunButtons);
   $("btn-run-filter").addEventListener("click", runSelectedFilter);
-  $("run-search").addEventListener("click", () => {
-    state.searchLabel = $("q-both").value;
-    startSearch({ filter: manualFilter() });
-  });
+  $("run-search").addEventListener("click", runAdHocSearch);
   $("cancel-search").addEventListener("click", cancelSearch);
   $("prev-page").addEventListener("click", () => {
     state.offset = Math.max(0, state.offset - PAGE_SIZE);
