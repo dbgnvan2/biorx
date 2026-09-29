@@ -18,7 +18,10 @@ import html
 import re
 
 # Tag names removed; anything else that looks like "<...>" is left as text.
-_INLINE = r"b|i|em|strong|sub|sup|sc|u|span|a|italic|bold|jats:italic|jats:bold|jats:sub|jats:sup|jats:sc"
+# Single-letter tags (<b>, <i>, <u>, <a href=…>) are matched only in their
+# exact forms: "a<b and c>d" is prose, not a <b> tag (QA gate 2026-09-29).
+_INLINE = r"em|strong|sub|sup|sc|span|italic|bold|jats:italic|jats:bold|jats:sub|jats:sup|jats:sc"
+_SINGLE_LETTER = re.compile(r"</?[biu]>|<a\s+href\s*=[^<>]*>|</a>", re.IGNORECASE)
 _BLOCK = r"p|br|div|section|jats:p|jats:sec|abstract|jats:abstract"
 _HEADING = r"h[1-6]|title|jats:title"
 
@@ -39,6 +42,7 @@ def markup_to_text(text: str) -> str:
         text = _CLOSE_HEADING.sub(": ", text)
         text = _BLOCK_TAG.sub("\n", text)
         text = _INLINE_TAG.sub("", text)
+        text = _SINGLE_LETTER.sub("", text)
         text = re.sub(r"([:.?!])\s*:\s", r"\1 ", text)    # "Methods.: " -> "Methods. "
     text = html.unescape(text)
     text = re.sub(r"[ \t]+", " ", text)

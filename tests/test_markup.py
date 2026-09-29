@@ -51,3 +51,10 @@ def test_br2_real_europe_pmc_record_reads_as_text():
 def test_br2_crossref_uses_the_same_rules():
     from src.sources.crossref import _strip_jats
     assert _strip_jats("<jats:p>Effect (p < 0.01) was large.</jats:p>") == "Effect (p < 0.01) was large."
+
+
+def test_br2_a_letter_after_less_than_is_not_a_tag():
+    """QA gate 2026-09-29: "<b and c>" was read as a <b> tag with attributes."""
+    for text in ("a<b and c>d", "x<a and y>z", "u<i and j>v"):
+        assert markup_to_text(text) == text
+    assert markup_to_text("<i>E. coli</i> and <b>bold</b> <a href='x'>link</a>") == "E. coli and bold link"
