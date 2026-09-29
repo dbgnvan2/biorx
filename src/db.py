@@ -130,6 +130,14 @@ class SummaryDowngradeRefused(SummaryNotSaved):
     """
 
 
+def _sqlite_lower(text: str) -> str:
+    """Lower-case the way SQLite's built-in lower() does: ASCII letters only."""
+    return text.translate(_ASCII_LOWER)
+
+
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
 class Database:
     """SQLite database for bioRxiv papers and metadata."""
 
@@ -560,14 +568,18 @@ class Database:
         The oldest account keeps its name. Each renamed account is logged at
         ERROR with its old and new name, so the owner can tell that person;
         their PIN and data are unchanged.
+
+        Names are folded as SQLite's lower() folds them (ASCII only), because
+        that is what the unique index and sign-in compare: "ÉRIN" and "érin"
+        are two accounts to them, so they are not renamed here either.
         """
         rows = cursor.execute(
             "SELECT user_id, login_name FROM users WHERE login_name IS NOT NULL "
             "ORDER BY created_at, rowid").fetchall()
-        taken = {str(r[1]).lower() for r in rows}
+        taken = {_sqlite_lower(str(r[1])) for r in rows}
         seen = set()
         for user_id, name in rows:
-            key = name.lower()
+            key = _sqlite_lower(name)
             if key not in seen:
                 seen.add(key)
                 continue
@@ -575,7 +587,7 @@ class Database:
             while f"{key} ({n})" in taken:
                 n += 1
             new_name = f"{name} ({n})"
-            taken.add(new_name.lower())
+            taken.add(_sqlite_lower(new_name))
             cursor.execute("UPDATE users SET login_name = ? WHERE user_id = ?",
                            (new_name, user_id))
             logger.error("Login name %r differs from an older account's only in "
@@ -587,15 +599,19 @@ class Database:
         Spec:  docs/implementation_plan_2026-09-28_review_fixes.md#T2
         Tests: tests/test_db_migrations.py::test_t2_case_duplicate_names_handled
 
-        Names are compared case-insensitively since review A2, so one of each
-        pair can no longer be renamed onto the other. Both rows are kept; the
-        user decides which to delete.
+        Names are compared with str.casefold since review A2 (see
+        user_store.filter_name_taken), so the same folding is used here and
+        "CAFÉ"/"café" is reported too. Both rows are kept; the user decides
+        which to delete.
         """
-        for user_id, name, n in cursor.execute(
-                "SELECT user_id, lower(name), COUNT(*) FROM user_filters "
-                "GROUP BY user_id, lower(name) HAVING COUNT(*) > 1"):
-            logger.warning("User %s has %d saved filters named %r apart from case",
-                           user_id, n, name)
+        groups: Dict[tuple, int] = {}
+        for user_id, name in cursor.execute("SELECT user_id, name FROM user_filters"):
+            key = (user_id, str(name).casefold())
+            groups[key] = groups.get(key, 0) + 1
+        for (user_id, name), n in groups.items():
+            if n > 1:
+                logger.warning("User %s has %d saved filters named %r apart from case",
+                               user_id, n, name)
 
     # SQLite cannot change a column constraint in place, so relaxing NOT NULL
     # means rebuilding the table. The rewrite targets exactly this declaration.

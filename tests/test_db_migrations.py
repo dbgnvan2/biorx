@@ -224,3 +224,25 @@ def test_m30_orphans_cleaned_and_cascade_on(tmp_path, caplog):
     for table in ("user_reviews", "user_reference_list_items"):
         assert db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
     db.close()
+
+
+def test_t2_non_ascii_names_fold_as_each_comparison_does(tmp_path, caplog):
+    """Batch-8 gate finding 2. Login names fold as SQLite's lower() does
+    (ASCII only), because the unique index and sign-in compare that way:
+    "ÉRIN" and "érin" are two accounts and neither is renamed. Filter names
+    fold with casefold, as filter_name_taken does, so "CAFÉ"/"café" is reported."""
+    path = str(tmp_path / "accents.db")
+    _old_db(path, login_names={"u1": "ÉRIN", "u2": "érin"})
+    raw = sqlite3.connect(path)
+    raw.executemany("INSERT INTO user_filters (user_id, name, filter_json) VALUES ('u2', ?, '{}')",
+                    [("CAFÉ",), ("café",)])
+    raw.commit()
+    raw.close()
+
+    with caplog.at_level(logging.WARNING, logger="src.db"):
+        db = Database(path)
+    assert dict(db.conn.execute("SELECT user_id, login_name FROM users")) == \
+        {"u1": "ÉRIN", "u2": "érin"}
+    assert not [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert any("'café'" in r.getMessage() and "u2" in r.getMessage() for r in caplog.records)
+    db.close()

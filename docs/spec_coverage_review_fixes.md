@@ -7,8 +7,10 @@ matching every test name in the plan against `tests/`, then reviewed by hand.
 
 - Gates: `docs/cycles/2026-09-28_review-batch{1..8}-qa-gate.md` (batch 2 also
   has a re-gate).
-- Suite at batch 8: 1565 passed, 3 skipped (Linux-only memory limit, CI-only
-  Python version check, and the owner's local `filters.json` where absent).
+- Suite after the batch-8 gate fixes, on the owner's Mac: 1567 passed,
+  2 skipped (the Linux-only memory limit and the CI-only Python version
+  check). A third test skips only on a machine with no local `filters.json`,
+  such as CI.
 
 ## Batch 1
 
