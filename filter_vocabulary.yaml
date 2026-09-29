@@ -120,36 +120,53 @@ species:
   # an animal study for "human" and "no-animal". Titles only: human studies
   # mention animal models in abstracts. "animal" is not checked here: a title
   # without an organism does not show a study is not an animal study.
-  # Only words that almost always mean the animals studied: plurals and model
-  # phrases. Single organism words were dropped after the QA gate showed them
-  # excluding human studies — "bovine serum albumin", "rabbit monoclonal
-  # antibody", "Chinese hamster ovary cells", "canine tooth", "murine typhus",
-  # "equine-assisted therapy". Pets are left out too ("dog ownership"). A
-  # word in capitals is read as an acronym (MICE, multiple imputation) and
-  # not matched. Missing an occasional animal study is preferred to dropping
-  # a human one.
+  # Lab-animal words, plus "<animal> model" phrases for animals whose names
+  # have other senses in human research. Those names are left out on their
+  # own (QA gate 2026-09-29): "bovine serum albumin", "rabbit monoclonal
+  # antibody", "porcine valve", "canine tooth", "murine typhus",
+  # "equine-assisted therapy". Pets are left out ("dog ownership"). A word in
+  # capitals is read as an acronym (MICE, multiple imputation) and not
+  # matched. Missing some livestock/veterinary titles ("Bovine mastitis") is
+  # the price of not dropping human studies.
   animal_title_terms:
+    - mouse
     - mice
+    - rat
     - rats
+    - rodent
     - rodents
+    - hamster
+    - hamsters
+    - macaque
+    - macaques
     - zebrafish
     - drosophila
     - caenorhabditis
     - c. elegans
-    - macaques
+    - non-human primate
     - non-human primates
+    - nonhuman primate
     - nonhuman primates
     - piglets
-    - hamsters
     - cattle
-    - mouse model
-    - mouse models
-    - rat model
-    - rat models
     - murine model
     - murine models
-    - rodent model
-    - rodent models
+    - rabbit model
+    - rabbit models
+    - porcine model
+    - porcine models
+    - bovine model
+    - ovine model
+    - canine model
+    - equine model
+  # Phrases in which a word above does not mean the animal studied. They are
+  # taken out of the title before the check.
+  animal_title_exceptions:
+    - mouse tracking
+    - mouse-tracking
+    - computer mouse
+    - chinese hamster ovary
+    - hamster ovary cells
 
 category:
   # bioRxiv subject categories, sent to the bioRxiv/medRxiv API as they are.

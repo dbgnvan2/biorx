@@ -195,11 +195,29 @@ def animal_title_pattern() -> Optional["re.Pattern[str]"]:
     return re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", re.IGNORECASE)
 
 
+@lru_cache(maxsize=1)
+def animal_title_exceptions() -> Optional["re.Pattern[str]"]:
+    """species.animal_title_exceptions as one pattern ("mouse tracking",
+    "Chinese hamster ovary"): phrases in which an animal word is not the
+    animal studied."""
+    phrases = [str(t).strip() for t in (load()["species"].get("animal_title_exceptions") or [])
+               if str(t).strip()]
+    if not phrases:
+        return None
+    return re.compile("|".join(re.escape(p) for p in sorted(phrases, key=len, reverse=True)),
+                      re.IGNORECASE)
+
+
 def title_names_an_animal_study(title: str) -> bool:
-    """A match in capitals is an acronym, not the animal: "MICE" is multiple
-    imputation by chained equations (QA gate 2026-09-29)."""
+    """Whether a title names an animal study. Exception phrases are taken out
+    first; a match in capitals is an acronym, not the animal ("MICE" is
+    multiple imputation by chained equations). QA gate 2026-09-29."""
     pattern = animal_title_pattern()
     if not pattern:
         return False
+    title = title or ""
+    exceptions = animal_title_exceptions()
+    if exceptions:
+        title = exceptions.sub(" ", title)
     return any(not (m.group(0).isupper() and len(m.group(0)) > 1)
-               for m in pattern.finditer(title or ""))
+               for m in pattern.finditer(title))

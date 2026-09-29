@@ -95,12 +95,14 @@ Checked in the browser afterwards; screenshots 32–37.
   `species.animal_title_terms` in `filter_vocabulary.yaml`. The QA gate
   (`2026-09-29_biorxiv-budget-qa-gate.md`, F1) showed single organism words
   dropping human studies ("bovine serum albumin", "Chinese hamster ovary
-  cells", "murine typhus", MICE); the list is now plurals and model phrases
-  ("mice", "rats", "mouse model", "non-human primates"), and a word in
-  capitals is read as an acronym. Missing an occasional animal study (e.g.
-  "Bovine Mastitis") is preferred to dropping a human one. Tests:
-  `tests/test_filtering.py::test_br7_*`, with the gate's eight titles as
-  must-keep cases.
+  cells", "murine typhus", MICE). The re-gate then showed the first fix
+  dropping too much ("mouse", "rat" removed). The list is now lab-animal
+  words (mouse, rat, rodent, hamster, macaque, zebrafish, …) plus "<animal>
+  model" phrases for names with other senses (bovine, porcine, rabbit,
+  canine, equine, murine); exception phrases ("mouse tracking", "Chinese
+  hamster ovary") are taken out first; a word in capitals is an acronym.
+  Known gap, stated in the file and a test: veterinary titles such as
+  "Bovine mastitis" are not caught. Tests: `tests/test_filtering.py::test_br7_*`.
 - **Stored summaries with tags:** a startup migration cleans titles,
   abstracts and abstract-only summaries that contain a known tag, and leaves
   all other text and model summaries alone. Test:

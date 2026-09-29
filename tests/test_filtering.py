@@ -210,3 +210,26 @@ def test_br7_terms_come_from_the_vocabulary_file():
     from src import filter_vocabulary as vocab
     terms = vocab.load()["species"]["animal_title_terms"]
     assert "rats" in terms and "dog" not in terms and "dogs" not in terms
+
+
+
+def test_br7_singular_lab_animals_are_dropped():
+    """Re-gate 2026-09-29 F3: dropping the singulars missed the commonest
+    animal-study titles."""
+    titles = ["Mouse embryonic stem cell differentiation", "Mouse brain development and plasticity",
+              "Rat liver regeneration", "Hamster model of diet-induced obesity",
+              "Macaque visual cortex recordings", "A rodent study of sleep loss",
+              "Porcine model of septic shock", "A rabbit model of osteoarthritis"]
+    assert filter_papers([_t(t) for t in titles], {"species": "no-animal"}) == []
+
+
+def test_br7_exception_phrases_and_known_gaps():
+    kept = ["Mouse-tracking reveals decision conflict in adults",
+            "Computer mouse use and wrist pain in office workers",
+            "Chinese hamster ovary cells for biosimilar production",
+            # Known and accepted gaps: these names have human-research senses,
+            # so they are matched only in "<animal> model" phrases.
+            "Bovine mastitis", "Canine osteoarthritis progression", "Equine laminitis",
+            "Murine leukemia virus pathogenesis"]
+    got = filter_papers([_t(t) for t in kept], {"species": "no-animal"})
+    assert [p["title"] for p in got] == kept

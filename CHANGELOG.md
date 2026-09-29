@@ -12,9 +12,11 @@
 
 ### Fixed
 - "Exclude animal studies" and "Human studies only" also drop papers whose
-  title names an animal study ("in mice", "rats", "mouse model", …), for
-  every source. The terms are in `filter_vocabulary.yaml`; words with other
-  meanings in human research ("bovine serum albumin") are left out.
+  title names an animal study (mouse, rat, zebrafish, "porcine model", …),
+  for every source. The terms are in `filter_vocabulary.yaml`. Words with
+  other meanings in human research ("bovine serum albumin", "Chinese hamster
+  ovary cells", "mouse tracking") do not count, so some veterinary titles
+  ("Bovine mastitis") still get through.
 - Reviews show headings, lists, bold and italics instead of `**…**`.
 - PubMed titles no longer show `<i>…</i>`; titles and abstracts stored before
   the fix are cleaned when the app starts.
