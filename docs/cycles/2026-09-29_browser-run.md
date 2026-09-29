@@ -127,3 +127,19 @@ Found while checking these:
   cannot type into native dialogs. Not a defect.
 - A search that includes bioRxiv/medRxiv now takes about 3 minutes for two
   weeks, because every paper in the window is read.
+
+## Checked on production (same day)
+
+A bioRxiv/medRxiv-only search for "inflammation", 14 days, on
+https://biorx-production.up.railway.app: all 5,095 papers read in about 3½
+minutes, 149 matches, no page limit reached, no errors; titles free of tags.
+Two things found and fixed:
+
+- **22 papers read were not accounted for** (149 + 4,924 of 5,095). A match
+  that repeats a paper already read was merged and not counted. Now counted
+  and shown; the log warns when the totals do not add up.
+  Test: `tests/test_orchestrator.py::test_br10_every_paper_read_is_accounted_for`.
+- **The page scrolled sideways at 385 px** once results were shown (the
+  phone check above ran with none). Tables are in `.table-scroll` boxes;
+  checked at 375 px with the 149 results: page 375 wide (586 without).
+  Test: `tests/web/test_frontend_wiring.py::test_br11_every_table_scrolls_inside_its_card`.

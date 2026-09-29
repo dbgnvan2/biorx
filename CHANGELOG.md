@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-29 — checked on production
+
+### Fixed
+- A bioRxiv/medRxiv search's counts now add up. On production, "inflammation"
+  over 14 days read 5,095 papers: 149 matched, 4,924 did not, and 22 were not
+  mentioned. Matches that repeat a paper already read (another version of it)
+  were merged without being counted; the status line now says how many, and
+  the log warns if the numbers ever do not add up.
+- On a narrow screen, a results table made the whole page scroll sideways
+  (385 px wide page, 586 px of content). Tables now scroll inside their card.
+
 ## 2026-09-29 — bioRxiv reads the whole window; smaller fixes from the browser run
 
 ### Changed
