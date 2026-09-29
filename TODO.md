@@ -3,6 +3,15 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the review batch-7 gates (`docs/cycles/2026-09-28_review-batch7-*qa-gate.md`) — APPROVED
+
+- Finding 1 (removing a key kept the old model) is fixed in e8c5dca.
+- **Open, needs a deploy:** set `TRUST_PROXY=1` on Railway and confirm the
+  sign-in limit keys on the real client address, not the proxy's (plan M4).
+- Low-severity notes, not fixed: the rate limiter spends a token before the
+  PIN-check slot is taken; `reset_pin` is not one transaction; `from_config`
+  does not guard `int()` on the `sign_in:` values.
+
 ## From the review batch-6 gate (`docs/cycles/2026-09-28_review-batch6-qa-gate.md`) — APPROVED
 
 - Finding 1 (request-thread connection kept between requests on routes other

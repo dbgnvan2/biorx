@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-09-28 — sign-in is harder to abuse
+
+Review fixes, batch 7. Gates: `docs/cycles/2026-09-28_review-batch7-qa-gate.md`
+and `docs/cycles/2026-09-28_review-batch7-regate-qa-gate.md` (APPROVED).
+
+### Fixed
+- **Sign-in attempts are rate-limited per address** (20 a minute, set in
+  `llm_config.yaml` under `sign_in:`), and only a few PIN checks run at once;
+  past that the server answers "try again shortly". Behind a proxy set
+  `TRUST_PROXY=1` so the limit uses the real client address.
+- **A PIN reset needs a one-time setup code**, printed by the reset command
+  for the owner to pass on. The access code alone can no longer set a new PIN
+  on a reset account. The reset also removes that account's saved API key.
+- **Signing out ends that session everywhere**: a copy of the cookie taken
+  before sign-out no longer works.
+- **`/healthz` says only that the app is up.** The sign-in page reads
+  `/api/gate`; the rest of the configuration needs a signed-in user
+  (`/api/config`).
+- An API key for a provider that takes none, or a key with no provider, is
+  refused. Changing provider without choosing a model, or removing your key,
+  clears the old model, so it is not sent to the new provider.
+
 ## 2026-09-28 — hostile pages and PDFs are bounded; dependencies patched
 
 Review fixes, batch 6. Gate: `docs/cycles/2026-09-28_review-batch6-qa-gate.md` (APPROVED).
