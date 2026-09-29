@@ -97,8 +97,10 @@ ROOT = Path(__file__).parent.parent.parent
 #   matches against Max results, bounded by a configured page limit — orchestrator
 #   filters a filters_locally source per page; PubMed label; markup decodes entities
 #   before removing tags — W1.a required)
+# Updated from f854662 → 7acd226 (bioRxiv-budget QA gate F2: a filters_locally source
+#   reports matches through on_progress and papers read through on_status — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "f854662"
+BASELINE = "7acd226"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
