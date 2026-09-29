@@ -171,8 +171,10 @@ def test_br7_no_animal_drops_animal_titles():
     "exclude animal studies": the flag was only a Europe PMC query clause."""
     papers = [_t("Photobiomodulation Modulates Inflammation-Related Genes Following "
                  "Carrageenan-Induced Inflammation in Rats"),
-              _t("Acute Phase Proteins in Bovine Mastitis"),
+              _t("Stress responses in mice"),
               _t("Nrf2 in a murine model of brain injury"),
+              _t("Microglia in zebrafish larvae"),
+              _t("Vaccine responses in non-human primates"),
               _t("Inflammation and delirium in critically ill patients")]
     for species in ("no-animal", "human", "Exclude animal studies"):
         kept = filter_papers(papers, {"species": species})
@@ -183,7 +185,17 @@ def test_br7_human_studies_that_look_close_are_kept():
     """Adversarial: words that contain an animal term, and pets."""
     titles = ["Ratio of inflammatory markers in migrants", "Dog ownership and loneliness",
               "Separating stress from strain", "Pirates, parrots and prosociality",
-              "Mousetrap-shaped regions in human cortex"]
+              "Mousetrap-shaped regions in human cortex",
+              # QA gate 2026-09-29: organism words used as reagents, devices,
+              # cell lines, anatomy, diseases, therapies and acronyms.
+              "Bovine serum albumin as a carrier in human plasma assays",
+              "Outcomes of porcine bioprosthetic valves in older adults",
+              "A rabbit monoclonal antibody for PD-L1 staining in lung cancer",
+              "Chinese hamster ovary cells for biosimilar production",
+              "Impacted canine tooth in adolescents",
+              "Handling missing data with MICE in a cohort study",
+              "Murine typhus in returning travellers",
+              "Equine-assisted therapy for veterans with PTSD"]
     kept = filter_papers([_t(t) for t in titles], {"species": "no-animal"})
     assert [p["title"] for p in kept] == titles
 

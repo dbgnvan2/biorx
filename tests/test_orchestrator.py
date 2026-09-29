@@ -899,3 +899,17 @@ def test_br3_page_limit_bad_config_falls_back(caplog):
 def test_br3_page_limit_message_is_configured():
     from src.sources.config import load_sources_config
     assert "page limit" in load_sources_config()["failure_explanations"]["page-limit"]
+
+
+
+def test_br3_progress_counts_matches_and_status_shows_papers_read():
+    """QA gate 2026-09-29 F2: the progress count mixed papers read (bioRxiv)
+    with matches (other sources)."""
+    orch, _ = _sparse_biorxiv(300, 0)
+    progress, statuses = [], []
+    orch.search({"days_back": 14, "text_groups": [{"both": "needle"}]},
+                {"all": True, "selected": []}, max_results=200,
+                on_progress=lambda f, t: progress.append((f, t)),
+                on_status=statuses.append)
+    assert max(f for f, _t in progress) == 6            # matches, never papers read
+    assert "bioRxiv / medRxiv: 300 of 300 papers read, 6 match so far…" in statuses, statuses

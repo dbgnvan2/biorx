@@ -482,10 +482,19 @@ class SourceOrchestrator:
             if not isinstance(src_total, int):
                 src_total = 0   # the adapter does not report a total
 
-            if on_progress:
-                # A locally filtered source's progress is papers read of the
-                # papers in its window; its matches are a small part of them.
-                on_progress(seen_raw if local_filter else fetched, src_total)
+            if local_filter:
+                # One channel, one quantity (QA gate 2026-09-29, P12): the
+                # progress count is matches, as for every other source, with
+                # no known total; how far through the window it is goes on
+                # the status line.
+                if on_progress:
+                    on_progress(fetched, 0)
+                if on_status:
+                    of_total = f" of {src_total:,}" if src_total else ""
+                    on_status(f"{source_label(source_name)}: {seen_raw:,}{of_total} "
+                              f"papers read, {fetched:,} match so far…")
+            elif on_progress:
+                on_progress(fetched, src_total)  # src_total == 0 means "unknown"
 
             if src_total and (seen_raw if local_filter else fetched) >= src_total:
                 break

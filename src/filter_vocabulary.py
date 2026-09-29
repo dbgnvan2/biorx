@@ -196,5 +196,10 @@ def animal_title_pattern() -> Optional["re.Pattern[str]"]:
 
 
 def title_names_an_animal_study(title: str) -> bool:
+    """A match in capitals is an acronym, not the animal: "MICE" is multiple
+    imputation by chained equations (QA gate 2026-09-29)."""
     pattern = animal_title_pattern()
-    return bool(pattern and pattern.search(title or ""))
+    if not pattern:
+        return False
+    return any(not (m.group(0).isupper() and len(m.group(0)) > 1)
+               for m in pattern.finditer(title or ""))

@@ -116,44 +116,40 @@ species:
     - Drosophila melanogaster
     - Caenorhabditis elegans
     - Macaca mulatta
-  # A title containing one of these (whole words, any case) marks an animal
-  # study for "human" and "no-animal". Checked on titles only: human studies
-  # mention animal models in abstracts. Pets are left out on purpose — "dog
-  # ownership and loneliness" is a human study. Browser run 2026-09-29: "… in
-  # Rats" passed "exclude animal studies". "animal" is not checked here: a
-  # title without an organism does not show a study is not an animal study.
+  # A title containing one of these (whole words or phrases, any case) marks
+  # an animal study for "human" and "no-animal". Titles only: human studies
+  # mention animal models in abstracts. "animal" is not checked here: a title
+  # without an organism does not show a study is not an animal study.
+  # Only words that almost always mean the animals studied: plurals and model
+  # phrases. Single organism words were dropped after the QA gate showed them
+  # excluding human studies — "bovine serum albumin", "rabbit monoclonal
+  # antibody", "Chinese hamster ovary cells", "canine tooth", "murine typhus",
+  # "equine-assisted therapy". Pets are left out too ("dog ownership"). A
+  # word in capitals is read as an acronym (MICE, multiple imputation) and
+  # not matched. Missing an occasional animal study is preferred to dropping
+  # a human one.
   animal_title_terms:
     - mice
-    - mouse
-    - murine
-    - rat
     - rats
-    - rodent
     - rodents
     - zebrafish
     - drosophila
     - caenorhabditis
     - c. elegans
-    - macaque
     - macaques
-    - non-human primate
     - non-human primates
-    - nonhuman primate
     - nonhuman primates
-    - porcine
-    - piglet
     - piglets
-    - bovine
-    - ovine
-    - canine
-    - feline
-    - equine
-    - broiler
-    - broilers
-    - rabbit
-    - rabbits
-    - hamster
     - hamsters
+    - cattle
+    - mouse model
+    - mouse models
+    - rat model
+    - rat models
+    - murine model
+    - murine models
+    - rodent model
+    - rodent models
 
 category:
   # bioRxiv subject categories, sent to the bioRxiv/medRxiv API as they are.

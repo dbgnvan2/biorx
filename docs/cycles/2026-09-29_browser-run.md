@@ -79,7 +79,8 @@ Checked in the browser afterwards; screenshots 32–37.
   the filter (without the licence condition, B5) to each page and counts only
   matches against Max results. `publication_sources.biorxiv_medrxiv.max_pages:
   150` bounds the reading; a cut is reported as its own kind, `page-limit`,
-  with its own message. Live: "inflammation" over 14 days read all 4,927
+  with its own message. The progress count is matches, as for other sources;
+  papers read go on the status line (gate F2). Live: "inflammation" over 14 days read all 4,927
   papers in about 3 minutes and found **144** matches (1 before F2, 5 after
   it). Tests: `tests/test_orchestrator.py::test_br3_*`.
 - **Review Markdown** is parsed into headings, lists, paragraphs, bold and
@@ -91,9 +92,15 @@ Checked in the browser afterwards; screenshots 32–37.
   items now carry `journal_or_server` (screenshot 32). Tests: `test_br6_*`.
 - **Species:** "Human studies only" and "Exclude animal studies" also drop a
   paper whose title names an animal study, for every source; the terms are
-  `species.animal_title_terms` in `filter_vocabulary.yaml` (pets left out on
-  purpose). The Inflammation filter's 111 results had no animal titles; 12 of
-  them now come from bioRxiv/medRxiv. Tests: `tests/test_filtering.py::test_br7_*`.
+  `species.animal_title_terms` in `filter_vocabulary.yaml`. The QA gate
+  (`2026-09-29_biorxiv-budget-qa-gate.md`, F1) showed single organism words
+  dropping human studies ("bovine serum albumin", "Chinese hamster ovary
+  cells", "murine typhus", MICE); the list is now plurals and model phrases
+  ("mice", "rats", "mouse model", "non-human primates"), and a word in
+  capitals is read as an acronym. Missing an occasional animal study (e.g.
+  "Bovine Mastitis") is preferred to dropping a human one. Tests:
+  `tests/test_filtering.py::test_br7_*`, with the gate's eight titles as
+  must-keep cases.
 - **Stored summaries with tags:** a startup migration cleans titles,
   abstracts and abstract-only summaries that contain a known tag, and leaves
   all other text and model summaries alone. Test:
