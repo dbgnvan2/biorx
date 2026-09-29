@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-28 — hostile pages and PDFs are bounded; dependencies patched
+
+Review fixes, batch 6. Gate: `docs/cycles/2026-09-28_review-batch6-qa-gate.md` (APPROVED).
+
+### Fixed
+- **A large publisher page no longer stalls abstract recovery.** Abstracts are
+  read by a linear scanner from at most the first 512 KB of a page
+  (Python 3.12's html.parser took 67 s on a 320 KB page).
+- **PDF text extraction runs in a separate process** with a page limit, a
+  character limit, a time limit and (on Linux) a memory limit, all set in
+  `sources_config.yaml` under `full_text:`. A PDF over a limit is reported as
+  having no usable text, not as a crash.
+- **`monitor.py --download-dir` downloads through the same guarded fetch** as
+  the web app (no private addresses, size cap, PDF check), and a failed
+  download no longer leaves a partial file under the final name. The desktop
+  PDF handler does the same.
+- **Dependencies are pinned and installed from a hashed lock**
+  (`requirements-web.lock`, `pip install --require-hashes` in the image).
+  pdfminer.six, cryptography, python-dotenv, requests and urllib3 move to
+  patched versions; `pip-audit` on the lock reports no known vulnerabilities.
+  Test tools (pytest, httpx) are in `requirements-test.txt`, not the image.
+- The summary, Discover and review routes release their database connection
+  on every exit, and a reused summary that disappears mid-run fails with a
+  plain message.
+
 ## 2026-09-28 — the page shows and saves what is really there
 
 Review fixes, batch 5. Gate: `docs/cycles/2026-09-28_review-batch5-qa-gate.md` (APPROVED).

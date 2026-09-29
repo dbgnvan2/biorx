@@ -3,6 +3,22 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the review batch-6 gate (`docs/cycles/2026-09-28_review-batch6-qa-gate.md`) — APPROVED
+
+- Finding 1 (request-thread connection kept between requests on routes other
+  than summaries/Discover/reviews): **left as is, deliberately.** It is one
+  idle connection per pooled worker thread (no transaction, no lock), closed
+  when the thread exits. A yield dependency cannot release it: its teardown can
+  run on a different thread from the handler, and the connection is
+  thread-local. The per-route decorator stays on the billed routes.
+- Finding 2 (the 512 KB scrape cap is a constant and cuts silently): fixed in
+  review batch 8 — the cap is in `sources_config.yaml` and a cut is logged.
+- Finding 3 (the Dockerfile's "regenerate with" comment omits flags the lock
+  header records): fixed in review batch 8.
+- Finding 4 (a server that gzips a PDF despite `Accept-Encoding: identity`
+  gives NotAPdf): recorded. Decoding would reopen the decompression-bomb
+  exposure; revisit only if such a server is seen.
+
 ## From the review batch-5 gate (`docs/cycles/2026-09-28_review-batch5-qa-gate.md`) — APPROVED
 
 - Both findings are fixed in review batch 6: the request connection is released
