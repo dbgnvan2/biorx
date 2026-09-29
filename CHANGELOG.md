@@ -18,8 +18,8 @@ Status of every plan item: `docs/spec_coverage_review_fixes.md`.
   "unavailable", …) instead of calling every such source "failed".
 - The abstract scraper's page limit is in `sources_config.yaml`
   (`full_text.scrape_max_chars`), and a cut page is logged.
-- Saved-filter names that differ only in accents' case ("CAFÉ"/"café") count
-  as the same name.
+- Saved-filter names that differ only in case count as the same name, accented
+  letters included ("CAFÉ"/"café").
 
 ### Changed
 - **New web accounts start from `filters.seed.json`.** `filters.json` is your
