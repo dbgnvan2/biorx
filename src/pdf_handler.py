@@ -95,10 +95,19 @@ class PDFHandler:
             )
             response.raise_for_status()
 
-            with open(filepath, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
+            # Written to a .part file and renamed when complete (review M23):
+            # a transfer that failed part-way left a truncated PDF that the
+            # exists() check above then treated as downloaded, for good.
+            partial = filepath.with_suffix(".part")
+            try:
+                with open(partial, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                partial.replace(filepath)
+            except BaseException:
+                partial.unlink(missing_ok=True)
+                raise
 
             logger.info(f"Downloaded PDF: {filepath}")
             return str(filepath)

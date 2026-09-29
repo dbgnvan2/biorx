@@ -56,6 +56,12 @@ full_text:
   find_by_title: true
   # PDFs fetched per paper at most (each can take up to 30 s).
   max_downloads: 4
+  # Reading one PDF (review B9): it is untrusted, so it is read in a separate
+  # process that stops after this many pages or seconds, and (on Linux) may
+  # use at most this much memory.
+  max_pages: 40
+  extract_timeout_seconds: 60
+  extract_memory_mb: 1024
 
 # OSF preprint servers (PsyArXiv, SocArXiv) are asked for each title term
 # separately when every OR group of a filter has one. Above this many distinct

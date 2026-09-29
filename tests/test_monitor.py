@@ -209,3 +209,29 @@ def test_b13_legacy_filter_normalised():
                               "date_from": "2020-01-01", "date_to": "2020-12-31",
                               "source_selection": {"all": True}}, "legacy")
     assert "zebrafish" in seen[0] and "2020-01-01" in seen[0] and "2020-12-31" in seen[0]
+
+
+# ── M24: monitor downloads go through the shared guard ───────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M24
+
+def test_m24_html_not_saved_as_pdf(tmp_path, monkeypatch):
+    from src import safe_fetch
+
+    def landing_page(url, *a, **k):
+        raise safe_fetch.NotAPdf("text/html")
+    monkeypatch.setattr(safe_fetch, "fetch_pdf", landing_page)
+    record = {"pdf_url": "https://pub.example/landing", "canonical_id": "doi:10.1/x"}
+    assert monitor.download_pdf(record, tmp_path) == "fail"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_m24_download_is_guarded_and_saved(tmp_path, monkeypatch):
+    from src import safe_fetch
+    asked = []
+    monkeypatch.setattr(safe_fetch, "fetch_pdf",
+                        lambda url, *a, **k: asked.append(url) or b"%PDF-1.7 body")
+    record = {"pdf_url": "http://pub.example/x.pdf", "canonical_id": "doi:10.1/x"}
+    assert monitor.download_pdf(record, tmp_path) == "ok"
+    assert asked == ["https://pub.example/x.pdf"]          # upgraded to https
+    assert (tmp_path / "doi_10.1_x.pdf").read_bytes() == b"%PDF-1.7 body"
+    assert not list(tmp_path.glob("*.part"))

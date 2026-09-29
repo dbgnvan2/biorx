@@ -270,7 +270,6 @@ def download_pdf_text(url: str) -> str:
     import tempfile
 
     from . import safe_fetch
-    from .pdf_handler import PDFHandler
 
     try:
         data = safe_fetch.fetch_pdf(safe_fetch.https_candidate(url))
@@ -280,14 +279,39 @@ def download_pdf_text(url: str) -> str:
         raise NoText("the PDF is too large") from e
     except (safe_fetch.FetchRefused, safe_fetch.FetchFailed) as e:
         raise NoText(str(e) or type(e).__name__) from e
+    from .pdf_extract import ExtractFailed, extract_text_limited
+    limits = extract_limits()
     try:
         with tempfile.TemporaryDirectory() as tmp:
             path = f"{tmp}/paper.pdf"
             with open(path, "wb") as fh:
                 fh.write(data)
-            return PDFHandler(tmp).extract_text(path) or ""
+            # In a child process, bounded (review B9): the bytes are untrusted.
+            return extract_text_limited(path, **limits)
+    except ExtractFailed as e:
+        raise NoText(str(e)) from e
     except Exception as e:
         raise NoText("the PDF could not be read") from e
+
+
+def extract_limits() -> Dict[str, Any]:
+    """Purpose: The limits for reading one untrusted PDF, from config.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#B9
+    Tests:   tests/test_fulltext.py::test_b9_limits_from_config
+
+    sources_config.yaml full_text: max_pages, extract_timeout_seconds,
+    extract_memory_mb. The text budget is what a prompt can use
+    (llm_config.yaml max_text_chars) plus the window the title check reads.
+    """
+    from .llm_config import load_llm_config, max_text_chars
+    from .sources.config import load_sources_config
+    ft = (load_sources_config().get("full_text") or {})
+    return {
+        "max_pages": int(ft.get("max_pages", 40)),
+        "max_chars": max_text_chars(load_llm_config()) + TITLE_WINDOW_CHARS,
+        "timeout": float(ft.get("extract_timeout_seconds", 60)),
+        "mem_bytes": int(ft.get("extract_memory_mb", 1024)) * 1024 * 1024,
+    }
 
 
 # ── The chain ────────────────────────────────────────────────────────────────

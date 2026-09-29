@@ -1,0 +1,4 @@
+# Test-only dependencies (review B10): kept out of the container image.
+# CI installs requirements-web.txt and this file.
+httpx==0.28.1
+pytest==9.0.2

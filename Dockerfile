@@ -13,9 +13,12 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Dependencies first, so a source change does not reinstall them.
-COPY requirements-web.txt .
-RUN pip install --no-cache-dir -r requirements-web.txt
+# Dependencies first, so a source change does not reinstall them. The lock
+# pins every package, transitive ones included, with hashes (review B10):
+# the image installs exactly what was tested. Regenerate it with
+#   pip-compile --generate-hashes --strip-extras -o requirements-web.lock requirements-web.txt
+COPY requirements-web.lock .
+RUN pip install --no-cache-dir --require-hashes -r requirements-web.lock
 
 COPY src/ ./src/
 COPY web/ ./web/

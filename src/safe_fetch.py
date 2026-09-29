@@ -178,8 +178,14 @@ def pinned_get(url: str, ip: str, timeout: float, headers: dict) -> _PinnedRespo
     if parsed.port:
         host_header += f":{parsed.port}"       # never the userinfo part of netloc
     try:
-        resp = pool.urlopen("GET", path, headers={**headers, "Host": host_header},
-                            redirect=False, preload_content=False, assert_same_host=False)
+        # No transfer compression, and none decoded (review B10): the byte cap
+        # counts what arrives, so a small compressed body must not be able to
+        # expand into gigabytes in urllib3 before the cap is checked.
+        resp = pool.urlopen("GET", path,
+                            headers={**headers, "Accept-Encoding": "identity",
+                                     "Host": host_header},
+                            redirect=False, preload_content=False, assert_same_host=False,
+                            decode_content=False)
     except BaseException:
         pool.close()
         raise

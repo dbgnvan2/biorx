@@ -374,7 +374,8 @@ def test_d_monitor_counts_failed_downloads(tmp_path, caplog):
         "canonical_id": "arxiv:2301.12345",
         "pdf_url": "https://arxiv.org/pdf/2301.12345.pdf",
     }
-    with patch("requests.get", side_effect=Exception("connection refused")), \
+    # Since review M24 downloads go through safe_fetch.fetch_pdf.
+    with patch("src.safe_fetch.fetch_pdf", side_effect=Exception("connection refused")), \
          caplog.at_level(logging.WARNING):
         result = monitor.download_pdf(record, tmp_path)
 
@@ -418,7 +419,7 @@ def test_d_monitor_main_prints_download_summary(tmp_path, capsys):
               "source_selection": {"all": True, "selected": []}}
          ]), \
          patch.object(monitor, "run_search", return_value=[record_dict]), \
-         patch("requests.get", side_effect=Exception("network error")):
+         patch("src.safe_fetch.fetch_pdf", side_effect=Exception("network error")):
         monitor.main(["--all", "--download-dir", str(pdf_dir)])
 
     captured = capsys.readouterr()

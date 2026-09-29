@@ -43,7 +43,8 @@ def test_dockerfile_installs_web_requirements_not_pyqt():
     corollary — never match a bare substring against text that also has prose).
     """
     instructions = " ".join(_dockerfile_lines()).lower()
-    assert "requirements-web.txt" in instructions
+    # The hashed lock generated from requirements-web.txt (review B10).
+    assert "--require-hashes -r requirements-web.lock" in instructions
     assert not re.search(r"pip install[^\n]*\brequirements\.txt", instructions)
     assert "pyqt" not in instructions
 

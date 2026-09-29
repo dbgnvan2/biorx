@@ -229,3 +229,77 @@ def test_f4_no_lookups_after_the_download_cap():
                        max_downloads=2, get_json=get)
     assert [u for u, _ in get.calls if "openalex" in u or "semanticscholar" in u] == []
     assert "OpenAlex: not asked (limit of 2 PDFs reached)" in r.tried
+
+
+# ── B9: an untrusted PDF is read in a bounded child process ──────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B9
+
+def _many_page_pdf(path, pages):
+    from fpdf import FPDF
+    pdf = FPDF()
+    pdf.set_font("Helvetica", size=12)
+    for n in range(pages):
+        pdf.add_page()
+        pdf.cell(text=f"Page marker {n:04d}")
+    pdf.output(str(path))
+
+
+def test_b9_max_pages_enforced(tmp_path):
+    from src.pdf_extract import extract_text_limited
+    path = tmp_path / "long.pdf"
+    _many_page_pdf(path, 500)
+    text = extract_text_limited(str(path), max_pages=5, max_chars=10**9,
+                                timeout=60, mem_bytes=0)
+    assert "Page marker 0004" in text and "Page marker 0005" not in text
+
+
+def test_b9_stops_at_the_text_budget(tmp_path):
+    from src.pdf_extract import extract_text_limited
+    path = tmp_path / "long.pdf"
+    _many_page_pdf(path, 50)
+    text = extract_text_limited(str(path), max_pages=50, max_chars=60,
+                                timeout=60, mem_bytes=0)
+    assert "Page marker 0003" in text and "Page marker 0010" not in text
+
+
+def test_b9_extraction_timeout(tmp_path, monkeypatch):
+    import sys
+    from src import pdf_extract
+    monkeypatch.setattr(pdf_extract, "WORKER_CMD",
+                        [sys.executable, "-c", "import time; time.sleep(30)"])
+    with pytest.raises(pdf_extract.ExtractFailed, match="longer than"):
+        pdf_extract.extract_text_limited(str(tmp_path / "x.pdf"), max_pages=1,
+                                         max_chars=10, timeout=1, mem_bytes=0)
+
+
+def test_b9_download_reports_the_limit_as_no_text(monkeypatch):
+    from src import fulltext, pdf_extract, safe_fetch
+    monkeypatch.setattr(safe_fetch, "fetch_pdf", lambda *a, **k: b"%PDF-1.7 x")
+
+    def boom(*a, **k):
+        raise pdf_extract.ExtractFailed("reading the PDF took longer than 60 s")
+    monkeypatch.setattr(pdf_extract, "extract_text_limited", boom)
+    with pytest.raises(fulltext.NoText, match="longer than 60 s"):
+        fulltext.download_pdf_text("https://pub.example/x.pdf")
+
+
+def test_b9_limits_from_config():
+    from src import fulltext
+    limits = fulltext.extract_limits()
+    assert limits["max_pages"] == 40 and limits["timeout"] == 60
+    assert limits["mem_bytes"] == 1024 * 1024 * 1024
+    assert limits["max_chars"] > fulltext.TITLE_WINDOW_CHARS
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"),
+                    reason="RLIMIT_AS is enforced on Linux only (macOS ignores it); "
+                           "this runs in CI")
+def test_b9_memory_limit_linux(tmp_path, monkeypatch):
+    from src import pdf_extract
+    # The child applies the limit it is given, then tries to allocate past it.
+    monkeypatch.setattr(pdf_extract, "WORKER_CMD", [sys.executable, "-c",
+        "import sys; from src.pdf_extract import _apply_memory_limit; "
+        "_apply_memory_limit(int(sys.argv[4])); x = bytearray(512 * 1024 * 1024)"])
+    with pytest.raises(pdf_extract.ExtractFailed, match="memory"):
+        pdf_extract.extract_text_limited(str(tmp_path / "x.pdf"), max_pages=1, max_chars=10,
+                                         timeout=30, mem_bytes=256 * 1024 * 1024)

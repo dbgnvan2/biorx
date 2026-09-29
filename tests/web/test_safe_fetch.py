@@ -344,3 +344,29 @@ def test_deadline_holds_against_a_real_trickling_server():
         srv.close()
     elapsed = _time.monotonic() - start
     assert elapsed < 3.0, f"deadline 1.5 s but the read ran {elapsed:.1f} s"
+
+
+def test_b10_identity_encoding(monkeypatch):
+    """Review B10: no transfer compression is asked for, and none is decoded, so
+    the byte cap counts what arrives (urllib3 before 2.6 had decompression-bomb
+    advisories on exactly this path)."""
+    from unittest.mock import MagicMock
+    seen = {}
+
+    class FakePool:
+        def __init__(self, host, **kw):
+            pass
+
+        def urlopen(self, method, path, **kw):
+            seen.update(kw)
+            return MagicMock()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(safe_fetch.urllib3, "HTTPSConnectionPool", FakePool)
+    safe_fetch.pinned_get("https://pub.example/a.pdf", ip=PUBLIC, timeout=5,
+                          headers={"User-Agent": "biorx"})
+    assert seen["headers"]["Accept-Encoding"] == "identity"
+    assert seen["decode_content"] is False
+    assert seen["headers"]["User-Agent"] == "biorx"

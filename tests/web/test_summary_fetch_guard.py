@@ -59,7 +59,7 @@ def test_sum2_pdf_text_is_read_without_touching_the_shared_cache(ctx, tmp_path):
     cache = Path(default_pdf_dir())
     before = set(cache.rglob("*")) if cache.exists() else set()
     with patch.object(safe_fetch, "fetch_pdf", return_value=b"%PDF-1.7 fake"), \
-         patch("src.pdf_handler.PDFHandler.extract_text", return_value="Real Paper. FULL TEXT"), \
+         patch("src.pdf_extract.extract_text_limited", return_value="Real Paper. FULL TEXT"), \
          patch("src.pdf_handler.PDFHandler.download_pdf", _explode):
         text = _extract_text(ctx, {"title": "Real Paper", "doi": "10.1/real",
                                    "pdf_url": "https://pub.example/x.pdf"})

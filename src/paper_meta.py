@@ -15,7 +15,7 @@ import json
 import logging
 import os
 import re
-from html.parser import HTMLParser
+import html as html_lib
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -91,25 +91,6 @@ def paper_link(paper: Dict[str, Any]) -> str:
 
 # ── Abstract recovery ─────────────────────────────────────────────────────────
 
-class _TextExtractor(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.text_parts = []
-        self._skip = False
-
-    def handle_starttag(self, tag, attrs):
-        if tag in ("script", "style", "nav", "header", "footer"):
-            self._skip = True
-
-    def handle_endtag(self, tag):
-        if tag in ("script", "style", "nav", "header", "footer"):
-            self._skip = False
-
-    def handle_data(self, data):
-        if not self._skip:
-            self.text_parts.append(data)
-
-
 def scrape_abstract_from_url(url: str, fetch_html=None) -> str:
     """
     Attempt to scrape an abstract from a publisher page.
@@ -140,51 +121,158 @@ def scrape_abstract_from_url(url: str, fetch_html=None) -> str:
         logger.debug("Abstract scrape fetch failed for %s: %s", url, e)
         return ""
 
-    # 1. JSON-LD structured data
-    for m in re.finditer(
-        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
-        html, re.DOTALL | re.IGNORECASE
-    ):
-        try:
-            data = json.loads(m.group(1))
-            # May be a list or a single object
-            items = data if isinstance(data, list) else [data]
-            for item in items:
-                # Check top-level and mainEntity (Springer/BMC wraps in WebPage > mainEntity)
-                candidates = [item, item.get("mainEntity") or {}]
-                for candidate in candidates:
-                    desc = candidate.get("description") or candidate.get("abstract") or ""
-                    if desc and len(desc) > MIN_ABSTRACT_CHARS:
-                        return re.sub(r"<[^>]+>", "", desc).strip()
-        except Exception:
+    return _abstract_from_html(html)
+
+
+# The scraper reads at most this much of a page. Abstracts sit near the top;
+# the cap bounds the work a hostile page can cause (review B8).
+SCRAPE_MAX_CHARS = 512_000
+# A tag longer than this is treated as text: real tags are short, and every
+# attribute regex below runs on one tag at a time, never on the page.
+_MAX_TAG_CHARS = 4000
+
+_ABSTRACT_META = ("description", "og:description", "citation_abstract")
+_TAG_NAME = re.compile(r"^/?\s*([a-zA-Z][a-zA-Z0-9:-]*)")
+_ATTR = re.compile(r"""([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*(?:=\s*("[^"]*"|'[^']*'|[^\s"'>]+))?""")
+
+
+def _scan_html(page: str):
+    """Yield ("start", name, attrs) / ("end", name) / ("data", text) for a page.
+
+    Purpose: Walk untrusted HTML in time proportional to its length.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#B8
+    Tests:   tests/test_paper_meta.py::test_b8_adversarial_html_is_linear
+
+    Neither regular expressions over the page (they backtracked: review B8)
+    nor html.parser (quadratic on unclosed tags in Python before 3.12.11,
+    measured here at 67 s for 320 KB) bound the work on hostile input. This
+    indexes every "<" and ">" once; a tag is the text from a "<" to the next
+    ">", unless another "<" comes first, in which case the "<" is text.
+    """
+    import bisect
+    lowered = page.lower()       # once: per-script .lower() would be quadratic
+    lts = [m.start() for m in re.finditer("<", page)]
+    gts = [m.start() for m in re.finditer(">", page)]
+    i = 0
+    n = len(page)
+    li = 0
+    while i < n:
+        li = bisect.bisect_left(lts, i, li)
+        if li >= len(lts):
+            yield ("data", page[i:])
+            return
+        lt = lts[li]
+        if lt > i:
+            yield ("data", page[i:lt])
+        gi = bisect.bisect_left(gts, lt)
+        gt = gts[gi] if gi < len(gts) else -1
+        nxt = lts[li + 1] if li + 1 < len(lts) else n
+        if gt == -1 or gt > nxt or gt - lt > _MAX_TAG_CHARS:
+            yield ("data", page[lt:nxt])        # a stray "<": text
+            i = nxt
             continue
+        tag = page[lt + 1:gt]
+        i = gt + 1
+        if tag.startswith("!") or tag.startswith("?"):
+            continue                            # comment, doctype
+        m = _TAG_NAME.match(tag)
+        if not m:
+            yield ("data", page[lt:gt + 1])
+            continue
+        name = m.group(1).lower()
+        if tag.lstrip().startswith("/"):
+            yield ("end", name)
+            continue
+        attrs = {}
+        for am in _ATTR.finditer(tag, m.end()):
+            value = am.group(2) or ""
+            if value[:1] in ("'", '"'):
+                value = value[1:-1]
+            attrs[am.group(1).lower()] = html_lib.unescape(value)
+        yield ("start", name, attrs)
+        if name == "script" and not tag.rstrip().endswith("/"):
+            end = lowered.find("</script", i)
+            if end == -1:
+                yield ("data", page[i:])
+                return
+            yield ("data", page[i:end])
+            i = end
 
-    # 2. Meta tags
-    for pattern in [
-        r'<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']',
-        r'<meta\s+property=["\']og:description["\']\s+content=["\'](.*?)["\']',
-        r'<meta\s+name=["\']citation_abstract["\']\s+content=["\'](.*?)["\']',
-    ]:
-        m = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
-        if m:
-            text = m.group(1).strip()
-            if len(text) > MIN_ABSTRACT_CHARS:
-                return re.sub(r"<[^>]+>", "", text).strip()
 
-    # 3. HTML section/div with abstract id or class
-    for pattern in [
-        r'<(?:section|div|p)[^>]+(?:id|class)=["\'][^"\']*\babstract\b[^"\']*["\'][^>]*>(.*?)</(?:section|div)',
-        r'id=["\']Abs1[^"\']*["\'][^>]*>(.*?)</section',
-        r'id=["\']abstract["\'][^>]*>(.*?)</(?:section|div)',
-    ]:
-        m = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
-        if m:
-            text = re.sub(r"<[^>]+>", " ", m.group(1))
-            text = re.sub(r"\s+", " ", text).strip()
-            if len(text) > MIN_ABSTRACT_CHARS:
-                return text
+def _abstract_from_html(page: str) -> str:
+    """The abstract a publisher page carries, or "". Tries, in order:
+    JSON-LD (schema.org description/abstract), the description meta tags, and
+    an element whose id or class names it the abstract (review B8: one linear
+    pass, see _scan_html)."""
+    page = page[:SCRAPE_MAX_CHARS]
+    json_ld = []
+    meta = {}
+    in_ld = False
+    abs_tag, abs_depth, abs_done = None, 0, False
+    parts = []
+    for item in _scan_html(page):
+        kind = item[0]
+        if kind == "start":
+            _, name, attrs = item
+            if name == "script":
+                in_ld = attrs.get("type", "").lower() == "application/ld+json"
+                continue
+            if name == "meta":
+                key = (attrs.get("name") or attrs.get("property") or "").lower()
+                if key in _ABSTRACT_META and key not in meta:
+                    meta[key] = attrs.get("content", "")
+            if abs_tag is not None:
+                if name == abs_tag:
+                    abs_depth += 1
+                continue
+            if abs_done or name not in ("section", "div", "p"):
+                continue
+            ident = f"{attrs.get('id', '')} {attrs.get('class', '')}".lower()
+            if re.search(r"\babstract\b", ident) or attrs.get("id", "").lower().startswith("abs1"):
+                abs_tag, abs_depth = name, 1
+        elif kind == "end":
+            name = item[1]
+            if name == "script":
+                in_ld = False
+            elif abs_tag is not None and name == abs_tag:
+                abs_depth -= 1
+                if abs_depth == 0:
+                    abs_tag, abs_done = None, True
+        else:
+            if in_ld:
+                json_ld.append(item[1])
+            elif abs_tag is not None:
+                parts.append(item[1])
 
-    return ""
+    for blob in json_ld:
+        try:
+            data = json.loads(blob)
+        except ValueError:
+            continue
+        items = data if isinstance(data, list) else [data]
+        for obj in items:
+            if not isinstance(obj, dict):
+                continue
+            # Springer/BMC wrap the article in WebPage > mainEntity.
+            for candidate in (obj, obj.get("mainEntity") or {}):
+                if not isinstance(candidate, dict):
+                    continue
+                desc = candidate.get("description") or candidate.get("abstract") or ""
+                if isinstance(desc, str) and len(desc) > MIN_ABSTRACT_CHARS:
+                    return _strip_tags(desc)
+
+    for key in _ABSTRACT_META:
+        text = meta.get(key, "").strip()
+        if len(text) > MIN_ABSTRACT_CHARS:
+            return _strip_tags(text)
+
+    text = re.sub(r"\s+", " ", html_lib.unescape(" ".join(parts))).strip()
+    return text if len(text) > MIN_ABSTRACT_CHARS else ""
+
+
+def _strip_tags(text: str) -> str:
+    """Remove markup from a description string (linear, as _scan_html)."""
+    return html_lib.unescape("".join(i[1] for i in _scan_html(text) if i[0] == "data")).strip()
 
 
 def fetch_openalex_abstract(doi: str) -> str:

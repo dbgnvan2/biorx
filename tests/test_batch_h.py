@@ -303,11 +303,8 @@ def test_h_download_pdf_ok_on_success(tmp_path):
     from agents.monitor import download_pdf
 
     record = {"canonical_id": "doi:10.1234/x", "pdf_url": "https://example.com/x.pdf"}
-    fake_resp = MagicMock()
-    fake_resp.content = b"%PDF-1.4 fake"
-    fake_resp.raise_for_status = lambda: None
-
-    with patch("requests.get", return_value=fake_resp):
+    # Since review M24 downloads go through safe_fetch.fetch_pdf.
+    with patch("src.safe_fetch.fetch_pdf", return_value=b"%PDF-1.4 fake"):
         result = download_pdf(record, tmp_path)
     assert result == "ok", f"expected 'ok' on successful download, got {result!r}"
 

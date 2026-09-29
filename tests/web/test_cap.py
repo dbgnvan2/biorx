@@ -341,3 +341,34 @@ def test_gate4_request_connection_released(ctx, signed_in, owner_key, no_pdf):
         r = signed_in.post("/api/summaries", json={"paper": _paper(55)})
         _await(signed_in, r.json()["job_id"])
     assert len(released) >= 2        # the request thread and the worker thread
+
+
+def test_gate5_connection_released_when_admission_fails(ctx, signed_in, owner_key, no_pdf):
+    """Batch-5 finding 1: a 429 (admission refused) still releases the request
+    thread's connection; so does a review 409."""
+    _spend_the_allowance(signed_in)
+    released = []
+    real = ctx.db.release
+    with patch.object(ctx.db, "release", side_effect=lambda: released.append(1) or real()):
+        r = signed_in.post("/api/summaries", json={"paper": _paper(999)})
+    assert r.status_code == 429
+    assert released, "the refused request kept its connection"
+
+
+def test_gate5_reuse_that_finds_nothing_says_so(ctx, signed_in, owner_key):
+    """Batch-5 finding 2: admitted as a free reuse, but the worker's check finds
+    no stored full-text summary — a plain message, not an AttributeError."""
+    from src.jobs import JobStatus
+    from web.routes_summaries import _NO_SPEND, _run_summary
+    work = _run_summary(ctx, "u", {"doi": "10.1/gone", "canonical_id": ""}, _NO_SPEND, None)
+    with patch("web.routes_summaries._extract_text", side_effect=_full_text), \
+         patch("web.routes_summaries._PAPER_LOOKUP",
+               lambda ref, cfg=None: {"doi": "10.1/gone", "title": "Gone", "abstract": "a"}):
+        me = signed_in.get("/api/me").json()["user_id"]
+        job = ctx.jobs.submit("summary", me, work)
+        for _ in range(300):
+            if job.status in (JobStatus.DONE, JobStatus.ERROR):
+                break
+            time.sleep(0.01)
+    assert job.status == JobStatus.ERROR
+    assert "changed while this ran" in job.error and "AttributeError" not in job.error

@@ -269,3 +269,49 @@ def test_m21_openalex_retried():
          patch("src.sources.base.time.sleep"):
         assert fetch_openalex_abstract("10.1/x") == "recovered"
     assert g.call_count == 2
+
+
+# ── B8: hostile HTML cannot stall the server ─────────────────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B8
+
+def test_b8_adversarial_html_is_linear():
+    """5 MB of unclosed <p class="abstract"> tags. The old regexes re-scanned to
+    the end of the page from every one of them (quadratic: hours)."""
+    import time
+    from src import paper_meta
+    page = '<html><body>' + '<p class="abstract" ' * 250_000
+    assert len(page) > 5_000_000
+    started = time.monotonic()
+    result = paper_meta._abstract_from_html(page)
+    elapsed = time.monotonic() - started
+    assert result == ""
+    assert elapsed < 5, f"took {elapsed:.1f}s"
+
+
+def test_b8_parser_finds_each_kind_of_abstract():
+    from src import paper_meta
+    body = "Background. " + "This study measured loneliness in adults. " * 4
+    ld = '<script type="application/ld+json">{"@type": "ScholarlyArticle", "description": "%s"}</script>' % body
+    assert paper_meta._abstract_from_html(ld) == body.strip()
+    meta = '<meta name="citation_abstract" content="%s &amp; more">' % body
+    assert paper_meta._abstract_from_html(meta).endswith("& more")
+    div = '<section id="Abs1"><h2>Abstract</h2><p>%s</p></section><p>not this</p>' % body
+    got = paper_meta._abstract_from_html(div)
+    assert body.strip() in got and "not this" not in got
+    assert paper_meta._abstract_from_html("<p>short</p>") == ""
+
+
+@pytest.mark.parametrize("page", [
+    '<p class="abstract" ' * 250_000,                  # unclosed tags
+    '<script>x</script>' * 300_000,                    # many scripts
+    '<div class="abstract">' + '<div>' * 400_000,      # deep nesting
+], ids=["unclosed", "scripts", "nested"])
+def test_b8_scanner_is_linear_without_the_cap(page):
+    """The page cap is a second line; the scanner alone must stay linear.
+    (html.parser took 67 s for 320 KB of unclosed tags on Python 3.12.3.)"""
+    import time
+    from src import paper_meta
+    started = time.monotonic()
+    for _ in paper_meta._scan_html(page):
+        pass
+    assert time.monotonic() - started < 5

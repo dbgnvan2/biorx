@@ -524,25 +524,21 @@ def test_h_pdf_handler_default_constructor_uses_env_aware_dir(monkeypatch, tmp_p
 
 def test_h_monitor_pdf_download_sends_biorx_user_agent(monkeypatch, tmp_path):
     """monitor.py download_pdf sends User-Agent: biorx/1.0 (F1/P5 sibling)."""
-    import requests as req_mod
+    from src import safe_fetch
     from agents import monitor as monitor_mod
 
     captured = {}
 
-    def fake_get(url, timeout=None, headers=None, stream=False):
-        captured["headers"] = headers
+    def fake_fetch(url, *a, user_agent=None, **k):
+        captured["user_agent"] = user_agent
+        return b"%PDF-fake"
 
-        class _R:
-            status_code = 200
-            content = b"%PDF-fake"
-            def raise_for_status(self): pass
-        return _R()
-
-    monkeypatch.setattr(req_mod, "get", fake_get)
+    # Since review M24 the download goes through safe_fetch.fetch_pdf.
+    monkeypatch.setattr(safe_fetch, "fetch_pdf", fake_fetch)
     record = {"pdf_url": "https://biorxiv.org/fake.pdf", "doi": "10.1/test", "title": "T"}
     monitor_mod.download_pdf(record, tmp_path, timeout=5)
-    assert captured.get("headers", {}).get("User-Agent") == "biorx/1.0", (
-        f"monitor.py must send User-Agent: biorx/1.0; got: {captured.get('headers')}"
+    assert captured.get("user_agent") == "biorx/1.0", (
+        f"monitor.py must send User-Agent: biorx/1.0; got: {captured.get('user_agent')}"
     )
 
 

@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 
 from src import spend, user_store
 from src.jobs import Job, JobLookup
-from src.llm_providers import LLMError, NoLLMCredentialError  # noqa: F401 (re-exported)
+from src.llm_providers import (LLMError, NoLLMCredentialError,  # noqa: F401 (re-exported)
+                               ProviderResponseError)
 from src.paper_meta import pdf_url, recover_abstract
 
 from .auth import current_user, get_context
@@ -68,6 +69,24 @@ def _resolve_for(ctx: AppContext, user_id: str,
         raise HTTPException(status_code=e.status, detail=str(e)) from e
 
 
+def releases_request_connection(route):
+    """Purpose: Give the request thread's database connection back on every
+             exit of a billed route — success, 409, and admission failures
+             (batch-4 finding 2, batch-5 finding 1).
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#M12
+    Tests:   tests/web/test_cap.py::test_gate5_connection_released_when_admission_fails
+    """
+    import functools
+
+    @functools.wraps(route)
+    def wrapper(*args, **kwargs):
+        try:
+            return route(*args, **kwargs)
+        finally:
+            kwargs["ctx"].db.release()
+    return wrapper
+
+
 def already_running(ctx: AppContext, kind: str, user_id: str, key):
     """A 409 answer if this user's job with this key is still going, else None.
 
@@ -110,7 +129,8 @@ def submit_billed(ctx: AppContext, kind: str, user_id: str, work, usage_id,
                             detail="The server is restarting — try again in a minute.") from e
     finally:
         # The request thread used a connection for admission; give it back on
-        # every path, not only the 409 one (batch-4 gate finding 2).
+        # every path, not only the 409 one (batch-4 gate finding 2). The
+        # routes also release on their own exits (releases_request_connection).
         ctx.db.release()
 
 
@@ -210,8 +230,18 @@ def _run_summary(ctx: AppContext, user_id: str, ref: Dict[str, str], resolved,
                 from src.safe_fetch import fetch_html
                 return recover_abstract(p, fetch_html=fetch_html)
 
+            def get_client():
+                if resolved.client is None:
+                    # Admitted as a free reuse of a stored full-text summary,
+                    # but the worker found none (batch-5 finding 2). Say so
+                    # rather than failing on a missing client.
+                    raise ProviderResponseError(
+                        "The stored summary for this paper changed while this ran — "
+                        "run Summarize again.")
+                return resolved.client, resolved.model
+
             outcome = summarize_paper(
-                ctx.db, paper, lambda: (resolved.client, resolved.model),
+                ctx.db, paper, get_client,
                 find_text=find_text, recover=recover, llm_config=ctx.llm_config,
                 created_by=user_id,
                 on_phase=lambda m: setattr(job, "phase", m),
@@ -246,6 +276,7 @@ def _run_summary(ctx: AppContext, user_id: str, ref: Dict[str, str], resolved,
 
 
 @router.post("/api/summaries", status_code=status.HTTP_202_ACCEPTED)
+@releases_request_connection
 def start_summary(body: SummaryRequest,
                   ctx: AppContext = Depends(get_context),
                   user_id: str = Depends(current_user)):

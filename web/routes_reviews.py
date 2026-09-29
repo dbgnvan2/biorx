@@ -28,7 +28,8 @@ from .deps import AppContext
 from .routes_references import _get_list_or_404, _parse_item_ids
 from src import spend
 
-from .routes_summaries import _resolve_for, already_running, submit_billed
+from .routes_summaries import (_resolve_for, already_running, releases_request_connection,
+                              submit_billed)
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,7 @@ def _run_review(ctx: AppContext, user_id: str, body: ReviewRequest, resolved,
 
 
 @router.post("/api/reviews", status_code=status.HTTP_202_ACCEPTED)
+@releases_request_connection
 def start_review(body: ReviewRequest,
                  ctx: AppContext = Depends(get_context),
                  user_id: str = Depends(current_user)):

@@ -23,7 +23,8 @@ from .deps import AppContext
 from .routes_searches import record_failure
 from src import spend
 
-from .routes_summaries import _resolve_for, already_running, submit_billed
+from .routes_summaries import (_resolve_for, already_running, releases_request_connection,
+                              submit_billed)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -131,6 +132,7 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
 
 
 @router.post("/api/discover-terms", status_code=status.HTTP_202_ACCEPTED)
+@releases_request_connection
 def discover_terms(body: DiscoverRequest,
                    ctx: AppContext = Depends(get_context),
                    user_id: str = Depends(current_user)):

@@ -170,7 +170,8 @@ def run_search(
     return matched
 
 
-def download_pdf(record: dict, dest_dir: Path, timeout: int = 30) -> str:
+def download_pdf(record: dict, dest_dir: Path, timeout: int = 30,
+                 user_agent: str = "biorx/1.0") -> str:
     """
     Download a record's PDF to dest_dir.
 
@@ -193,17 +194,31 @@ def download_pdf(record: dict, dest_dir: Path, timeout: int = 30) -> str:
     if filepath.exists():
         return "ok"
 
+    # Through the same guard as the web app (review M24): https and public
+    # hosts only, a size cap, and the bytes must be a PDF. A landing page saved
+    # as <id>.pdf used to count as "ok" and be skipped on every later run.
+    from src import safe_fetch
     try:
-        import requests
-        resp = requests.get(pdf_url, timeout=timeout, headers={"User-Agent": "biorx/1.0"})
-        resp.raise_for_status()
-        with open(filepath, "wb") as f:
-            f.write(resp.content)
-        print(f"  Downloaded {filename}", file=sys.stderr)
-        return "ok"
+        data = safe_fetch.fetch_pdf(safe_fetch.https_candidate(pdf_url), timeout=timeout,
+                                    user_agent=user_agent)
+    except (safe_fetch.NotAPdf, safe_fetch.TooLarge, safe_fetch.FetchRefused,
+            safe_fetch.FetchFailed) as e:
+        logger.warning("Failed to download %s: %s", pdf_url, e or type(e).__name__)
+        return "fail"
     except Exception as e:
         logger.warning("Failed to download %s: %s", pdf_url, e)
         return "fail"
+    partial = filepath.with_suffix(".part")
+    try:
+        with open(partial, "wb") as f:
+            f.write(data)
+        partial.replace(filepath)
+    except OSError as e:
+        partial.unlink(missing_ok=True)
+        logger.warning("Failed to save %s: %s", filepath, e)
+        return "fail"
+    print(f"  Downloaded {filename}", file=sys.stderr)
+    return "ok"
 
 
 def main(args=None):
