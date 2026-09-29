@@ -103,9 +103,13 @@ def set_preferred_model(db, user_id: str, model: str) -> None:
 
 
 def clear_llm_key(db, user_id: str) -> None:
+    """Remove this user's own key. Also drops the preferred_model: it is only
+    consulted when the user has a key (spend.admit passes it to resolve_client
+    for the key's provider), so leaving it would resurrect the stale model
+    against the next provider the user adds (review M3/M5)."""
     db.conn.execute(
         "UPDATE users SET llm_provider = '', llm_key_ciphertext = NULL, "
-        "llm_key_last4 = '' WHERE user_id = ?",
+        "llm_key_last4 = '', preferred_model = '' WHERE user_id = ?",
         (user_id,),
     )
     db.conn.commit()

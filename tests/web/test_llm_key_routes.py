@@ -189,3 +189,16 @@ def test_m3_same_provider_keeps_model(ctx, signed_in, enc_secret):
 def test_m8_key_for_keyless_provider_refused_on_save(signed_in, enc_secret):
     r = signed_in.put("/api/me/llm-key", json={"provider": "ollama", "api_key": "sk-anything"})
     assert r.status_code == 400 and "does not take an API key" in r.json()["detail"]
+
+
+def test_m3_clearing_the_key_drops_the_stale_model(signed_in, enc_secret):
+    """A key removed by DELETE (or by an owner PIN reset, M5) must also drop the
+    stored preferred_model, or re-adding a key for a different provider with no
+    model re-opens M3: the stale model is sent to the new provider and every
+    summary fails (gate finding, batch 7)."""
+    signed_in.put("/api/me/llm-key", json={"provider": "deepseek", "api_key": "sk-user-111111111111",
+                                           "model": "deepseek-chat"})
+    assert signed_in.get("/api/me").json()["preferred_model"] == "deepseek-chat"
+    signed_in.delete("/api/me/llm-key")
+    signed_in.put("/api/me/llm-key", json={"provider": "anthropic", "api_key": "sk-ant-222222222222"})
+    assert signed_in.get("/api/me").json()["preferred_model"] == ""
