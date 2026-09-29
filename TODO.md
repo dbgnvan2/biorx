@@ -16,16 +16,16 @@
   folding matches each comparison — login names as SQLite's lower(), filter
   names with casefold).
 - Open from the plan's human checks (`docs/spec_coverage_review_fixes.md`):
-  M4 behind Railway's proxy needs a deploy; no per-batch browser run with
-  screenshots was recorded.
+  no per-batch browser run with screenshots was recorded.
 - `gui.py` still imports modules whose interfaces changed in this review; it
   is not updated (retiring).
 
 ## From the review batch-7 gates (`docs/cycles/2026-09-28_review-batch7-*qa-gate.md`) — APPROVED
 
 - Finding 1 (removing a key kept the old model) is fixed in e8c5dca.
-- **Open, needs a deploy:** set `TRUST_PROXY=1` on Railway and confirm the
-  sign-in limit keys on the real client address, not the proxy's (plan M4).
+- M4 behind Railway's proxy: **checked 2026-09-29.** `TRUST_PROXY=1` is set;
+  the limit is per client address and a made-up X-Forwarded-For does not get
+  around it (details in `docs/spec_coverage_review_fixes.md`).
 - Low-severity notes, not fixed: the rate limiter spends a token before the
   PIN-check slot is taken; `reset_pin` is not one transaction; `from_config`
   does not guard `int()` on the `sign_in:` values.

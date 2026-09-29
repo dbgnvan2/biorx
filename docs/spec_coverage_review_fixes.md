@@ -132,7 +132,7 @@ matching every test name in the plan against `tests/`, then reviewed by hand.
 | B9 memory limit on macOS | done (CI only) | `tests/test_fulltext.py::test_b9_memory_limit_linux` runs on Linux in CI; skipped on macOS with that reason |
 | B10 advisories | done | `pip-audit --require-hashes -r requirements-web.lock`: "No known vulnerabilities found" (commit 0618c9d); OSV/NVD cross-check in the batch-6 gate file |
 | Front-end flows end to end | partial | The spend gates, polling, 409 adoption and settings handlers run in node against a stubbed server (`tests/web/test_frontend_wiring.py`). No per-batch browser run with screenshots was recorded. |
-| M4 behind Railway's proxy | not done | Needs a deploy: set `TRUST_PROXY=1` and confirm the per-IP limit keys on the real client IP. |
+| M4 behind Railway's proxy | done | 2026-09-29, deployment f221060 with `TRUST_PROXY=1` on Railway. From one address, rapid attempts on `/api/session/lookup` (a made-up code) reached 429; at the same moment 8 attempts from a second address (inside Railway) all got 401, so the limit is per client, not one bucket for the proxy. A request with a made-up `X-Forwarded-For` from the limited address still got 429, so the header cannot be used to escape it. |
 
 ## Deviations from the plan
 
