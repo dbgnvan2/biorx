@@ -8,6 +8,13 @@
   mentioned. Matches that repeat a paper already read (for example another
   version of it) were merged without being counted; the status line now says
   how many, and the log warns if the numbers ever do not add up.
+- When a site refuses a PDF download (HTTP 403/429), the summary now names
+  the site ("www.biorxiv.org refused the download (HTTP 429)") instead of
+  "The host answered 429.", which read as "try again later". bioRxiv and
+  medRxiv refuse every request from the server's host (Railway), so their
+  papers cannot get a full-text summary there; the summary says so once and
+  points to running the app on your own computer. The wording is in
+  `sources_config.yaml` (`full_text.refused_download_notes`).
 - On a narrow screen, a results table made the whole page scroll sideways
   (385 px wide page, 586 px of content). Tables now scroll inside their card.
 

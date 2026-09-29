@@ -764,3 +764,23 @@ def test_m39_owner_remaining_decrements(ctx, signed_in, monkeypatch, with_full_t
         job_id = signed_in.post("/api/summaries", json={"paper": PAPER}).json()["job_id"]
         assert _await(signed_in, job_id)["status"] == "done"
     assert signed_in.get("/api/me").json()["owner_summaries_remaining"] == before - 1
+
+
+def test_br12_refusal_notes_reach_the_finder(ctx):
+    """The configured notes (sources_config.yaml full_text.refused_download_notes)
+    are what the finder is given (production check 2026-09-29)."""
+    from web import routes_summaries
+    seen = {}
+
+    def fake_find(paper, download, **kw):
+        seen.update(kw)
+        from src.fulltext import FullText
+        return FullText(tried=["the paper's own link: www.biorxiv.org refused the download "
+                               "(HTTP 429)."], refused_by=["www.biorxiv.org"],
+                        refusal_notes=kw["refusal_notes"])
+    ctx.sources_config = {"full_text": {"refused_download_notes": {"www.biorxiv.org": "Note."}}}
+    outcome = {}
+    with patch("src.fulltext.find_full_text", side_effect=fake_find):
+        assert routes_summaries._extract_text(ctx, dict(PAPER), outcome) == ""
+    assert seen["refusal_notes"] == {"www.biorxiv.org": "Note."}
+    assert outcome["full_text"].endswith("(HTTP 429). Note.")

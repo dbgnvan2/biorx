@@ -65,6 +65,19 @@ full_text:
   find_by_title: true
   # PDFs fetched per paper at most (each can take up to 30 s).
   max_downloads: 4
+  # Said once, after where it looked, when one of these hosts refuses a PDF
+  # download (HTTP 403/429). bioRxiv and medRxiv refuse every request from
+  # Railway, even their home pages; the same PDFs download from a home
+  # connection (production check 2026-09-29).
+  refused_download_notes:
+    www.biorxiv.org: >-
+      bioRxiv refuses downloads from some hosting providers, including the one
+      this server runs on, so its PDFs cannot be read here. A copy of the app
+      running on your own computer can read them.
+    www.medrxiv.org: >-
+      medRxiv refuses downloads from some hosting providers, including the one
+      this server runs on, so its PDFs cannot be read here. A copy of the app
+      running on your own computer can read them.
   # Reading one PDF (review B9): it is untrusted, so it is read in a separate
   # process that stops after this many pages or seconds, and (on Linux) may
   # use at most this much memory.

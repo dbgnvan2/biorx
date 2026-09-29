@@ -65,8 +65,19 @@ class FetchRefused(Exception):
     """The URL (or a redirect) points somewhere we will not fetch."""
 
 
+# A host that answers these refused the request (it may refuse this server
+# every time); other HTTP errors are plain failures.
+REFUSAL_STATUSES = (403, 429)
+
+
 class FetchFailed(Exception):
-    """The upstream could not be fetched (network, HTTP error, too many hops)."""
+    """The upstream could not be fetched (network, HTTP error, too many hops).
+    `status` and `host` are set when the host answered with an HTTP error."""
+
+    def __init__(self, message: str = "", status: Optional[int] = None, host: str = ""):
+        super().__init__(message)
+        self.status = status
+        self.host = host
 
 
 class NotAPdf(Exception):
@@ -237,7 +248,16 @@ def _fetch_public(url: str, max_bytes: int, timeout: float, headers: dict,
                 continue
 
             if resp.status_code >= 400:
-                raise FetchFailed(f"The host answered {resp.status_code}.")
+                host = parsed.hostname or ""
+                if resp.status_code in REFUSAL_STATUSES:
+                    # Name the host: "The host answered 429." read as "try
+                    # later" when bioRxiv refuses this server every time
+                    # (production check 2026-09-29).
+                    raise FetchFailed(f"{host} refused the download "
+                                      f"(HTTP {resp.status_code}).",
+                                      status=resp.status_code, host=host)
+                raise FetchFailed(f"The host answered {resp.status_code}.",
+                                  status=resp.status_code, host=host)
 
             declared = resp.headers.get("Content-Length")
             if declared:

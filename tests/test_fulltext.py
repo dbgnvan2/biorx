@@ -303,3 +303,66 @@ def test_b9_memory_limit_linux(tmp_path, monkeypatch):
     with pytest.raises(pdf_extract.ExtractFailed, match="memory"):
         pdf_extract.extract_text_limited(str(tmp_path / "x.pdf"), max_pages=1, max_chars=10,
                                          timeout=30, mem_bytes=256 * 1024 * 1024)
+
+
+# ── A host that refuses downloads is named and explained once ────────────────
+# Production check 2026-09-29: bioRxiv refuses every request from Railway, and
+# the own link and Unpaywall both led to its PDF.
+
+def test_br12_refusing_host_is_named_and_explained_once():
+    paper = {**PAPER, "doi": "10.64898/x"}
+    refused = lambda: NoText("www.biorxiv.org refused the download (HTTP 429).",
+                             refused_by="www.biorxiv.org")
+    own = "https://www.biorxiv.org/content/10.64898/xv1.full.pdf"
+    via_unpaywall = "https://www.biorxiv.org/content/10.64898/xv1.full.pdf?download"
+    get = _json({"unpaywall.org": {"best_oa_location": {"url_for_pdf": via_unpaywall}}})
+    dl = _download({own: refused(), via_unpaywall: refused()})
+    note = "bioRxiv refuses downloads from this server's host."
+    r = find_full_text(paper, dl, own_links=[own], email="me@x.org", get_json=get,
+                       refusal_notes={"www.biorxiv.org": note})
+    assert not r.found
+    text = r.explain()
+    assert text.count("www.biorxiv.org refused the download (HTTP 429)") == 2
+    assert text.count(note) == 1 and text.endswith(note)
+
+
+def test_br12_no_note_without_a_refusal_or_a_configured_host():
+    paper = {**PAPER, "doi": "10.1/x"}
+    get = _json({"unpaywall.org": {"best_oa_location": None, "oa_locations": []}})
+    notes = {"www.biorxiv.org": "bioRxiv refuses …"}
+    r = find_full_text(paper, _download({}), own_links=["https://doi.org/10.1/x"],
+                       email="me@x.org", get_json=get, refusal_notes=notes)
+    assert "refuses" not in r.explain()
+    # A refusal by a host with no note is still named, with no extra text.
+    dl = _download({"https://pub.example/x.pdf": NoText(
+        "pub.example refused the download (HTTP 403).", refused_by="pub.example")})
+    r2 = find_full_text(paper, dl, own_links=["https://pub.example/x.pdf"], email="me@x.org",
+                        get_json=get, refusal_notes=notes)
+    assert r2.explain().startswith("the paper's own link: pub.example refused the download")
+    assert "bioRxiv" not in r2.explain()
+
+
+def test_br12_download_passes_the_refusing_host_on(monkeypatch):
+    from src import fulltext, safe_fetch
+
+    def refuse(*a, **k):
+        raise safe_fetch.FetchFailed("www.biorxiv.org refused the download (HTTP 429).",
+                                     status=429, host="www.biorxiv.org")
+    monkeypatch.setattr(safe_fetch, "fetch_pdf", refuse)
+    with pytest.raises(fulltext.NoText) as e:
+        fulltext.download_pdf_text("https://www.biorxiv.org/x.pdf")
+    assert e.value.refused_by == "www.biorxiv.org"
+
+    def missing(*a, **k):
+        raise safe_fetch.FetchFailed("The host answered 404.", status=404, host="pub.example")
+    monkeypatch.setattr(safe_fetch, "fetch_pdf", missing)
+    with pytest.raises(fulltext.NoText) as e:
+        fulltext.download_pdf_text("https://pub.example/x.pdf")
+    assert e.value.refused_by == ""
+
+
+def test_br12_biorxiv_and_medrxiv_notes_are_configured():
+    from src.sources.config import load_sources_config
+    notes = load_sources_config()["full_text"]["refused_download_notes"]
+    assert "own computer" in notes["www.biorxiv.org"]
+    assert "own computer" in notes["www.medrxiv.org"]

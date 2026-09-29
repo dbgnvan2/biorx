@@ -172,6 +172,7 @@ def _extract_text(ctx: AppContext, paper: Dict[str, Any],
         max_downloads=int(settings.get("max_downloads", 4)),
         user_agent=polite_user_agent(cfg),
         get_json=_FINDER_GET_JSON,
+        refusal_notes=settings.get("refused_download_notes") or {},
     )
     if found.found:
         outcome["full_text"] = "used"

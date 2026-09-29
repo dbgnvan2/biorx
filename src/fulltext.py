@@ -52,7 +52,12 @@ GetJson = Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]]
 
 
 class NoText(Exception):
-    """This URL gave no usable text; the message says why, for the user."""
+    """This URL gave no usable text; the message says why, for the user.
+    `refused_by` names the host when it refused the download (403/429)."""
+
+    def __init__(self, message: str = "", refused_by: str = ""):
+        super().__init__(message)
+        self.refused_by = refused_by
 
 
 class Skip(Exception):
@@ -72,14 +77,25 @@ class FullText:
     url: str = ""
     tried: List[str] = field(default_factory=list)      # "Unpaywall: no free copy"
     unreachable: List[str] = field(default_factory=list)
+    refused_by: List[str] = field(default_factory=list)  # hosts that refused a download
+    refusal_notes: Dict[str, str] = field(default_factory=dict)
 
     @property
     def found(self) -> bool:
         return bool(self.text)
 
     def explain(self) -> str:
-        """One line for the user: where it looked and what each place said."""
-        return "; ".join(self.tried) or "nowhere to look"
+        """Purpose: One line for the user: where it looked and what each place said.
+        Spec:    docs/cycles/2026-09-29_browser-run.md (checked on production)
+        Tests:   tests/test_fulltext.py::test_br12_refusing_host_is_named_and_explained_once
+
+        A host that refused a download gets its note from
+        full_text.refused_download_notes, once, however many links led to it.
+        """
+        line = "; ".join(self.tried) or "nowhere to look"
+        notes = [self.refusal_notes[h] for h in dict.fromkeys(self.refused_by)
+                 if self.refusal_notes.get(h)]
+        return " ".join([line + ("." if notes and not line.endswith(".") else "")] + notes)
 
 
 # ── Matching ─────────────────────────────────────────────────────────────────
@@ -277,7 +293,10 @@ def download_pdf_text(url: str) -> str:
         raise NoText("the link leads to a web page, not a PDF") from e
     except safe_fetch.TooLarge as e:
         raise NoText("the PDF is too large") from e
-    except (safe_fetch.FetchRefused, safe_fetch.FetchFailed) as e:
+    except safe_fetch.FetchFailed as e:
+        refused = e.host if e.status in safe_fetch.REFUSAL_STATUSES else ""
+        raise NoText(str(e) or type(e).__name__, refused_by=refused) from e
+    except safe_fetch.FetchRefused as e:
         raise NoText(str(e) or type(e).__name__) from e
     from .pdf_extract import ExtractFailed, extract_text_limited
     limits = extract_limits()
@@ -320,7 +339,8 @@ def find_full_text(paper: Dict[str, Any], download: Download, *,
                    own_links: List[str], by_title: bool = True, email: str = "",
                    max_downloads: int = 4,
                    get_json: Optional[GetJson] = None,
-                   user_agent: str = "biorx/1.0") -> FullText:
+                   user_agent: str = "biorx/1.0",
+                   refusal_notes: Optional[Dict[str, str]] = None) -> FullText:
     """Purpose: Try each place in turn for a PDF with extractable text.
     Spec:    docs/implementation_plan_2026-09-19_full_text.md#C2
     Tests:   tests/test_fulltext.py::test_ft3_1_chain_order_and_stop,
@@ -330,7 +350,8 @@ def find_full_text(paper: Dict[str, Any], download: Download, *,
     30 s); what the cap skipped is reported, not dropped silently (P9).
     """
     get_json = get_json or default_get_json(user_agent)
-    result = FullText()
+    result = FullText(refusal_notes={str(k).lower(): str(v).strip()
+                                     for k, v in (refusal_notes or {}).items() if v})
     seen: set = set()
     downloads = 0
 
@@ -375,6 +396,8 @@ def find_full_text(paper: Dict[str, Any], download: Download, *,
                 text = download(url)
             except NoText as e:
                 reasons.append(str(e))
+                if getattr(e, "refused_by", ""):
+                    result.refused_by.append(e.refused_by.lower())
                 continue
             if text.strip() and not text_is_this_paper(paper, text):
                 reasons.append("a PDF that is a different document (its title is not in it)")

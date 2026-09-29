@@ -143,3 +143,18 @@ Two things found and fixed:
   phone check above ran with none). Tables are in `.table-scroll` boxes;
   checked at 375 px with the 149 results: page 375 wide (586 without).
   Test: `tests/web/test_frontend_wiring.py::test_br11_every_table_scrolls_inside_its_card`.
+
+A summary of a bioRxiv paper on production ("Genotoxic and metabolic stress
+drive divergent senescence programs in human microglia") kept the abstract:
+the paper's own link and Unpaywall's link both led to www.biorxiv.org, which
+answered 429. From the Railway container, www.biorxiv.org and
+www.medrxiv.org answer 429 (Cloudflare) even for their home pages, and the
+JATS XML too; the same PDF downloads from a home connection; api.biorxiv.org
+still answers. Europe PMC lists the preprint without text. Production has no
+full-text summary of a bioRxiv/medRxiv paper; its 24 full-text summaries are
+arXiv papers. Not fixable in code. The message now names the refusing host
+and, for bioRxiv/medRxiv, says once that they refuse this server and that a
+copy of the app on your own computer can read them.
+Tests: `tests/web/test_safe_fetch.py::test_br12_*`,
+`tests/test_fulltext.py::test_br12_*`,
+`tests/web/test_summaries_routes.py::test_br12_refusal_notes_reach_the_finder`.

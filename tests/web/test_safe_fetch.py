@@ -370,3 +370,35 @@ def test_b10_identity_encoding(monkeypatch):
     assert seen["headers"]["Accept-Encoding"] == "identity"
     assert seen["decode_content"] is False
     assert seen["headers"]["User-Agent"] == "biorx"
+
+
+# ── A host that refuses the download is named (production check 2026-09-29) ──
+
+@pytest.mark.parametrize("status", [403, 429])
+def test_br12_refusal_names_the_host(status):
+    """bioRxiv refuses every request from Railway with 429; "The host answered
+    429." read as "try again later"."""
+    with pytest.raises(FetchFailed) as e:
+        fetch("https://www.biorxiv.org/x.pdf",
+              {"https://www.biorxiv.org/x.pdf": FakeResp(status, body=b"")},
+              {"www.biorxiv.org": [PUBLIC]})
+    assert str(e.value) == f"www.biorxiv.org refused the download (HTTP {status})."
+    assert e.value.status == status and e.value.host == "www.biorxiv.org"
+
+
+def test_br12_other_http_errors_are_not_refusals():
+    with pytest.raises(FetchFailed) as e:
+        fetch("https://pub.example/x.pdf",
+              {"https://pub.example/x.pdf": FakeResp(404, body=b"")}, {"pub.example": [PUBLIC]})
+    assert str(e.value) == "The host answered 404."
+    assert e.value.status == 404 and e.value.status not in safe_fetch.REFUSAL_STATUSES
+
+
+def test_br12_host_after_a_redirect_is_the_one_named():
+    """Unpaywall's link went through doi.org; the refusal is bioRxiv's."""
+    routes = {"https://doi.org/10.1/x": FakeResp(302, {"Location": "https://www.biorxiv.org/x.pdf"}),
+              "https://www.biorxiv.org/x.pdf": FakeResp(429, body=b"")}
+    with pytest.raises(FetchFailed) as e:
+        fetch("https://doi.org/10.1/x", routes,
+              {"doi.org": [PUBLIC], "www.biorxiv.org": ["151.101.1.1"]})
+    assert e.value.host == "www.biorxiv.org"
