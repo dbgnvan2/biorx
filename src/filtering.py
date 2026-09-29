@@ -184,7 +184,8 @@ def filter_papers(papers: List[Dict[str, Any]], f: Dict[str, Any], *,
 
     Facets compare vocabulary ids (filter_vocabulary.yaml) against the
     record's own values: paper type against document_type, licence after
-    reduction to an id (review S3/B5).
+    reduction to an id (review S3/B5), and "human"/"no-animal" species
+    against the title's animal terms.
 
     normalised=True: the caller already ran normalise_filter, so it is not
     repeated — the enrichment gate calls this once per record (batch-1 gate
@@ -201,6 +202,7 @@ def filter_papers(papers: List[Dict[str, Any]], f: Dict[str, Any], *,
     version     = f.get("version", vocab.ANY)
     published   = f.get("published", vocab.ANY)
     license_    = f.get("license", vocab.ANY)
+    species     = f.get("species", vocab.ANY)
 
     out = []
     for p in papers:
@@ -223,6 +225,11 @@ def filter_papers(papers: List[Dict[str, Any]], f: Dict[str, Any], *,
         if published == "journal" and pub == "NA":
             continue
         if license_ != vocab.ANY and vocab.license_id(p.get("license") or "") != license_:
+            continue
+        # Only the Europe PMC/PubMed query applied species before; a title
+        # naming an animal study is now dropped for every source (browser run
+        # 2026-09-29). "animal" stays query-only (see filter_vocabulary.yaml).
+        if species in ("human", "no-animal") and vocab.title_names_an_animal_study(p.get("title") or ""):
             continue
         out.append(p)
     return out

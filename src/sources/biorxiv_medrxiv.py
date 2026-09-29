@@ -34,6 +34,9 @@ class BiorxivMedrxivAdapter:
 
     source_name = "biorxiv_medrxiv"
     source_trust_weight = 0.75
+    # The API reads a date range and ignores the words; the orchestrator
+    # applies the filter to each page and counts only matches.
+    filters_locally = True
 
     def __init__(self, timeout: int = 30, sources_config: dict | None = None):
         self.timeout = timeout

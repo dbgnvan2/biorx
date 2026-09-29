@@ -817,9 +817,10 @@ def test_b7_orchestrator_reads_a_30_per_page_source_to_its_budget():
     records = orch.search({"days_back": 7, "text_groups": [{"both": "biorxiv"}]},
                           {"all": True, "selected": []}, max_results=250,
                           on_status=statuses.append)
+    # Only bioRxiv titles match "biorxiv"; the budget counts matches (br3).
     assert "bioRxiv / medRxiv — skipped (truncated)" in statuses, statuses
-    assert "bioRxiv / medRxiv: 300 of 600 read (result limit reached)" in statuses, statuses
-    assert len(records) > 60                      # more than the first page of each server
+    assert "bioRxiv / medRxiv: 470 of 600 papers read, 270 match the filter" in statuses, statuses
+    assert len(records) == 270                    # well past the first page of each server
     # Read to the end when the budget allows it: not reported as truncated.
     adapter2, _ = ta._api_with_pages({"biorxiv": 95, "medrxiv": 40})
     adapter2.for_search = lambda: adapter2
@@ -828,3 +829,73 @@ def test_b7_orchestrator_reads_a_30_per_page_source_to_its_budget():
         {"days_back": 7, "text_groups": [{"both": "rxiv"}]}, {"all": True, "selected": []},
         max_results=1000, on_status=statuses2.append)
     assert not any("truncated" in s for s in statuses2), statuses2
+
+
+
+# ── bioRxiv/medRxiv: the budget counts matches, a page limit bounds reading ──
+# Decision 2026-09-29 (docs/cycles/2026-09-29_browser-run.md): the API cannot
+# search words, so the first papers of the window used the whole budget.
+
+def _sparse_biorxiv(n_bio, n_med, every=50, max_pages=None):
+    import tests.test_adapters as ta
+    adapter, calls = ta._api_with_pages(
+        {"biorxiv": n_bio, "medrxiv": n_med},
+        title=lambda server, i: (f"needle study {server} {i}" if i % every == 0
+                                 else f"other {server} {i}"))
+    adapter.for_search = lambda: adapter
+    orch = _orch_with({"biorxiv_medrxiv": adapter})
+    from src.sources.config import load_sources_config
+    shipped = load_sources_config()["publication_sources"]["biorxiv_medrxiv"]["max_pages"]
+    orch.config = {"publication_sources": {"biorxiv_medrxiv": {
+        "max_pages": shipped if max_pages is None else max_pages}}}
+    return orch, calls
+
+
+def test_br3_biorxiv_budget_counts_matches():
+    """Real scale: two weeks is ~4,900 papers. 1 in 50 matches; a budget of
+    200 must not stop after the first 200 papers read."""
+    orch, calls = _sparse_biorxiv(3400, 1500)                # the shipped page limit
+    assert orch._page_limit("biorxiv_medrxiv") >= 115        # two weeks of bioRxiv fits
+    statuses, failures = [], []
+    records = orch.search({"days_back": 14, "text_groups": [{"both": "needle"}]},
+                          {"all": True, "selected": []}, max_results=200,
+                          on_status=statuses.append,
+                          on_source_failure=lambda *a: failures.append(a))
+    assert len(records) == 68 + 30                    # every match in the window
+    assert "bioRxiv / medRxiv: 4,900 of 4,900 papers read, 98 match the filter" in statuses, statuses
+    assert failures == []                             # read to the end: not truncated
+
+
+def test_br3_page_limit_from_config():
+    orch, calls = _sparse_biorxiv(3400, 1500, max_pages=5)
+    assert orch._page_limit("biorxiv_medrxiv") == 5
+    statuses, failures = [], []
+    records = orch.search({"days_back": 14, "text_groups": [{"both": "needle"}]},
+                          {"all": True, "selected": []}, max_results=200,
+                          on_status=statuses.append,
+                          on_source_failure=lambda *a: failures.append(a))
+    assert len([c for c in calls if c[0] == "biorxiv"]) == 5
+    assert failures == [("biorxiv_medrxiv", "page-limit")]
+    assert "bioRxiv / medRxiv: 300 of 4,900 read (page limit reached)" in statuses, statuses
+    assert len(records) == 6                          # the matches in the pages read
+
+
+def test_br3_other_sources_still_count_what_they_read():
+    """Europe PMC searches the words itself; its budget is unchanged."""
+    big = _PagedAdapter("europepmc", total=1000)
+    orch = _orch_with({"europepmc": big})
+    records = orch.search({"days_back": 7, "text_groups": [{"both": "x"}]},
+                          {"all": True, "selected": []}, max_results=200)
+    assert len(records) == 200
+
+
+def test_br3_page_limit_bad_config_falls_back(caplog):
+    orch = _orch_with({})
+    orch.config = {"publication_sources": {"biorxiv_medrxiv": {"max_pages": "lots"}}}
+    assert orch._page_limit("biorxiv_medrxiv") == orch.MAX_PAGES_PER_SOURCE
+    assert "not a number" in caplog.text
+
+
+def test_br3_page_limit_message_is_configured():
+    from src.sources.config import load_sources_config
+    assert "page limit" in load_sources_config()["failure_explanations"]["page-limit"]

@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-29 — bioRxiv reads the whole window; smaller fixes from the browser run
+
+### Changed
+- **bioRxiv and medRxiv: Max results now counts matching papers.** Their API
+  cannot search words, so every paper in the date range is read (up to a page
+  limit, `sources_config.yaml`) and the filter is applied here. Two weeks is
+  about 4,900 papers and takes about 3 minutes; "inflammation" found 144
+  where it found 1 before. A range longer than the limit is cut off and the
+  search says so.
+
+### Fixed
+- "Exclude animal studies" and "Human studies only" also drop papers whose
+  title names an animal study (mice, rats, bovine, …), for every source. The
+  terms are in `filter_vocabulary.yaml`.
+- Reviews show headings, lists, bold and italics instead of `**…**`.
+- PubMed titles no longer show `<i>…</i>`; titles and abstracts stored before
+  the fix are cleaned when the app starts.
+- Summaries say "no key needed" / "your key" / "shared key"; reference lists
+  show "bioRxiv" instead of `biorxiv_medrxiv`; PubMed papers without a journal
+  read "PubMed".
+
 ## 2026-09-29 — fixes from the browser run
 
 A run through the common flows in a browser, with screenshots:

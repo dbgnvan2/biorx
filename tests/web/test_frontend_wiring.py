@@ -2154,6 +2154,7 @@ def _run_ref(body):
         _js_block(r"function hasSummary\(paper, summaries = state\.searchSummaries\) \{.*?\n\}"),
         _js_block(r"function summaryBadgeText\(entry\) \{.*?\n\}"),
         _js_block(r"async function refreshRefSummaries\(listId\) \{.*?\n\}"),
+        _js_block(r"function paperSourceText\(paper\) \{.*?\n\}"),
         _js_block(r"function renderRefItems\(\) \{.*?\n\}"),
         _js_block(r"async function exportRefSummariesPdf\(\) \{.*?\n\}"),
         """state.refItems = [
@@ -3006,3 +3007,61 @@ def test_br1_placeholder_follows_the_browser_key():
     ], "[run({key: ''}), run({key: 'sk-abcd1234'})]")
     assert got == ["Stored encrypted; only the last 4 are ever shown",
                    "Local key saved (…1234). Enter a new one to replace."]
+
+
+# ── Browser run 2026-09-29: review Markdown shown as raw text ────────────────
+
+_REVIEW_SAMPLE = """Based on the provided papers, here is the synthesis:
+
+**Shared Themes**
+Both papers investigate tissue remodeling.
+*   **[1]** focuses on *S. aureus* protease.
+*   **[2]** investigates Crohn's Disease.
+
+## What is Missing
+A comparison <script>alert(1)</script> of mechanisms."""
+
+
+def _md(expression):
+    return _node_eval([_js_block(r"function markdownRuns\(line\) \{.*?\n\}"),
+                       _js_block(r"function markdownBlocks\(text\) \{.*?\n\}")], expression)
+
+
+def test_br4_review_markdown_becomes_blocks():
+    import json
+    blocks = _md(f"markdownBlocks({json.dumps(_REVIEW_SAMPLE)})")
+    assert [b["type"] for b in blocks] == ["para", "heading", "para", "list", "heading", "para"]
+    assert blocks[1]["runs"] == [{"text": "Shared Themes"}]
+    assert blocks[3]["items"][0] == [{"text": "[1]", "bold": True}, {"text": " focuses on "},
+                                     {"text": "S. aureus", "italic": True}, {"text": " protease."}]
+    assert blocks[4]["runs"] == [{"text": "What is Missing"}]
+    # Model text stays text: the tag is a string in a run, never markup.
+    assert blocks[5]["runs"] == [{"text": "A comparison <script>alert(1)</script> of mechanisms."}]
+
+
+def test_br4_plain_text_and_arithmetic_asterisks_are_left_alone():
+    assert _md('markdownBlocks("2 * 3 = 6 and a*b")') == [
+        {"type": "para", "runs": [{"text": "2 * 3 = 6 and a*b"}]}]
+
+
+def test_br4_review_is_rendered_through_the_safe_renderer():
+    body = _js_block(r"function renderReview\(review\) \{.*?\n\}")
+    assert 'renderMarkdownInto($("ref-review-text"), review.review_text)' in body
+    renderer = _js_block(r"function renderMarkdownInto\(el, text\) \{.*?\n\}")
+    assert "textContent" in renderer and "createTextNode" in renderer
+
+
+def test_br5_key_source_label_reads_as_words():
+    got = _node_eval([_js_block(r"function keySourceLabel\(source\) \{.*?\n\}")],
+                     '["user", "owner", "none", "", "other"].map(keySourceLabel)')
+    assert got == ["your key", "shared key", "no key needed", "key not recorded", "other key"]
+    assert "${keySourceLabel(result.key_source)}" in APP_JS.read_text()
+
+
+def test_br6_both_tables_label_the_source_the_same_way():
+    code = _js_without_comments()
+    assert code.count("tag.textContent = paperSourceText(") == 2
+    got = _node_eval([_js_block(r"function paperSourceText\(paper\) \{.*?\n\}")],
+                     '[paperSourceText({journal_or_server: "medrxiv", source: "biorxiv_medrxiv", server: "biorxiv"}),'
+                     ' paperSourceText({source: "europepmc", server: "biorxiv"})]')
+    assert got == ["medrxiv", "europepmc"]

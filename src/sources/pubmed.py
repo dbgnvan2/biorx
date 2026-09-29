@@ -38,5 +38,7 @@ class PubMedAdapter(EuropePmcAdapter):
         record = super().normalize(raw)
         # If it has a PMID, it's a PubMed record
         if record.pmid:
-            record.journal_or_server = f"{record.journal_or_server} (PubMed)"
+            journal = (record.journal_or_server or "").strip()
+            # Without a journal this read " (PubMed)" (browser run 2026-09-29).
+            record.journal_or_server = f"{journal} (PubMed)" if journal else "PubMed"
         return record

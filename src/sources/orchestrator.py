@@ -319,6 +319,34 @@ class SourceOrchestrator:
 
     # ── Per-source paginated search ────────────────────────────────────────────
 
+    def _page_limit(self, source_name: str) -> int:
+        """Pages read from one source per search: sources_config.yaml
+        publication_sources.<name>.max_pages, else MAX_PAGES_PER_SOURCE.
+
+        Spec:  docs/cycles/2026-09-29_browser-run.md (bioRxiv decision)
+        Tests: tests/test_orchestrator.py::test_br3_page_limit_from_config
+        """
+        section = ((self.config or {}).get("publication_sources") or {}).get(source_name) or {}
+        try:
+            return max(1, int(section.get("max_pages", self.MAX_PAGES_PER_SOURCE)))
+        except (TypeError, ValueError):
+            logger.warning("publication_sources.%s.max_pages is not a number; using %d",
+                           source_name, self.MAX_PAGES_PER_SOURCE)
+            return self.MAX_PAGES_PER_SOURCE
+
+    @staticmethod
+    def _local_matcher(filter_dict: Dict[str, Any]) -> Callable[[CanonicalRecord], bool]:
+        """The filter's match test for one record, as front ends apply it after
+        a search — without the licence condition, which enrichment may still
+        supply (review B5); the caller applies the full filter afterwards.
+
+        Spec:  docs/cycles/2026-09-29_browser-run.md (bioRxiv decision)
+        Tests: tests/test_orchestrator.py::test_br3_biorxiv_budget_counts_matches
+        """
+        from src.filtering import filter_papers, without_license
+        f = without_license(filter_dict)
+        return lambda rec: bool(filter_papers([rec.to_dict()], f, normalised=True))
+
     def _search_source(
         self,
         source_name: str,
@@ -343,14 +371,25 @@ class SourceOrchestrator:
         fetched   = 0
         page      = 1
         unreadable = 0       # records normalize() could not read
+        # A source whose API cannot search the words (bioRxiv/medRxiv reads a
+        # date range) is filtered here, page by page: only matches count
+        # against max_results, and its own page limit bounds the reading. It
+        # used to spend the budget on the first papers of the window, nearly
+        # none of which matched (browser run 2026-09-29).
+        local_filter = getattr(adapter, "filters_locally", False) is True
+        matches = self._local_matcher(filter_dict) if local_filter else None
+        page_limit = self._page_limit(source_name)
+        not_matching = 0
+        limited_by_pages = False
         seen_raw  = 0        # records the source sent, duplicates included
         src_total = 0
         last_page_full = False
         limited   = False    # stopped by max_results or the page cap, not by the source
 
         while True:
-            if page > self.MAX_PAGES_PER_SOURCE:
+            if page > page_limit:
                 limited = True
+                limited_by_pages = True
                 break
             if should_stop and should_stop():
                 break
@@ -412,6 +451,9 @@ class SourceOrchestrator:
             for raw in raw_records:
                 try:
                     canonical = adapter.normalize(raw)
+                    if matches is not None and not matches(canonical):
+                        not_matching += 1
+                        continue
                     before    = len(dedup)
                     canonical = dedup.add(canonical)
                     if len(dedup) == before:
@@ -441,9 +483,11 @@ class SourceOrchestrator:
                 src_total = 0   # the adapter does not report a total
 
             if on_progress:
-                on_progress(fetched, src_total)  # src_total == 0 means "unknown"
+                # A locally filtered source's progress is papers read of the
+                # papers in its window; its matches are a small part of them.
+                on_progress(seen_raw if local_filter else fetched, src_total)
 
-            if src_total and fetched >= src_total:
+            if src_total and (seen_raw if local_filter else fetched) >= src_total:
                 break
 
             if not last_page_full:
@@ -452,6 +496,13 @@ class SourceOrchestrator:
             page += 1
 
         logger.info("Source %s: %d records fetched", source_name, fetched)
+        if local_filter:
+            of_total = f" of {src_total:,}" if src_total else ""
+            logger.info("Source %s: read %d%s papers, %d match the filter (%d did not)",
+                        source_name, seen_raw, of_total, fetched, not_matching)
+            if on_status:
+                on_status(f"{source_label(source_name)}: {seen_raw:,}{of_total} papers read, "
+                          f"{fetched:,} match the filter")
         if unreadable:
             label = source_label(source_name)
             got = seen_raw or unreadable
@@ -466,9 +517,12 @@ class SourceOrchestrator:
             label = source_label(source_name)
             of_total = f" of {src_total:,}" if src_total else ""
             logger.warning("Source %s truncated: %d%s read", source_name, seen_raw, of_total)
+            by_pages = limited_by_pages and local_filter
             if on_status:
-                on_status(f"{label}: {seen_raw:,}{of_total} read (result limit reached)")
-            _report_failure(source_name, "truncated", on_status, on_source_failure)
+                why = "page limit reached" if by_pages else "result limit reached"
+                on_status(f"{label}: {seen_raw:,}{of_total} read ({why})")
+            _report_failure(source_name, "page-limit" if by_pages else "truncated",
+                            on_status, on_source_failure)
         return fetched
 
     # ── Enrichment ─────────────────────────────────────────────────────────────

@@ -511,14 +511,14 @@ def test_b5_real_licences_read():
     assert {"cc-by", "cc0", "cc-by-nc-nd", "cc-by-nd"} <= ids
 
 
-def _api_with_pages(pools, page=30):
+def _api_with_pages(pools, page=30, title=None):
     """A stand-in for the bioRxiv details API as it answers today: `page`
-    papers per call from a pool per server, with the pool size as `total`."""
-    def fake(collections):
-        return collections
+    papers per call from a pool per server, with the pool size as `total`.
+    title(server, i) gives each paper's title (default "<server> <i>")."""
+    title = title or (lambda server, i: f"{server} {i}")
     colls = {}
     for server, n in pools.items():
-        papers = [{"doi": f"10.1101/{server}{i}", "title": f"{server} {i}", "version": "1"}
+        papers = [{"doi": f"10.1101/{server}{i}", "title": title(server, i), "version": "1"}
                   for i in range(n)]
         for c in range(0, n, page):
             colls[(server, c)] = papers[c:c + page]
@@ -542,3 +542,11 @@ def test_b7_reads_past_a_30_paper_page():
     assert [c[3] for c in calls if c[0] == "biorxiv"] == [0, 30, 60, 90]
     assert [c[3] for c in calls if c[0] == "medrxiv"] == [0, 30]
     assert adapter.last_total == 135
+
+
+def test_br9_pubmed_label_without_a_journal():
+    from src.sources.pubmed import PubMedAdapter
+    a = PubMedAdapter()
+    assert a.normalize({"title": "T", "pmid": "1"}).journal_or_server == "PubMed"
+    rec = a.normalize({"title": "T", "pmid": "1", "journalTitle": "Lancet"})
+    assert rec.journal_or_server == "Lancet (PubMed)"

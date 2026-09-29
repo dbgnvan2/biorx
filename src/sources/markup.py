@@ -37,6 +37,11 @@ def markup_to_text(text: str) -> str:
     unchanged apart from decoding entities and trimming."""
     if not text:
         return ""
+    # Entities first: PubMed titles arrive escaped ("&lt;i&gt;Porphyromonas
+    # gingivalis&lt;/i&gt;"), and decoding after the tag pass left them as
+    # real tags (browser run 2026-09-29). Only known tag names are removed
+    # below, so a decoded "<" in "p < 0.05" is still left alone.
+    text = html.unescape(text)
     if "<" in text:
         text = _OPEN_HEADING.sub("\n", text)
         text = _CLOSE_HEADING.sub(": ", text)
@@ -44,8 +49,22 @@ def markup_to_text(text: str) -> str:
         text = _INLINE_TAG.sub("", text)
         text = _SINGLE_LETTER.sub("", text)
         text = re.sub(r"([:.?!])\s*:\s", r"\1 ", text)    # "Methods.: " -> "Methods. "
-    text = html.unescape(text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" *\n *", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def has_markup(text: str) -> bool:
+    """Whether text contains a tag markup_to_text would remove. Used to pick
+    rows stored before the fix without touching any other text.
+
+    Tests: tests/test_markup.py::test_br2_has_markup_only_for_known_tags
+    """
+    if not text:
+        return False
+    text = html.unescape(text)
+    if "<" not in text:
+        return False
+    return any(p.search(text) for p in (_OPEN_HEADING, _CLOSE_HEADING, _BLOCK_TAG,
+                                        _INLINE_TAG, _SINGLE_LETTER))

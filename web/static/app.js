@@ -1107,7 +1107,7 @@ function renderResults() {
     const source = document.createElement("td");
     const tag = document.createElement("span");
     tag.className = "tag";
-    tag.textContent = paper.journal_or_server || paper.source || "";
+    tag.textContent = paperSourceText(paper);
     source.appendChild(tag);
 
     const actions = document.createElement("td");
@@ -1440,7 +1440,7 @@ function renderSummary(job, result) {
       `No full text found, so no model was used. Looked in: ${result.full_text || "—"}`);
     return;
   }
-  $("modal-summary-meta").textContent = `${result.provider} · ${result.model} · ${result.key_source} key` +
+  $("modal-summary-meta").textContent = `${result.provider} · ${result.model} · ${keySourceLabel(result.key_source)}` +
     (result.text_source ? ` · from the full text via ${result.text_source}` : "");
   const heading = document.createElement("h4");
   heading.textContent = "Summary";
@@ -2317,7 +2317,7 @@ function renderRefItems() {
     const srcTd = document.createElement("td");
     const tag = document.createElement("span");
     tag.className = "tag";
-    tag.textContent = p.source || p.server || "";
+    tag.textContent = paperSourceText(p);
     srcTd.appendChild(tag);
 
     // RL2: generate a summary from the list, as from the Search results.
@@ -2927,13 +2927,101 @@ function reviewEstimate(preview, payer = {}) {
 /* Show a review, with what it was able to read. The basis note is not
    decoration: a reader who cannot see that four of six papers were abstracts
    will take the synthesis as better grounded than it is. */
+/* The model writes reviews in Markdown; shown raw, "**Shared Themes**" was
+   noise (browser run 2026-09-29). A small subset — headings, bullet lists,
+   paragraphs, **bold**, *italic* — is parsed here into plain data, and the
+   DOM is built with createElement/textContent only: model text never
+   becomes markup. Pure, for the node-run test. */
+function markdownRuns(line) {
+  const runs = [];
+  const re = /\*\*([^*]+)\*\*|\*([^*\s][^*]*?)\*/g;
+  let last = 0, m;
+  while ((m = re.exec(line)) !== null) {
+    if (m.index > last) runs.push({ text: line.slice(last, m.index) });
+    if (m[1] !== undefined) runs.push({ text: m[1], bold: true });
+    else runs.push({ text: m[2], italic: true });
+    last = re.lastIndex;
+  }
+  if (last < line.length) runs.push({ text: line.slice(last) });
+  return runs;
+}
+
+function markdownBlocks(text) {
+  const blocks = [];
+  let para = [], list = null;
+  const flush = () => {
+    if (para.length) blocks.push({ type: "para", runs: markdownRuns(para.join(" ")) });
+    para = [];
+    if (list) blocks.push(list);
+    list = null;
+  };
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    const heading = line.match(/^#{1,6}\s+(.*)$/) || line.match(/^\*\*([^*]+)\*\*:?$/);
+    const bullet = line.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
+    if (!line) { flush(); continue; }
+    if (heading) { flush(); blocks.push({ type: "heading", runs: markdownRuns(heading[1].replace(/\*\*/g, "")) }); continue; }
+    if (bullet) {
+      if (para.length) { blocks.push({ type: "para", runs: markdownRuns(para.join(" ")) }); para = []; }
+      if (!list) list = { type: "list", items: [] };
+      list.items.push(markdownRuns(bullet[1]));
+      continue;
+    }
+    if (list) { blocks.push(list); list = null; }
+    para.push(line);
+  }
+  flush();
+  return blocks;
+}
+
+/* Where a paper came from, the same in the search results and in a
+   reference list; the list showed the internal id "biorxiv_medrxiv" (browser
+   run 2026-09-29). `server` is not used: old rows default it to "biorxiv". */
+function paperSourceText(paper) {
+  return paper.journal_or_server || paper.source || "";
+}
+
+/* Who paid for a summary, in words. The raw value read "none key" for local
+   Ollama (browser run 2026-09-29). Pure, for the node-run test. */
+function keySourceLabel(source) {
+  return { user: "your key", owner: "shared key", none: "no key needed" }[source]
+    || (source ? `${source} key` : "key not recorded");
+}
+
+function renderMarkdownInto(el, text) {
+  el.replaceChildren();
+  const addRuns = (parent, runs) => {
+    for (const run of runs) {
+      const node = run.bold ? document.createElement("strong")
+                 : run.italic ? document.createElement("em") : null;
+      if (node) { node.textContent = run.text; parent.appendChild(node); }
+      else parent.appendChild(document.createTextNode(run.text));
+    }
+  };
+  for (const block of markdownBlocks(text)) {
+    if (block.type === "list") {
+      const ul = document.createElement("ul");
+      for (const item of block.items) {
+        const li = document.createElement("li");
+        addRuns(li, item);
+        ul.appendChild(li);
+      }
+      el.appendChild(ul);
+      continue;
+    }
+    const node = document.createElement(block.type === "heading" ? "h4" : "p");
+    addRuns(node, block.runs);
+    el.appendChild(node);
+  }
+}
+
 function renderReview(review) {
   if (!review || !review.review_text) {
     $("ref-review").classList.add("hidden");
     return;
   }
   $("ref-review").classList.remove("hidden");
-  $("ref-review-text").textContent = review.review_text;
+  renderMarkdownInto($("ref-review-text"), review.review_text);
   $("ref-review-basis").textContent = review.basis_note || "";
   $("ref-review-when").textContent = review.created_at
     ? `Made ${review.created_at.slice(0, 10)} · ${review.model_version || ""}`

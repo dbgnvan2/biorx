@@ -563,7 +563,7 @@ def list_reference_items(db, list_id: int) -> List[Dict[str, Any]]:
         """
         SELECT i.id AS item_id, i.added_at,
                p.id AS paper_id, p.title, p.authors, p.pub_date,
-               p.doi, p.url, p.abstract, p.source, p.server,
+               p.doi, p.url, p.abstract, p.source, p.server, p.journal_or_server,
                p.canonical_id, p.pdf_path, p.best_oa_url, p.version
           FROM user_reference_list_items i
           JOIN papers p ON p.id = i.paper_id

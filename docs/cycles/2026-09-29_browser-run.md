@@ -70,22 +70,47 @@ there needs the owner's own code and PIN.
   only known tag names are removed now. Summaries stored before the fix keep
   their tags. Tests: `tests/test_markup.py`.
 
-## Found, not fixed
+## Found, not fixed — then fixed at the owner's request (same day)
 
-- **bioRxiv/medRxiv coverage is still small.** With F2 fixed, a 200-paper
-  budget reads ~200–300 of ~4,900 papers in a 14-day window (the API has no
-  keyword search; filtering happens here). It is now reported, not silent. A
-  better design counts matches rather than papers read for date-only sources,
-  with its own page limit — a decision for the owner.
-- The review text is Markdown (`**Shared Themes**`) and is shown as raw text
-  (screenshot 20).
-- The summary label reads "ollama · qwen3.5:4b · none key" for a provider with
-  no key.
-- The reference list's Source column shows the internal id `biorxiv_medrxiv`;
-  search results show "bioRxiv" / "medRxiv".
-- A Europe PMC paper "… in Rats" passed the Inflammation filter's "exclude
-  animal studies": that facet is sent to Europe PMC as `NOT ANIMAL` and is not
-  re-checked here.
+Checked in the browser afterwards; screenshots 32–37.
+
+- **bioRxiv/medRxiv budget (owner's decision: count matches, with a page
+  limit).** The adapter declares `filters_locally`; the orchestrator applies
+  the filter (without the licence condition, B5) to each page and counts only
+  matches against Max results. `publication_sources.biorxiv_medrxiv.max_pages:
+  150` bounds the reading; a cut is reported as its own kind, `page-limit`,
+  with its own message. Live: "inflammation" over 14 days read all 4,927
+  papers in about 3 minutes and found **144** matches (1 before F2, 5 after
+  it). Tests: `tests/test_orchestrator.py::test_br3_*`.
+- **Review Markdown** is parsed into headings, lists, paragraphs, bold and
+  italics, and built with createElement/textContent only (screenshot 33).
+  Tests: `test_frontend_wiring.py::test_br4_*`.
+- **"none key"** now reads "no key needed" (also "your key", "shared key";
+  screenshot 36). Test: `test_br5_key_source_label_reads_as_words`.
+- **Source column** uses the same label as the search results, and reference
+  items now carry `journal_or_server` (screenshot 32). Tests: `test_br6_*`.
+- **Species:** "Human studies only" and "Exclude animal studies" also drop a
+  paper whose title names an animal study, for every source; the terms are
+  `species.animal_title_terms` in `filter_vocabulary.yaml` (pets left out on
+  purpose). The Inflammation filter's 111 results had no animal titles; 12 of
+  them now come from bioRxiv/medRxiv. Tests: `tests/test_filtering.py::test_br7_*`.
+- **Stored summaries with tags:** a startup migration cleans titles,
+  abstracts and abstract-only summaries that contain a known tag, and leaves
+  all other text and model summaries alone. Test:
+  `tests/test_db_migrations.py::test_br8_stored_markup_cleaned_once`.
+
+Found while checking these:
+- **PubMed titles still showed `<i>…</i>`**: PubMed sends the tags escaped
+  (`&lt;i&gt;`), and the helper decoded entities after removing tags. It now
+  decodes first; the migration also picks up escaped rows. 179 PubMed results
+  checked, none with tags (screenshot 37). Test:
+  `tests/test_markup.py::test_br2_escaped_tags_from_pubmed_are_removed`.
+- A PubMed paper with no journal was labelled " (PubMed)"; now "PubMed".
+
+## Still open
+
 - "Save all" and "Save as…" use the browser's `prompt()`; the run answered it
   with a stub (`window.prompt` replaced in the page) because the test browser
-  cannot type into native dialogs.
+  cannot type into native dialogs. Not a defect.
+- A search that includes bioRxiv/medRxiv now takes about 3 minutes for two
+  weeks, because every paper in the window is read.

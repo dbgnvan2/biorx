@@ -529,6 +529,45 @@ class Database:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_access_code_bindings_user "
                        "ON access_code_bindings(user_id)")
         self._delete_orphans(cursor)
+        self._clean_stored_markup(cursor)
+
+    def _clean_stored_markup(self, cursor) -> Dict[str, int]:
+        """Turn source markup in stored titles, abstracts and abstract-only
+        summaries into text, as new searches now do.
+
+        Purpose: Rows saved before the fix stop showing "<h4>Objective</h4>".
+        Spec:    docs/cycles/2026-09-29_browser-run.md (F4 follow-up)
+        Tests:   tests/test_db_migrations.py::test_br8_stored_markup_cleaned_once
+
+        Only values containing a known tag are rewritten (has_markup), so no
+        other text changes. A full-text summary is model output and is left
+        alone. Idempotent; counts are logged.
+        """
+        from src.sources.markup import has_markup, markup_to_text
+        cleaned = {"papers": 0, "summaries": 0}
+        # "&lt;" too: PubMed sends its tags entity-escaped.
+        for row in cursor.execute("SELECT id, title, abstract FROM papers "
+                                  "WHERE title LIKE '%<%' OR abstract LIKE '%<%' "
+                                  "OR title LIKE '%&lt;%' OR abstract LIKE '%&lt;%'").fetchall():
+            title, abstract = row[1] or "", row[2] or ""
+            new_title = markup_to_text(title) if has_markup(title) else title
+            new_abstract = markup_to_text(abstract) if has_markup(abstract) else abstract
+            if (new_title, new_abstract) != (title, abstract):
+                cursor.execute("UPDATE papers SET title = ?, abstract = ? WHERE id = ?",
+                               (new_title, new_abstract, row[0]))
+                cleaned["papers"] += 1
+        for row in cursor.execute("SELECT id, summary_text FROM summaries "
+                                  "WHERE source_text = 'abstract' AND (summary_text LIKE '%<%' "
+                                  "OR summary_text LIKE '%&lt;%')"
+                                  ).fetchall():
+            if has_markup(row[1] or ""):
+                cursor.execute("UPDATE summaries SET summary_text = ? WHERE id = ?",
+                               (markup_to_text(row[1]), row[0]))
+                cleaned["summaries"] += 1
+        if any(cleaned.values()):
+            logger.info("Cleaned source markup from %d papers and %d abstract-only summaries",
+                        cleaned["papers"], cleaned["summaries"])
+        return cleaned
 
     # Rows whose parent list is gone. They were left behind while foreign keys
     # were off (review M30); with them on, the cascade removes them instead.

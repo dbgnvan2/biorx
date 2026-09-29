@@ -3,18 +3,11 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
-## From the browser run (`docs/cycles/2026-09-29_browser-run.md`) — not fixed
+## From the browser run (`docs/cycles/2026-09-29_browser-run.md`)
 
-- **Decision needed:** bioRxiv/medRxiv have no keyword search, so a 200-paper
-  budget reads ~200–300 of ~4,900 papers in two weeks (now reported, not
-  silent). Counting matches instead of papers read, with a page limit, would
-  cover the window.
-- Review text is Markdown and shows as raw `**…**`.
-- Summary label "none key" for a provider with no key.
-- Reference list Source column shows `biorxiv_medrxiv`, not the label.
-- "Exclude animal studies" is only sent to Europe PMC (`NOT ANIMAL`), not
-  re-checked here; a "… in Rats" paper passed.
-- Summaries stored before the markup fix still contain HTML tags.
+- All findings fixed (see the report). Open: a search including
+  bioRxiv/medRxiv now takes about 3 minutes for two weeks — every paper in the
+  window is read. If that is too slow, lower `max_pages` or cache the window.
 
 ## CI race (`docs/cycles/2026-09-28_review-ci-race-qa-gate.md`) — APPROVED
 

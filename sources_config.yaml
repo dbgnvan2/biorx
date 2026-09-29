@@ -18,6 +18,15 @@ publication_sources:
   biorxiv_medrxiv:
     enabled: true
     default_selected: false
+    # Its API cannot search words: it lists every paper in the date range (30
+    # per request per server) and the filter is applied here, so Max results
+    # counts matches. This bounds how much is read: a page is one request of
+    # 30 papers to each server still in range, so the larger server sets the
+    # count. Two weeks of bioRxiv is about 3,400 papers (~115 pages; about 165
+    # requests with medRxiv; measured 2026-09-29: 4,927 papers read in about
+    # 3 minutes). 150 covers about 2.5 weeks; a longer range is cut off here
+    # and the search says so.
+    max_pages: 150
 
   arxiv:
     enabled: true
@@ -80,3 +89,4 @@ failure_explanations:
   rate-limited: "is limiting how fast it can be searched; results from it are incomplete — try again in a few minutes"
   partial: "stopped responding part-way; results from it are incomplete"
   truncated: "had more results than Max results allows; only the first ones were read — raise Max results or narrow the filter"
+  page-limit: "has more papers in this date range than one search reads (its page limit), so later papers were not checked — use a shorter date range"

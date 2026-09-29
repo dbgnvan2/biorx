@@ -58,3 +58,20 @@ def test_br2_a_letter_after_less_than_is_not_a_tag():
     for text in ("a<b and c>d", "x<a and y>z", "u<i and j>v"):
         assert markup_to_text(text) == text
     assert markup_to_text("<i>E. coli</i> and <b>bold</b> <a href='x'>link</a>") == "E. coli and bold link"
+
+
+def test_br2_has_markup_only_for_known_tags():
+    from src.sources.markup import has_markup
+    assert has_markup("<h4>Objective</h4>Text") and has_markup("T<sub>reg</sub>")
+    for text in ("p < 0.05 and x > 1", "a<b and c>d", "AT&amp;T", "", "plain"):
+        assert not has_markup(text), text
+
+
+def test_br2_escaped_tags_from_pubmed_are_removed():
+    """PubMed sends "&lt;i&gt;" — the tag pass ran before decoding, so the
+    page showed "<i>Porphyromonas gingivalis</i>" (browser run 2026-09-29)."""
+    title = "Direct contact by &lt;i&gt;Porphyromonas gingivalis&lt;/i&gt; and CeO&lt;sub&gt;2&lt;/sub&gt;"
+    assert markup_to_text(title) == "Direct contact by Porphyromonas gingivalis and CeO2"
+    assert markup_to_text("p &lt; 0.05 and x &gt; 1") == "p < 0.05 and x > 1"
+    from src.sources.markup import has_markup
+    assert has_markup(title) and not has_markup("p &lt; 0.05 and x &gt; 1")

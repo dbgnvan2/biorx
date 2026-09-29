@@ -176,3 +176,25 @@ def license_id(value: str) -> str:
 
 def excluded_organisms() -> List[str]:
     return [str(o) for o in (load()["species"].get("excluded_organisms") or [])]
+
+
+@lru_cache(maxsize=1)
+def animal_title_pattern() -> Optional["re.Pattern[str]"]:
+    """Purpose: One compiled test for "this title names an animal study".
+    Spec:    docs/cycles/2026-09-29_browser-run.md (species re-check)
+    Tests:   tests/test_filtering.py::test_br7_no_animal_drops_animal_titles
+
+    Whole words or phrases from species.animal_title_terms, any case. None
+    when the list is empty (then nothing is excluded here).
+    """
+    terms = [str(t).strip() for t in (load()["species"].get("animal_title_terms") or [])
+             if str(t).strip()]
+    if not terms:
+        return None
+    alternatives = "|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True))
+    return re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", re.IGNORECASE)
+
+
+def title_names_an_animal_study(title: str) -> bool:
+    pattern = animal_title_pattern()
+    return bool(pattern and pattern.search(title or ""))

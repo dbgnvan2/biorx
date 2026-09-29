@@ -246,3 +246,36 @@ def test_t2_non_ascii_names_fold_as_each_comparison_does(tmp_path, caplog):
     assert not [r for r in caplog.records if r.levelno == logging.ERROR]
     assert any("'café'" in r.getMessage() and "u2" in r.getMessage() for r in caplog.records)
     db.close()
+
+
+def test_br8_stored_markup_cleaned_once(tmp_path, caplog):
+    """Rows stored before the markup fix are cleaned on open; other text,
+    and full-text (model) summaries, are not touched."""
+    path = str(tmp_path / "markup.db")
+    db = Database(path)
+    tagged = db.insert_paper({"doi": "10.1/t", "canonical_id": "doi:10.1/t",
+                              "title": "T<sub>reg</sub> cells",
+                              "abstract": "<h4>Objective</h4>Find out.<h4>Methods</h4>Ask."})
+    escaped = db.insert_paper({"doi": "10.1/e", "canonical_id": "doi:10.1/e",
+                               "title": "By &lt;i&gt;P. gingivalis&lt;/i&gt;", "abstract": ""})
+    plain = db.insert_paper({"doi": "10.1/p", "canonical_id": "doi:10.1/p",
+                             "title": "AT&amp;T  and p < 0.05", "abstract": "x > 1"})
+    db.insert_summary(tagged, summary_text="<h4>Objective</h4>Find out.", source_text="abstract")
+    db.insert_summary(plain, summary_text="", key_findings=["<b>kept</b> as the model wrote it"],
+                      source_text="full_text")
+    db.close()
+
+    with caplog.at_level(logging.INFO, logger="src.db"):
+        db = Database(path)
+    t, p = db.get_paper_by_id(tagged), db.get_paper_by_id(plain)
+    assert (t["title"], t["abstract"]) == ("Treg cells", "Objective: Find out.\nMethods: Ask.")
+    assert (p["title"], p["abstract"]) == ("AT&amp;T  and p < 0.05", "x > 1")   # untouched
+    assert db.get_summary(tagged)["summary_text"] == "Objective: Find out."
+    assert db.get_summary(plain)["key_findings"] == ["<b>kept</b> as the model wrote it"]
+    assert db.get_paper_by_id(escaped)["title"] == "By P. gingivalis"
+    assert "2 papers and 1 abstract-only summaries" in caplog.text
+    db.close()
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="src.db"):
+        Database(path).close()                     # second open: nothing to do
+    assert "Cleaned source markup" not in caplog.text

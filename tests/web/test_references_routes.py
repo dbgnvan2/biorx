@@ -378,3 +378,14 @@ def test_reference_routes_require_auth(client):
     assert client.get("/api/references/1/items").status_code == 401
     assert client.get("/api/references/1/export.csv").status_code == 401
     assert client.get("/api/references/1/pdf/1").status_code == 401
+
+
+def test_br6_reference_items_carry_journal_or_server(ctx, signed_in):
+    from src import user_store
+    user_id = signed_in.get("/api/me").json()["user_id"]
+    pid = ctx.db.insert_paper({"doi": "10.1101/x1", "title": "T", "canonical_id": "doi:10.1101/x1",
+                               "source": "biorxiv_medrxiv", "journal_or_server": "medrxiv"})
+    list_id = user_store.create_reference_list(ctx.db, user_id, "L")
+    user_store.add_reference_item(ctx.db, list_id, pid)
+    paper = user_store.list_reference_items(ctx.db, list_id)[0]["paper"]
+    assert paper["journal_or_server"] == "medrxiv"

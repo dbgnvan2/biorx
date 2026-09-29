@@ -158,3 +158,43 @@ def test_m11_normalised_filter_is_not_normalised_again():
     assert f["license"] == "any"
     with patch.object(filtering, "normalise_filter", side_effect=AssertionError("again")):
         assert filtering.filter_papers([{"title": "x", "abstract": ""}], f, normalised=True)
+
+
+# ── Species re-checked here (browser run 2026-09-29) ──────────────────────────
+
+def _t(title):
+    return {"title": title, "abstract": "", "authors": ""}
+
+
+def test_br7_no_animal_drops_animal_titles():
+    """The run found "… Carrageenan-Induced Inflammation in Rats" passing
+    "exclude animal studies": the flag was only a Europe PMC query clause."""
+    papers = [_t("Photobiomodulation Modulates Inflammation-Related Genes Following "
+                 "Carrageenan-Induced Inflammation in Rats"),
+              _t("Acute Phase Proteins in Bovine Mastitis"),
+              _t("Nrf2 in a murine model of brain injury"),
+              _t("Inflammation and delirium in critically ill patients")]
+    for species in ("no-animal", "human", "Exclude animal studies"):
+        kept = filter_papers(papers, {"species": species})
+        assert [p["title"] for p in kept] == ["Inflammation and delirium in critically ill patients"]
+
+
+def test_br7_human_studies_that_look_close_are_kept():
+    """Adversarial: words that contain an animal term, and pets."""
+    titles = ["Ratio of inflammatory markers in migrants", "Dog ownership and loneliness",
+              "Separating stress from strain", "Pirates, parrots and prosociality",
+              "Mousetrap-shaped regions in human cortex"]
+    kept = filter_papers([_t(t) for t in titles], {"species": "no-animal"})
+    assert [p["title"] for p in kept] == titles
+
+
+def test_br7_animal_and_any_are_not_filtered_here():
+    papers = [_t("Stress in mice"), _t("Stress in adults")]
+    assert filter_papers(papers, {"species": "animal"}) == papers
+    assert filter_papers(papers, {"species": "any"}) == papers
+
+
+def test_br7_terms_come_from_the_vocabulary_file():
+    from src import filter_vocabulary as vocab
+    terms = vocab.load()["species"]["animal_title_terms"]
+    assert "rats" in terms and "dog" not in terms and "dogs" not in terms
