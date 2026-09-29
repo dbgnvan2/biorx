@@ -185,14 +185,16 @@ def animal_title_pattern() -> Optional["re.Pattern[str]"]:
     Tests:   tests/test_filtering.py::test_br7_no_animal_drops_animal_titles
 
     Whole words or phrases from species.animal_title_terms, any case. None
-    when the list is empty (then nothing is excluded here).
+    when the list is empty (then nothing is excluded here). A hyphen on the
+    left is part of the word: "anti-mouse antibody" is a reagent, not a
+    mouse study (re-gate 2 F4).
     """
     terms = [str(t).strip() for t in (load()["species"].get("animal_title_terms") or [])
              if str(t).strip()]
     if not terms:
         return None
     alternatives = "|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True))
-    return re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", re.IGNORECASE)
+    return re.compile(rf"(?<![\w-])(?:{alternatives})(?!\w)", re.IGNORECASE)
 
 
 @lru_cache(maxsize=1)

@@ -233,3 +233,28 @@ def test_br7_exception_phrases_and_known_gaps():
             "Murine leukemia virus pathogenesis"]
     got = filter_papers([_t(t) for t in kept], {"species": "no-animal"})
     assert [p["title"] for p in got] == kept
+
+
+def test_br7_hyphen_compounds_with_other_senses_are_kept():
+    """Re-gate 2 2026-09-29 F4: a hyphen was a word boundary, so reagents,
+    human diseases and a plant were dropped as animal studies."""
+    titles = ["Validation of an anti-mouse antibody panel for human flow cytometry",
+              "Anti-rat IgG cross-reactivity in patient sera",
+              "An anti-rodent antibody control in human tissue staining",
+              "Rat-bite fever in a child", "Rat bite fever: a case series",
+              "Rat lungworm angiostrongyliasis in Hawaii",
+              "Mouse-ear cress root development",
+              "Burnout and the rat race among junior doctors",
+              "Rodenticide poisoning in toddlers"]
+    kept = filter_papers([_t(t) for t in titles], {"species": "no-animal"})
+    assert [p["title"] for p in kept] == titles
+
+
+def test_br7_hyphen_on_the_right_and_plural_models_still_drop():
+    """The F4 boundary change must not lose animal titles; F5 plural models."""
+    titles = ["Mouse-derived intestinal organoids", "Rat-specific gene expression atlas",
+              "Bovine models of tuberculosis", "Ovine models of fetal growth",
+              "Canine models of osteosarcoma", "Equine models of asthma",
+              # F6: only the CHO cell line is an exception, not any hamster ovary.
+              "Syrian hamster ovary cells after infection"]
+    assert filter_papers([_t(t) for t in titles], {"species": "no-animal"}) == []

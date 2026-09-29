@@ -100,7 +100,9 @@ Checked in the browser afterwards; screenshots 32–37.
   words (mouse, rat, rodent, hamster, macaque, zebrafish, …) plus "<animal>
   model" phrases for names with other senses (bovine, porcine, rabbit,
   canine, equine, murine); exception phrases ("mouse tracking", "Chinese
-  hamster ovary") are taken out first; a word in capitals is an acronym.
+  hamster ovary", "rat-bite fever", "rat race", "mouse-ear cress") are taken
+  out first; a word joined on its left by a hyphen ("anti-mouse antibody") is
+  not matched; a word in capitals is an acronym (second re-gate F4–F6).
   Known gap, stated in the file and a test: veterinary titles such as
   "Bovine mastitis" are not caught. Tests: `tests/test_filtering.py::test_br7_*`.
 - **Stored summaries with tags:** a startup migration cleans titles,

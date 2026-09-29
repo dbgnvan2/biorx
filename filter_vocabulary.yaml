@@ -156,17 +156,30 @@ species:
     - porcine model
     - porcine models
     - bovine model
+    - bovine models
     - ovine model
+    - ovine models
     - canine model
+    - canine models
     - equine model
+    - equine models
+  # A word joined on its left by a hyphen is not matched: "anti-mouse
+  # antibody", "anti-rat IgG" are reagents (re-gate 2 F4). A word joined on
+  # its right still is ("Mouse-derived organoids"), so compounds with a
+  # human-research sense are listed below.
   # Phrases in which a word above does not mean the animal studied. They are
   # taken out of the title before the check.
   animal_title_exceptions:
     - mouse tracking
     - mouse-tracking
     - computer mouse
+    - mouse-ear cress
+    - mouse ear cress
     - chinese hamster ovary
-    - hamster ovary cells
+    - rat race
+    - rat-bite fever
+    - rat bite fever
+    - rat lungworm
 
 category:
   # bioRxiv subject categories, sent to the bioRxiv/medRxiv API as they are.
