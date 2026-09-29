@@ -3065,3 +3065,17 @@ def test_br6_both_tables_label_the_source_the_same_way():
                      '[paperSourceText({journal_or_server: "medrxiv", source: "biorxiv_medrxiv", server: "biorxiv"}),'
                      ' paperSourceText({source: "europepmc", server: "biorxiv"})]')
     assert got == ["medrxiv", "europepmc"]
+
+
+def test_br11_every_table_scrolls_inside_its_card():
+    """Production run 2026-09-29: 149 results made a 385px-wide page 586px
+    wide, so the whole page scrolled sideways. Each table sits in a
+    .table-scroll box that scrolls on its own."""
+    import re
+    html = INDEX.read_text()
+    tables = re.findall(r"(.{0,40})<table", html)
+    assert len(tables) >= 3
+    assert all(before.endswith('<div class="table-scroll">') for before in tables), tables
+    css = CSS.read_text()
+    rule = re.search(r"\.table-scroll\s*\{([^}]*)\}", css)
+    assert rule and "overflow-x: auto" in rule.group(1)

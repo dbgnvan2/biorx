@@ -511,14 +511,16 @@ def test_b5_real_licences_read():
     assert {"cc-by", "cc0", "cc-by-nc-nd", "cc-by-nd"} <= ids
 
 
-def _api_with_pages(pools, page=30, title=None):
+def _api_with_pages(pools, page=30, title=None, doi=None):
     """A stand-in for the bioRxiv details API as it answers today: `page`
     papers per call from a pool per server, with the pool size as `total`.
-    title(server, i) gives each paper's title (default "<server> <i>")."""
+    title(server, i) gives each paper's title (default "<server> <i>");
+    doi(server, i) its DOI (default unique per paper)."""
     title = title or (lambda server, i: f"{server} {i}")
+    doi = doi or (lambda server, i: f"10.1101/{server}{i}")
     colls = {}
     for server, n in pools.items():
-        papers = [{"doi": f"10.1101/{server}{i}", "title": title(server, i), "version": "1"}
+        papers = [{"doi": doi(server, i), "title": title(server, i), "version": "1"}
                   for i in range(n)]
         for c in range(0, n, page):
             colls[(server, c)] = papers[c:c + page]

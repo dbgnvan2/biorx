@@ -52,6 +52,9 @@ label.source-pick > input { width: auto; margin: 0; }
 .row > * { flex: 1; min-width: 150px; }
 .row > .shrink { flex: 0 0 auto; min-width: 0; }
 table { width: 100%; border-collapse: collapse; }
+/* A wide table scrolls inside its card, not the whole page: the results
+   table made a 385px-wide page 586px wide (production run 2026-09-29). */
+.table-scroll { overflow-x: auto; max-width: 100%; }
 th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { font-size: 12px; color: var(--muted); font-weight: 600; }
 tbody tr:hover { background: var(--accent-soft); }

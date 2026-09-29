@@ -380,6 +380,7 @@ class SourceOrchestrator:
         matches = self._local_matcher(filter_dict) if local_filter else None
         page_limit = self._page_limit(source_name)
         not_matching = 0
+        duplicates = 0       # matched, but a paper already read (another version)
         limited_by_pages = False
         seen_raw  = 0        # records the source sent, duplicates included
         src_total = 0
@@ -461,7 +462,8 @@ class SourceOrchestrator:
                         # EuropePMC/PubMed overlap). It was merged into the
                         # existing record — don't re-stream or re-count it, so
                         # the GUI's result count matches the unique set that is
-                        # actually saved.
+                        # actually saved. Counted, so "N read" adds up.
+                        duplicates += 1
                         continue
                     batch.append(canonical)
                     fetched += 1
@@ -507,11 +509,22 @@ class SourceOrchestrator:
         logger.info("Source %s: %d records fetched", source_name, fetched)
         if local_filter:
             of_total = f" of {src_total:,}" if src_total else ""
-            logger.info("Source %s: read %d%s papers, %d match the filter (%d did not)",
-                        source_name, seen_raw, of_total, fetched, not_matching)
+            # Every paper read is one of these; say so, and warn if they do
+            # not add up (production run 2026-09-29: 149 + 4,924 of 5,095
+            # left 22 unexplained).
+            logger.info("Source %s: read %d%s papers — %d match the filter, %d do not, "
+                        "%d repeat a paper already read, %d could not be read",
+                        source_name, seen_raw, of_total, fetched, not_matching,
+                        duplicates, unreadable)
+            accounted = fetched + not_matching + duplicates + unreadable
+            if accounted != seen_raw:
+                logger.warning("Source %s: %d papers read but %d accounted for",
+                               source_name, seen_raw, accounted)
             if on_status:
+                repeats = (f" ({duplicates:,} more were repeats of a paper already read)"
+                           if duplicates else "")
                 on_status(f"{source_label(source_name)}: {seen_raw:,}{of_total} papers read, "
-                          f"{fetched:,} match the filter")
+                          f"{fetched:,} match the filter{repeats}")
         if unreadable:
             label = source_label(source_name)
             got = seen_raw or unreadable

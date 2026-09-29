@@ -913,3 +913,30 @@ def test_br3_progress_counts_matches_and_status_shows_papers_read():
                 on_status=statuses.append)
     assert max(f for f, _t in progress) == 6            # matches, never papers read
     assert "bioRxiv / medRxiv: 300 of 300 papers read, 6 match so far…" in statuses, statuses
+
+
+def test_br10_every_paper_read_is_accounted_for(caplog):
+    """Production run 2026-09-29: "read 5,095 … 149 match (4,924 did not)"
+    left 22 papers unexplained — matches that repeat a paper already read
+    (the details API lists each version) were merged and not counted."""
+    import logging
+    import tests.test_adapters as ta
+    # 300 papers; every 10th is "needle", and every 30th repeats the DOI of
+    # the needle before it (a new version in the same window).
+    adapter, _ = ta._api_with_pages(
+        {"biorxiv": 300},
+        title=lambda server, i: f"needle study {i}" if i % 10 == 0 else f"other {i}",
+        doi=lambda server, i: f"10.1101/b{i - 10 if i % 30 == 0 and i else i}")
+    adapter.for_search = lambda: adapter
+    orch = _orch_with({"biorxiv_medrxiv": adapter})
+    statuses = []
+    with caplog.at_level(logging.INFO, logger="src.sources.orchestrator"):
+        records = orch.search({"days_back": 14, "text_groups": [{"both": "needle"}]},
+                              {"all": True, "selected": []}, max_results=200,
+                              on_status=statuses.append)
+    assert len(records) == 21                     # 30 needles, 9 of them repeats
+    assert ("bioRxiv / medRxiv: 300 of 300 papers read, 21 match the filter "
+            "(9 more were repeats of a paper already read)") in statuses, statuses
+    assert "21 match the filter, 270 do not, 9 repeat a paper already read, " \
+           "0 could not be read" in caplog.text
+    assert "accounted for" not in caplog.text

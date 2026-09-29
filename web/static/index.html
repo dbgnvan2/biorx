@@ -175,14 +175,14 @@
         <div id="sources-failed" class="banner warn hidden small"></div>
         <div id="enrich-problems" class="banner warn hidden small"></div>
         <p id="empty-note" class="muted small hidden"></p>
-        <table>
+        <div class="table-scroll"><table>
           <thead><tr>
             <th style="width:2%"></th>
             <th style="width:44%">Title</th><th>Authors</th><th>Date</th>
             <th>Source</th><th style="width:150px"></th>
           </tr></thead>
           <tbody id="results-body"></tbody>
-        </table>
+        </table></div>
         <div class="pager">
           <button id="prev-page">Previous</button>
           <span id="page-label" class="muted small"></span>
@@ -282,12 +282,12 @@
             <hr>
             <h4 style="margin:8px 0">Test results</h4>
             <div id="filter-test-status" class="muted small"></div>
-            <table style="margin-top:8px">
+            <div class="table-scroll"><table style="margin-top:8px">
               <thead><tr>
                 <th style="width:50%">Title</th><th>Authors</th><th>Date</th><th>Source</th>
               </tr></thead>
               <tbody id="filter-test-body"></tbody>
-            </table>
+            </table></div>
           </div>
         </div>
 
@@ -312,14 +312,14 @@
         <div class="card" style="flex:1">
           <h3 id="ref-list-title" class="muted small" style="margin:0 0 8px">Select a list</h3>
 
-          <table>
+          <div class="table-scroll"><table>
             <thead><tr>
               <th style="width:2%"><input id="select-all-refs" type="checkbox"
                      title="Select all papers in this list"></th>
               <th style="width:50%">Title</th><th>Authors</th><th>Date</th><th>Source</th><th></th>
             </tr></thead>
             <tbody id="ref-papers-body"></tbody>
-          </table>
+          </table></div>
 
           <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">
             <span id="ref-checked-count" class="muted small">0 selected</span>
