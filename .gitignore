@@ -48,3 +48,7 @@ biorxiv.db
 
 # Personal access codes (readable on purpose, but not for GitHub)
 access_codes.yaml
+
+# The owner's own saved filters: local state, not in git or the image
+# (review M32). New web accounts are seeded from filters.seed.json.
+filters.json

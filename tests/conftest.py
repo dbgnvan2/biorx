@@ -87,23 +87,20 @@ def _fingerprint_file(path: Path):
 
 @pytest.fixture(scope="session", autouse=True)
 def _guard_real_artifacts(tmp_path_factory):
-    """Redirect BIORX_DB_PATH and BIORX_CACHE_PATH to temp paths; fail if any
-    real artifact changes. SearchCache is not yet wired (zero callers), but it
-    now honours BIORX_CACHE_PATH, so the redirect is in place for when it is."""
+    """Redirect BIORX_DB_PATH to a temp path; fail if any real artifact
+    changes. (The unused SearchCache and its BIORX_CACHE_PATH were deleted,
+    review M34.)"""
     tmp_db    = tmp_path_factory.mktemp("db")    / "test.db"
-    tmp_cache = tmp_path_factory.mktemp("cache") / "source_cache.db"
 
     prev_db    = os.environ.get("BIORX_DB_PATH")
-    prev_cache = os.environ.get("BIORX_CACHE_PATH")
     os.environ["BIORX_DB_PATH"]    = str(tmp_db)
-    os.environ["BIORX_CACHE_PATH"] = str(tmp_cache)
 
     before_preprints = _fingerprint_dir(_REAL_PREPRINTS)
     before_filters   = _fingerprint_file(_REAL_FILTERS)
 
     yield
 
-    for key, prev in (("BIORX_DB_PATH", prev_db), ("BIORX_CACHE_PATH", prev_cache)):
+    for key, prev in (("BIORX_DB_PATH", prev_db),):
         if prev is None:
             os.environ.pop(key, None)
         else:

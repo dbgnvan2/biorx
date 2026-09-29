@@ -33,7 +33,7 @@ Desktop GUI application (PyQt6) + CLI agents for searching bioRxiv preprints, do
 - **Single papers at a time:** Summarize one paper per user action (not batches)
 - **Background threading:** Keep UI responsive during long operations
 - **Idempotent agents:** Safe to run multiple times; check SQLite before inserting
-- **Saved filters:** `filters.json` (per user in the web app); facet options in `filter_vocabulary.yaml`
+- **Saved filters:** per user in the web app, seeded from `filters.seed.json`; `filters.json` is local state for `monitor.py` (not in git); facet options in `filter_vocabulary.yaml`
 - **LLM:** DeepSeek by default (`DEEPSEEK_API_KEY` in `.env`); Ollama (localhost:11434, `qwen3.5:4b`) for offline use — set in `llm_config.yaml`
 - **External APIs:** publication sources, Crossref/Unpaywall enrichment, and the configured LLM provider
 
@@ -42,7 +42,7 @@ Desktop GUI application (PyQt6) + CLI agents for searching bioRxiv preprints, do
 ## Code Style & Practices
 
 ### Python
-- Python 3.9+ syntax
+- Python 3.12 (the only version CI and the Docker image run; review D4)
 - Type hints where helpful (function signatures)
 - Docstrings for modules and classes
 - Error handling at system boundaries (API calls, file I/O)
@@ -77,7 +77,8 @@ biorx/
 │   ├── pdf_handler.py        (PDF text extraction)
 │   ├── llm.py                (Ollama/Qwen interface)
 │   └── __init__.py           (empty, makes src a package)
-├── filters.json              (Saved filters; seed for new web accounts)
+├── filters.seed.json         (Example filters for new web accounts)
+├── filters.json              (Local saved filters for monitor.py; gitignored)
 ├── requirements.txt
 ├── CLAUDE.md                 (this file)
 ├── README.md

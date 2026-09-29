@@ -506,7 +506,8 @@ def test_n2_correction_notice_gets_a_specific_message(ctx, signed_in, monkeypatc
     assert body["status"] == "error"
     assert "correction" in body["error"].lower()
     client.summarize_paper.assert_not_called()
-    assert signed_in.get("/api/me").json()["owner_summaries_remaining"] >= 0
+    # (A ">= 0" check on the allowance stood here and could not fail; the
+    # allowance is tested by test_m39_owner_remaining_decrements.)
 
 
 def test_n2_an_unrecoverable_article_still_says_what_was_tried(ctx, signed_in, monkeypatch, no_pdf):
@@ -743,3 +744,20 @@ def test_a8_db_error_reports_not_saved(ctx, signed_in, monkeypatch, with_full_te
     assert body["result"]["saved"] is False
     assert "database is locked" in body["result"]["not_saved"]
     assert "call the model again" in body["result"]["not_saved"]
+
+
+def test_m39_owner_remaining_decrements(ctx, signed_in, monkeypatch, with_full_text):
+    """A summary on the owner's key takes exactly one slot of today's allowance
+    (review M39: the check this replaces was ">= 0")."""
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-owner-KEY")
+    monkeypatch.setenv("SUMMARY_DAILY_CAP_PER_USER", "3")
+    from src.llm_config import load_llm_config
+    ctx.llm_config = load_llm_config()
+
+    before = signed_in.get("/api/me").json()["owner_summaries_remaining"]
+    assert before == 3
+    with patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
+        job_id = signed_in.post("/api/summaries", json={"paper": PAPER}).json()["job_id"]
+        assert _await(signed_in, job_id)["status"] == "done"
+    assert signed_in.get("/api/me").json()["owner_summaries_remaining"] == before - 1

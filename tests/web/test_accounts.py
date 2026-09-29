@@ -310,3 +310,38 @@ def test_ac5_recovery_into_a_broken_merge_chain_changes_nothing(ctx):
     after = ctx.db.conn.execute("SELECT pin_hash, recovery_hash FROM users WHERE user_id = ?",
                                 (a,)).fetchone()
     assert tuple(before) == tuple(after)
+
+
+# ── M32: new accounts are seeded from filters.seed.json ──────────────────────
+
+def test_m32_seed_from_seed_file(ctx, app, monkeypatch, tmp_path):
+    import json
+    from web import routes_session
+    seed = tmp_path / "seed.json"
+    seed.write_text(json.dumps({"filters": [{"name": "Only in the seed", "days_back": 3}]}))
+    monkeypatch.setattr(routes_session, "SEED_FILTERS", seed)
+    c = TestClient(app)
+    c.post("/api/session", json=account_body(ACCESS_CODE))
+    assert [f["name"] for f in c.get("/api/filters").json()["filters"]] == ["Only in the seed"]
+
+
+def test_m32_the_real_seed_file_is_neutral():
+    import json
+    from web.routes_session import SEED_FILTERS
+    names = [f["name"] for f in json.loads(SEED_FILTERS.read_text())["filters"]]
+    assert names and "New Filter" not in names
+    assert len({n.casefold() for n in names}) == len(names)
+
+
+def test_m32_seed_never_overwrites(ctx, caplog):
+    """Batch-3 gate note 2: two seed entries with one name used to collapse."""
+    import logging
+    user = user_store.create_user(ctx.db, "Ann")
+    with caplog.at_level(logging.WARNING, logger="src.user_store"):
+        n = user_store.seed_filters_from_file(ctx.db, user, [
+            {"name": "Stress", "days_back": 7}, {"name": "stress", "days_back": 99},
+            {"name": "", "days_back": 1}])
+    assert n == 1
+    kept = user_store.list_filters(ctx.db, user)
+    assert [f["name"] for f in kept] == ["Stress"] and kept[0]["days_back"] == 7
+    assert "'stress' skipped" in caplog.text and "no name" in caplog.text

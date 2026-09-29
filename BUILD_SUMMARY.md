@@ -1,5 +1,10 @@
 # Build Summary - BioRxiv Research Tool
 
+> **Historical document (2026-04).** It describes the first desktop build: the
+> PyQt6 app (now retiring), `agents/search_agent.py` and `key_terms.json`, which
+> were removed in review S4 (2026-09-28). Saved searches are `filters.json`, run
+> by `agents/monitor.py`; the web app is the main surface. See README.md.
+
 ## ✅ Completed
 
 ### Core Utilities (src/)

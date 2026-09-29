@@ -15,11 +15,13 @@ deduplicate and enrich the results, download papers, and summarize them with an 
    - `src/db.py` - SQLite utilities
    - `src/pdf_handler.py` - PDF text extraction
    - `src/llm.py` - Ollama/Qwen interface
-   - `filters.json` - Saved filters (seed for new web accounts)
+   - `filters.seed.json` - Example filters new web accounts start with
+   - `filters.json` - Your own saved filters for `agents/monitor.py` (local, not in git;
+     start from `cp filters.seed.json filters.json`)
    - `requirements.txt` - Dependencies
 
 ## Tech Stack
-- **Language:** Python 3.9+
+- **Language:** Python 3.12
 - **GUI:** PyQt6
 - **Database:** SQLite3
 - **LLM:** DeepSeek `deepseek-flash` by default; Anthropic or local Ollama (`qwen3.5:4b`) via `llm_config.yaml`

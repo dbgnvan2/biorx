@@ -9,6 +9,7 @@ Tests:   tests/web/test_auth.py, tests/web/test_llm_key_routes.py
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -136,14 +137,20 @@ def _account_error(e: accounts.AccountError) -> HTTPException:
     return HTTPException(status_code=code, detail=str(e))
 
 
+# New accounts start from these examples (review M32). filters.json is the
+# owner's own local state and is not in the image; the seed is resolved from
+# the repo root so the working directory does not matter.
+SEED_FILTERS = Path(__file__).resolve().parent.parent / "filters.seed.json"
+
+
 def _seed_filters(ctx: AppContext, user_id: str) -> None:
     try:
         seeded = user_store.seed_filters_from_file(
-            ctx.db, user_id, load_filters_file("filters.json")
+            ctx.db, user_id, load_filters_file(SEED_FILTERS)
         )
         logger.info("Seeded %d filters for new user %s", seeded, user_id)
     except Exception:
-        # A missing or unreadable filters.json must not stop someone signing in.
+        # A missing or unreadable seed file must not stop someone signing in.
         logger.exception("Could not seed filters for %s", user_id)
 
 

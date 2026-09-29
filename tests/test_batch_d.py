@@ -291,24 +291,28 @@ def test_d_monitor_exits_0_when_all_sources_succeed(tmp_path):
 
 def test_d_duplicate_filter_names_both_run(tmp_path):
     """
-    filters.json has two 'New Filter' entries (verified in the real file).
-    load_filters must return both and --all must run both.
+    Two entries with one name: load_filters returns both, so --all runs both.
+    Built in tmp_path: filters.json is the owner's local state and is not in
+    git (review M32), so a test cannot rely on what it contains.
     """
-    real_filters = Path(__file__).parent.parent / "filters.json"
-    filters = monitor.load_filters(str(real_filters))
+    import json
+    path = tmp_path / "filters.json"
+    path.write_text(json.dumps({"filters": [
+        {"name": "New Filter", "days_back": 7}, {"name": "Stress", "days_back": 7},
+        {"name": "New Filter", "days_back": 14}]}))
+    filters = monitor.load_filters(str(path))
 
     new_filter_entries = [f for f in filters if f.get("name") == "New Filter"]
-    assert len(new_filter_entries) == 2, (
-        f"expected 2 'New Filter' entries in filters.json, found {len(new_filter_entries)}"
-    )
+    assert [f["days_back"] for f in new_filter_entries] == [7, 14]
 
 
-def test_d_load_filters_returns_list():
+def test_d_load_filters_returns_list(tmp_path):
     """load_filters returns a list (order-preserving, supports duplicate names)."""
-    filters = monitor.load_filters(
-        str(Path(__file__).parent.parent / "filters.json")
-    )
-    assert isinstance(filters, list)
+    import json
+    path = tmp_path / "filters.json"
+    path.write_text(json.dumps({"filters": [{"name": "B"}, {"name": "A"}]}))
+    filters = monitor.load_filters(str(path))
+    assert [f["name"] for f in filters] == ["B", "A"]
 
 
 def test_d_duplicate_filter_names_warn(tmp_path, caplog):

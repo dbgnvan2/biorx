@@ -1,5 +1,6 @@
 """
-SQLite database utilities for storing papers, summaries, bookmarks, and search history.
+SQLite database utilities for storing papers, summaries and reference lists. (The
+bookmarks and search_history tables are kept for old data; nothing reads them.)
 
 Threading: each thread gets its own connection (see the ``conn`` property). The
 desktop app previously shared one connection across threads on the argument that
@@ -196,6 +197,10 @@ class Database:
             conn.execute("PRAGMA journal_mode = WAL")
         except sqlite3.Error as e:          # e.g. a database on a network mount
             logger.warning("Could not enable WAL on %s: %s", self.db_path, e)
+        # SQLite leaves foreign keys off unless each connection turns them on
+        # (review M30). Without this, ON DELETE CASCADE did nothing and a
+        # deleted reference list left its reviews behind.
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
     def release(self) -> None:
@@ -497,10 +502,12 @@ class Database:
                                 # (review M5). Stored hashed; NULL = none.
                                 ("setup_code_hash", "TEXT")):
             self._add_column_if_missing(cursor, "users", col, definition)
+        self._rename_case_duplicate_logins(cursor)
         cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login_name "
             "ON users(lower(login_name)) WHERE login_name IS NOT NULL"
         )
+        self._report_case_duplicate_filters(cursor)
         # Personal access codes (docs/implementation_plan_2026-09-18_invite_codes.md):
         # the codes themselves live in access_codes.yaml; this records which
         # account each code belongs to. PRIMARY KEY makes first use atomic (PC9).
@@ -513,6 +520,82 @@ class Database:
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_access_code_bindings_user "
                        "ON access_code_bindings(user_id)")
+        self._delete_orphans(cursor)
+
+    # Rows whose parent list is gone. They were left behind while foreign keys
+    # were off (review M30); with them on, the cascade removes them instead.
+    _ORPHANS = (
+        ("user_reviews",
+         "list_id NOT IN (SELECT id FROM user_reference_lists)"),
+        ("user_reference_list_items",
+         "list_id NOT IN (SELECT id FROM user_reference_lists)"),
+    )
+
+    def _delete_orphans(self, cursor) -> Dict[str, int]:
+        """Delete child rows whose reference list no longer exists.
+
+        Purpose: Clear what deletes left behind before the cascade existed.
+        Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#M30
+        Tests:   tests/test_db_migrations.py::test_m30_orphans_cleaned_and_cascade_on
+
+        Idempotent: a second run finds nothing. Counts are logged, never silent.
+        """
+        removed = {}
+        for table, orphaned in self._ORPHANS:
+            cursor.execute(f"DELETE FROM {table} WHERE {orphaned}")
+            removed[table] = cursor.rowcount
+            if cursor.rowcount:
+                logger.warning("Migration M30: removed %d %s rows whose reference "
+                               "list no longer exists", cursor.rowcount, table)
+        return removed
+
+    def _rename_case_duplicate_logins(self, cursor) -> None:
+        """Give each login name that differs from an earlier one only in case a
+        numbered suffix, so the case-insensitive unique index can be built.
+
+        Purpose: An old database with "Dave" and "dave" opens instead of crashing.
+        Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#T2
+        Tests:   tests/test_db_migrations.py::test_t2_case_duplicate_names_handled
+
+        The oldest account keeps its name. Each renamed account is logged at
+        ERROR with its old and new name, so the owner can tell that person;
+        their PIN and data are unchanged.
+        """
+        rows = cursor.execute(
+            "SELECT user_id, login_name FROM users WHERE login_name IS NOT NULL "
+            "ORDER BY created_at, rowid").fetchall()
+        taken = {str(r[1]).lower() for r in rows}
+        seen = set()
+        for user_id, name in rows:
+            key = name.lower()
+            if key not in seen:
+                seen.add(key)
+                continue
+            n = 2
+            while f"{key} ({n})" in taken:
+                n += 1
+            new_name = f"{name} ({n})"
+            taken.add(new_name.lower())
+            cursor.execute("UPDATE users SET login_name = ? WHERE user_id = ?",
+                           (new_name, user_id))
+            logger.error("Login name %r differs from an older account's only in "
+                         "case; renamed it to %r (user %s)", name, new_name, user_id)
+
+    def _report_case_duplicate_filters(self, cursor) -> None:
+        """Log saved filters whose names differ only in case.
+
+        Spec:  docs/implementation_plan_2026-09-28_review_fixes.md#T2
+        Tests: tests/test_db_migrations.py::test_t2_case_duplicate_names_handled
+
+        Names are compared case-insensitively since review A2, so one of each
+        pair can no longer be renamed onto the other. Both rows are kept; the
+        user decides which to delete.
+        """
+        for user_id, name, n in cursor.execute(
+                "SELECT user_id, lower(name), COUNT(*) FROM user_filters "
+                "GROUP BY user_id, lower(name) HAVING COUNT(*) > 1"):
+            logger.warning("User %s has %d saved filters named %r apart from case",
+                           user_id, n, name)
 
     # SQLite cannot change a column constraint in place, so relaxing NOT NULL
     # means rebuilding the table. The rewrite targets exactly this declaration.
@@ -567,6 +650,10 @@ class Database:
 
         previous_isolation = self.conn.isolation_level
         self.conn.isolation_level = None               # explicit transaction control
+        # DROP TABLE papers runs an implicit DELETE, which foreign-key checks
+        # would refuse while summaries point at those rows. The ids are copied
+        # unchanged, so nothing is left dangling; checks come back on after.
+        self.conn.execute("PRAGMA foreign_keys = OFF")
         try:
             self.conn.execute("BEGIN IMMEDIATE")
             self.conn.execute(rebuilt_sql)
@@ -586,6 +673,7 @@ class Database:
             logger.error("Migration N1 failed and was rolled back; papers is unchanged")
             raise
         finally:
+            self.conn.execute("PRAGMA foreign_keys = ON")
             self.conn.isolation_level = previous_isolation
         logger.info("Migration N1: papers rebuilt, %d rows preserved", before)
 
@@ -986,50 +1074,6 @@ class Database:
                 result["key_findings"] = json.loads(result["key_findings"])
             return result
         return None
-
-    def bookmark_paper(self, paper_id: int) -> bool:
-        """
-        Bookmark a paper.
-
-        Args:
-            paper_id: Paper database ID
-
-        Returns:
-            True if successful
-        """
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                "INSERT OR IGNORE INTO bookmarks (paper_id) VALUES (?)", (paper_id,)
-            )
-            self.conn.commit()
-            return True
-        except sqlite3.Error as e:
-            self._rollback_quietly()
-            logger.error(f"Database error bookmarking paper: {e}")
-            return False
-
-    def get_bookmarked_papers(self) -> List[Dict[str, Any]]:
-        """
-        Get all bookmarked papers.
-
-        Returns:
-            List of paper dictionaries
-        """
-        cursor = self.conn.cursor()
-        cursor.execute(
-            """
-            SELECT p.* FROM papers p
-            INNER JOIN bookmarks b ON p.id = b.paper_id
-            ORDER BY b.created_at DESC
-        """
-        )
-
-        papers = []
-        for row in cursor.fetchall():
-            papers.append(dict(row))
-
-        return papers
 
     # ── Reference lists ───────────────────────────────────────────────────────
 

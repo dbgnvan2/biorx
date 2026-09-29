@@ -2660,6 +2660,12 @@ async function summarizeChecked() {
   // key the papers still in flight would run and bill twice. startSummary has
   // its own dedup set for the same reason (gate 2026-09-21 finding 4).
   if (state.batchRunning) return;
+  // Claimed before the first await (review M35): set after the estimate and
+  // the dialog, two quick clicks both passed the check and one paper was
+  // billed twice. Released in the finally on every path, including a
+  // declined dialog.
+  setBatchRunning(true);
+  try {
   const ticked = Array.from(
     $("ref-papers-body").querySelectorAll("input[data-item-id]:checked"))
     .map(cb => String(cb.dataset.itemId));
@@ -2681,10 +2687,8 @@ async function summarizeChecked() {
 
   const status = $("ref-dl-status");
   status.classList.remove("hidden");
-  setBatchRunning(true);
   let done = 0, abstractOnly = 0, skipped = 0, stoppedByCap = false;
   const failures = [];
-  try {
 
   for (const [index, paper] of papers.entries()) {
     status.textContent = `Summarizing ${index + 1} of ${papers.length}…`;
@@ -2710,16 +2714,15 @@ async function summarizeChecked() {
     else failures.push(`${shortTitle(paper)}: ${outcome.error}`);
   }
 
-  } finally {
-    // Released even if a paper threw, or the button stays dead for the session.
-    setBatchRunning(false);
-  }
-
   refreshTokenMeter();
   await selectRefList(state.activeListId);
   status.textContent = batchSummaryReport(
     { total: papers.length, done, abstractOnly, skipped, stoppedByCap, failures });
   if (failures.length) notice(status.textContent, "warn");
+  } finally {
+    // Released even if a paper threw, or the button stays dead for the session.
+    setBatchRunning(false);
+  }
 }
 
 /* One batch at a time, and the buttons show it. */
@@ -2827,6 +2830,9 @@ async function pollJobUntilSettled(path, onPhase) {
 async function reviewChecked() {
   if (!state.activeListId) return;
   if (state.batchRunning) return;
+  // Claimed before the first await, as in summarizeChecked (review M35).
+  setBatchRunning(true);
+  try {
   const ticked = Array.from(
     $("ref-papers-body").querySelectorAll("input[data-item-id]:checked"))
     .map(cb => String(cb.dataset.itemId));
@@ -2866,26 +2872,24 @@ async function reviewChecked() {
     body.model = local.model || "";
   }
 
-  // Released in the finally on every path. The guard used to be released by
-  // hand at each exit, and a forever-looping poll never reached any of them,
-  // leaving both batch buttons disabled until a reload (gate finding 2).
-  setBatchRunning(true);
-  try {
-    let job;
-    try { job = await api("POST", "/api/reviews", body); }
-    catch (e) { status.textContent = `Review failed: ${e.message}`; return; }
+  let job;
+  try { job = await api("POST", "/api/reviews", body); }
+  catch (e) { status.textContent = `Review failed: ${e.message}`; return; }
 
-    const settled = await pollJobUntilSettled(
-      `/api/reviews/${job.job_id}`, (phase) => { status.textContent = phase; });
-    if (settled.error) {
-      status.textContent = `Review failed: ${settled.error}`;
-      return;
-    }
-    // M14: shown only if that list is still open; it is stored either way and
-    // loads with the list next time.
-    if (state.activeListId === listId) renderReview(settled.status.result);
-    status.textContent = `Reviewed ${preview.papers} paper(s).`;
+  const settled = await pollJobUntilSettled(
+    `/api/reviews/${job.job_id}`, (phase) => { status.textContent = phase; });
+  if (settled.error) {
+    status.textContent = `Review failed: ${settled.error}`;
+    return;
+  }
+  // M14: shown only if that list is still open; it is stored either way and
+  // loads with the list next time.
+  if (state.activeListId === listId) renderReview(settled.status.result);
+  status.textContent = `Reviewed ${preview.papers} paper(s).`;
   } finally {
+    // Released on every path. It used to be released by hand at each exit,
+    // and a forever-looping poll never reached any of them, leaving both
+    // batch buttons disabled until a reload (gate finding 2).
     setBatchRunning(false);
     refreshTokenMeter();
   }

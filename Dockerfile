@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir --require-hashes -r requirements-web.lock
 COPY src/ ./src/
 COPY web/ ./web/
 COPY agents/ ./agents/
-COPY llm_config.yaml sources_config.yaml filter_vocabulary.yaml filters.json ./
+COPY llm_config.yaml sources_config.yaml filter_vocabulary.yaml filters.seed.json ./
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 

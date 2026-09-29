@@ -486,3 +486,64 @@ def test_s4_run_sh_search_uses_monitor():
     assert 'agents/monitor.py --all' in text
     assert "test_components.py" not in text          # the file does not exist
     assert subprocess.run(["bash", "-n", str(ROOT / "run.sh")]).returncode == 0
+
+
+def test_m37_docs_state_python_312():
+    """README and CLAUDE.md name the version CI and the image run (review D4)."""
+    workflow = (ROOT / ".github/workflows/tests.yml").read_text()
+    assert re.findall(r'python-version:\s*"([\d.]+)"', workflow) == ["3.12"]
+    assert "FROM python:3.12-" in (ROOT / "Dockerfile").read_text()
+    for doc in ("README.md", "CLAUDE.md"):
+        text = (ROOT / doc).read_text()
+        assert "Python 3.12" in text, doc
+        assert not re.search(r"Python 3\.(?!12\b)\d+\+?", text), doc
+
+
+def test_m32_image_has_no_personal_filters():
+    """The owner's filters.json is local state: not copied, not in the build
+    context, not in git. The seed file is what the image carries."""
+    copied = " ".join(l for l in _dockerfile_lines() if l.startswith("COPY"))
+    assert "filters.seed.json" in copied
+    assert not re.search(r"(?<![.\w])filters\.json", copied)
+    ignored = (ROOT / ".dockerignore").read_text().split()
+    assert "filters.json" in ignored
+    assert "filters.json" in (ROOT / ".gitignore").read_text().split()
+
+
+def _unimported_modules(root):
+    """Modules under src/ that no file outside tests/ imports."""
+    skip = ("tests", "venv", ".git")
+    files = [p for p in root.rglob("*.py") if not any(s in p.parts for s in skip)]
+    texts = {p: p.read_text() for p in files}
+    unused = []
+    for p in sorted(root.glob("src/**/*.py")):
+        if p.name == "__init__.py":
+            continue
+        mod = ".".join(p.relative_to(root).with_suffix("").parts)
+        parent, name = mod.rsplit(".", 1)
+        pats = [rf"\b{re.escape(mod)}\b",
+                rf"from\s+{re.escape(parent)}\s+import\s+[^\n]*\b{name}\b",
+                rf"from\s+\.{name}\b", rf"from\s+\.\s+import\s+[^\n]*\b{name}\b"]
+        if not any(re.search(x, t) for q, t in texts.items() if q != p for x in pats):
+            unused.append(mod)
+    return unused
+
+
+def test_m34_no_dead_modules(tmp_path):
+    """Review M34. src/selection.py stays while gui.py (retiring) imports it."""
+    assert _unimported_modules(ROOT) == []
+    assert not (ROOT / "src/sources/cache.py").exists()
+    from src.db import Database
+    assert not hasattr(Database, "bookmark_paper")
+    assert not hasattr(Database, "get_bookmarked_papers")
+    # The scan can fail: a module only tests import is reported.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "used.py").write_text("")
+    (tmp_path / "src" / "orphan.py").write_text("")
+    (tmp_path / "app.py").write_text("from src import used\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text("import src.orphan\n")
+    assert _unimported_modules(tmp_path) == ["src.orphan"]
+    # run.sh with no command prints usage; it does not launch the GUI.
+    run_sh = (ROOT / "run.sh").read_text()
+    assert re.search(r'^\s*""\|help\)\s+usage ;;', run_sh, re.MULTILINE)

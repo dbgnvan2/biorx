@@ -372,3 +372,23 @@ def test_gate5_reuse_that_finds_nothing_says_so(ctx, signed_in, owner_key):
             time.sleep(0.01)
     assert job.status == JobStatus.ERROR
     assert "changed while this ran" in job.error and "AttributeError" not in job.error
+
+
+# ── T1: enforcing the cap and showing it use the same window ─────────────────
+
+@pytest.mark.parametrize("hours, minutes, counted", [("-23 hours", "-59 minutes", True),
+                                                     ("-24 hours", "-1 minutes", False)])
+def test_t1_window_edge_enforce_and_display_agree(ctx, signed_in, hours, minutes, counted):
+    """A row just inside the window blocks a reservation and is shown as used;
+    one just outside does neither. Both functions read _owner_window_start."""
+    user_id = signed_in.get("/api/me").json()["user_id"]
+    ctx.db.conn.execute(
+        "INSERT INTO usage_events (user_id, kind, provider, model, key_source, created_at) "
+        "VALUES (?, 'summary', 'deepseek', 'm', 'owner', datetime('now', ?, ?))",
+        (user_id, hours, minutes))
+    ctx.db.conn.commit()
+
+    shown = user_store.owner_usage_today(ctx.db, user_id)
+    reserved = user_store.reserve_owner_usage(ctx.db, user_id, "summary", cap=1)
+    assert shown == (1 if counted else 0)
+    assert (reserved is None) is counted

@@ -1140,34 +1140,8 @@ def test_regate3_a_measured_token_figure_is_not_shown_as_a_range():
     assert "Estimated 2.1k tokens" in got
 
 
-def test_m5a3_no_request_leaves_before_the_user_confirms():
-    """Nothing that SPENDS happens until confirmSpend resolves true.
-
-    The estimate is itself a POST now (the inline key must not travel in a
-    URL), so the check is on the spend call specifically rather than on any
-    POST — the estimate costs nothing and has to run first to fill the dialog.
-    """
-    code = _js_without_comments()
-    body = re.search(r"async function summarizeChecked\(\) \{.*?\n\}",
-                     code, re.DOTALL).group(0)
-    assert "if (!await confirmSpend" in body
-    confirm_at = body.index("confirmSpend")
-    # summarizeOnePaper is what actually calls the model.
-    assert body.index("summarizeOnePaper(") > confirm_at, (
-        "the model is called before the user confirms"
-    )
-    # And the estimate, which is what fills the dialog, runs before it.
-    assert body.index('"/api/usage/estimate"') < confirm_at
 
 
-def test_m5a3_the_review_also_confirms_before_it_spends():
-    """Its sibling must hold the same line — this is the class of bug that has
-    bitten this batch four times."""
-    code = _js_without_comments()
-    body = re.search(r"async function reviewChecked\(\) \{.*?\n\}",
-                     code, re.DOTALL).group(0)
-    assert "if (!await confirmSpend" in body
-    assert body.index('"/api/reviews"') > body.index("confirmSpend")
 
 
 def test_m3a1_the_batch_uses_the_per_paper_route():
@@ -1181,16 +1155,6 @@ def test_m3a1_the_batch_uses_the_per_paper_route():
     assert "/api/summaries/batch" not in code
 
 
-def test_m3a1_a_cap_refusal_stops_the_batch_rather_than_failing_one_paper():
-    """429 means the allowance is gone — carrying on would just collect
-    refusals."""
-    code = _js_without_comments()
-    one = re.search(r"async function summarizeOnePaper\(paper\) \{.*?\n\}",
-                    code, re.DOTALL).group(0)
-    assert "e.status === 429" in one and "cap: true" in one
-    batch = re.search(r"async function summarizeChecked\(\) \{.*?\n\}",
-                      code, re.DOTALL).group(0)
-    assert "outcome.cap" in batch and "break" in batch
 
 
 def test_m3a3_a_polling_blip_does_not_fail_the_job():
@@ -1276,19 +1240,6 @@ def test_gate2_the_review_releases_the_batch_guard_on_every_path():
         "are what drifted")
 
 
-def test_gate4_a_second_click_cannot_start_a_concurrent_batch():
-    """On a user's own uncapped key, papers still in flight would run and bill
-    twice (gate 2026-09-21 finding 4)."""
-    code = _js_without_comments()
-    for fn in ("summarizeChecked", "reviewChecked"):
-        body = re.search(rf"async function {fn}\(\) \{{.*?\n\}}",
-                         code, re.DOTALL).group(0)
-        assert "state.batchRunning" in body, f"{fn} has no double-submit guard"
-    assert "function setBatchRunning(running)" in code
-    # Released in a finally, or the buttons stay dead for the session.
-    batch = re.search(r"async function summarizeChecked\(\) \{.*?\n\}",
-                      code, re.DOTALL).group(0)
-    assert "finally" in batch and "setBatchRunning(false)" in batch
 
 
 def test_live1_a_sub_cent_range_does_not_read_as_nonsense():
@@ -2882,3 +2833,129 @@ def test_a2_client_blocks_name_clash():
 })();""",
     ]))
     assert got == [["PUT /api/filters/1"], 2]
+
+
+# ── M35: the spend gates, run in node rather than read as text ───────────────
+
+_SPEND_FNS = ("summarizeChecked", "setBatchRunning", "shortTitle", "batchSummaryReport",
+              "summarizeOnePaper", "pollJobUntilSettled", "reviewChecked",
+              "reviewEstimate", "paperKey", "serverSummaryJob", "isSummarizing",
+              "estimateBody")
+
+
+def _run_spend(driver, *, confirm="true", summaries_api=""):
+    """Run the real batch functions from app.js against a stubbed server.
+
+    Returns the list of [method, path] calls the client made, plus the
+    status text. `summaries_api` is a JS snippet run on POST /api/summaries
+    with `n` (1-based call number) in scope; it may throw.
+    """
+    import json
+    import shutil
+    import subprocess
+    source = APP_JS.read_text()
+    fns = [re.search(rf"^(async )?function {n}\(.*?\n\}}", source,
+                     re.DOTALL | re.MULTILINE).group(0) for n in _SPEND_FNS]
+    prelude = """
+const POLL_MS = 0, POLL_GIVE_UP = 8;
+const calls = [];
+let summaryPosts = 0;
+const items = [1, 2, 3].map(n => ({ item_id: n, paper: { doi: "10.1/" + n, title: "P" + n } }));
+const els = {};
+function $(id) {
+  return (els[id] = els[id] || { textContent: "", disabled: false,
+    classList: { add(){}, remove(){} },
+    querySelectorAll: () => items.map(i => ({ dataset: { itemId: String(i.item_id) } })) });
+}
+const state = { activeListId: 7, refItems: items, summarizing: new Set(),
+                serverSummaries: {}, me: { provider: "deepseek" }, batchRunning: false };
+function notice() {}
+function localSettings() { return {}; }
+function findByTitle() { return false; }
+function setSummarizeButtons() {}
+function refreshTokenMeter() {}
+async function selectRefList() {}
+function renderReview() {}
+async function confirmSpend() { return CONFIRM; }
+async function api(method, path, body) {
+  calls.push([method, path]);
+  await null;
+  if (path === "/api/usage/estimate") return { papers: 3, calls: 3 };
+  if (path === "/api/summaries/lookup") { const e = new Error("none"); e.status = 404; throw e; }
+  if (method === "POST" && path === "/api/summaries") {
+    const n = ++summaryPosts;
+    SUMMARIES_API
+    return { job_id: "j" + n };
+  }
+  if (path.startsWith("/api/summaries/")) return { status: "done", result: {} };
+  if (path.includes("/review-preview")) return { papers: 3, tokens: 100 };
+  if (path === "/api/reviews") return { job_id: "r1" };
+  if (path.startsWith("/api/reviews/")) return { status: "done", result: {} };
+  throw new Error("unexpected " + method + " " + path);
+}
+""".replace("CONFIRM", confirm).replace("SUMMARIES_API", summaries_api)
+    script = (prelude + "\n".join(fns) + f"\n(async () => {{ {driver} }})()"
+              ".then(() => console.log(JSON.stringify({calls, status: $('ref-dl-status').textContent})));")
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    result = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip())
+
+
+def _billed(calls):
+    return [c for c in calls if c[0] == "POST" and c[1] in ("/api/summaries", "/api/reviews")]
+
+
+def test_m35_confirm_declined_no_call():
+    out = _run_spend("await summarizeChecked(); await reviewChecked();", confirm="false")
+    assert ["POST", "/api/usage/estimate"] in out["calls"]     # the dialog was filled
+    assert _billed(out["calls"]) == []
+    # And the harness can see a billed call when the user says yes.
+    assert _billed(_run_spend("await summarizeChecked();")["calls"])
+
+
+def test_m35_429_stops_batch():
+    out = _run_spend("await summarizeChecked();", summaries_api="""
+    if (n === 2) { const e = new Error("cap"); e.status = 429; throw e; }""")
+    assert _billed(out["calls"]) == [["POST", "/api/summaries"]] * 2    # paper 3 never sent
+    assert "allowance" in out["status"]
+
+
+def test_m35_double_click_single_run():
+    out = _run_spend("await Promise.all([summarizeChecked(), summarizeChecked()]);")
+    assert len(_billed(out["calls"])) == 3                    # once per paper, not twice
+    assert out["calls"].count(["POST", "/api/usage/estimate"]) == 1
+    out = _run_spend("await Promise.all([reviewChecked(), reviewChecked()]);")
+    assert _billed(out["calls"]) == [["POST", "/api/reviews"]]
+
+
+# ── M36: the client's calls match the server on method as well as path ───────
+
+def _api_calls_by_js(source: str) -> set:
+    """(METHOD, path) pairs the client calls, parameters normalised. The
+    shared poller only ever GETs."""
+    raws = re.findall(r'api\(\s*"([A-Z]+)"\s*,\s*[`"]([^`"]+)[`"]', source)
+    raws += [("GET", p) for p in
+             re.findall(r'pollJobUntilSettled\(\s*[`"]([^`"]+)[`"]', source)]
+    return {(m, re.sub(r"\$\{[^}]+\}", "{param}", p.split("?")[0])) for m, p in raws}
+
+
+def _served_calls(app) -> set:
+    return {(method.upper(), re.sub(r"\{[^}]+\}", "{param}", path))
+            for path, ops in app.openapi()["paths"].items() for method in ops}
+
+
+def _wrong_calls(app, source):
+    return sorted(_api_calls_by_js(source) - _served_calls(app))
+
+
+def test_m36_js_calls_match_method_and_path(app):
+    source = APP_JS.read_text()
+    assert len(_api_calls_by_js(source)) > 20, "the parser stopped matching"
+    assert _wrong_calls(app, source) == []
+    # A wrong verb on a real path must fail: the path-only check passed it.
+    assert 'api("GET", "/api/me")' in source
+    mutated = source.replace('api("GET", "/api/me")', 'api("DELETE", "/api/me")', 1)
+    assert _wrong_calls(app, mutated) == [("DELETE", "/api/me")]

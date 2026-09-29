@@ -314,9 +314,16 @@ def test_arxiv_query_builds_for_every_saved_filter():
     import json
     from pathlib import Path as _P
 
-    data = json.loads((_P(__file__).parent.parent / "filters.json").read_text())
-    saved = data["filters"] if isinstance(data, dict) and "filters" in data else data
-    assert saved, "filters.json has no filters to check against"
+    # The seed file always (it has an authors list); the owner's own
+    # filters.json too when this machine has one (review M32).
+    root = _P(__file__).parent.parent
+    saved = []
+    for name in ("filters.seed.json", "filters.json"):
+        if (root / name).exists():
+            data = json.loads((root / name).read_text())
+            saved += data["filters"] if isinstance(data, dict) and "filters" in data else data
+    assert saved, "no saved filters to check against"
+    assert any(f.get("authors") for f in saved), "no filter with an authors list"
 
     for f in saved:
         q = build_arxiv_query(f)           # must not raise on any real filter

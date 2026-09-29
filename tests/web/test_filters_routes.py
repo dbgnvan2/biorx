@@ -22,7 +22,7 @@ FILTER = {
 
 def test_a_new_user_starts_with_the_shared_filters(signed_in):
     filters = signed_in.get("/api/filters").json()["filters"]
-    assert filters, "a new user should be seeded from filters.json"
+    assert filters, "a new user should be seeded from filters.seed.json"
     assert all("name" in f for f in filters)
 
 
@@ -86,6 +86,12 @@ def test_a2_create_duplicate_is_409(signed_in):
     r = signed_in.post("/api/filters", json={"name": "  dup ", "filter": FILTER})
     assert r.status_code == 409
     assert [f["name"] for f in signed_in.get("/api/filters").json()["filters"]].count("Dup") == 1
+
+
+def test_a2_non_ascii_case_pair_is_taken(signed_in):
+    """Batch-3 gate note 3: SQLite's lower() folds ASCII only."""
+    signed_in.post("/api/filters", json={"name": "CAFÉ", "filter": FILTER})
+    assert signed_in.post("/api/filters", json={"name": "café", "filter": FILTER}).status_code == 409
 
 
 def test_a2_case_only_rename_of_self_ok(signed_in):

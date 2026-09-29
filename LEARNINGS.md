@@ -64,6 +64,17 @@ The same callback reports "fetched" and "enriched", so the second overwrites
 the first and a later message quotes the wrong number. Catalogue: generic P19/P36.
 Ask: *does each field the UI shows hold exactly one quantity for the whole run?*
 
+### P13 — A stage narrows the candidate set without saying what it removed
+A filter, cap, dedup or facet drops papers and the result looks complete: a
+per-source cap cut results with no note, a licence filter ran before enrichment
+supplied the licence, a facet no source reports matched nothing. Related: P2, P3.
+Ask: *does this stage report what it dropped and why, and does any source provide the field it filters on?*
+
+### P14 — Shared data written from client-supplied fields
+A route stores what the browser sent (title, abstract) in a table other users
+read, so one user can set what everyone sees, or overwrite better data. Related: P6.
+Ask: *does every value written to a shared table come from a server-side source, not the request body?*
+
 ---
 
 ## Review checklist
@@ -82,6 +93,8 @@ Run these for every diff touching data-path, I/O, external calls, or scoring:
 - [ ] P10: Is every run precondition enforced in shared code and tested from the web route, the GUI and monitor.py?
 - [ ] P11: Does each data-changing stage have a test on the final output, run through the real pipeline order?
 - [ ] P12: Does each live counter hold one quantity for the whole run?
+- [ ] P13: Does every filter, cap, dedup and facet report what it dropped, and is a filter on a field no source provides refused rather than applied?
+- [ ] P14: Is every write to a shared table built from a server-side source of truth, with client-sent metadata ignored and downgrades refused in the same SQL statement?
 - [ ] Common-flow run: before calling a feature done, run it in the real UI with an empty filter, a filter that matches nothing, and one that matches — and read what the screen says.
 
 ---
@@ -116,6 +129,41 @@ Run these for every diff touching data-path, I/O, external calls, or scoring:
 ## Fix log
 
 *Newest first. Format: Issue → Root cause (Pn) → What would have caught it → Fix → Rule.*
+
+- **2026-09-28 — Client could write the shared summary for a paper.**
+  - Issue: the summary route took the paper's title/abstract from the browser and stored
+    the summary in the shared table other users read. One user could write text others
+    saw as the paper's summary, and an abstract-only summary could replace a full-text one.
+  - Root cause: the write trusted request fields as the paper's metadata (P14); no guard
+    against replacing a better summary with a worse one.
+  - What would have caught it: a test posting a forged title/abstract and asserting the
+    stored summary input came from the server's record; a test that an abstract-only
+    summary does not replace a full-text one.
+  - Fix: review finding A1, batch 2 of `docs/implementation_plan_2026-09-28_review_fixes.md`.
+    `src/summarize.py` `resolve_paper` resolves the paper server-side (stored row, the
+    user's own finished search results, or a lookup at the source) and ignores client
+    metadata; `src/db.py` `insert_summary` refuses a downgrade in one statement
+    (`ON CONFLICT ... WHERE`).
+  - Rule: data written to a shared table comes from a server-side source of truth, never
+    from fields the client sent.
+
+- **2026-09-28 — Stages dropped papers with no report.**
+  - Issue: per-source result caps cut results with no "truncated" note; a licence filter
+    applied before enrichment dropped papers whose licence only Unpaywall/Crossref supply;
+    an institution facet no source reports matched nothing, so filters using it returned
+    zero papers; empty-string dates became a bogus date range; wildcard terms matched mid-word.
+  - Root cause: each stage narrowed the candidate set and reported only what it kept (P13);
+    filters were applied to fields that were missing at that stage or from every source (P3).
+  - What would have caught it: for each filter/cap/facet, a test asserting the dropped
+    count or reason is reported; a check that each filterable field is supplied by at
+    least one source before the filter runs.
+  - Fix: review findings B1, B2, B3, B4, B5, B7, M20, M22 (`REVIEW-biorx-2026-09-28.md`),
+    batch 1 of `docs/implementation_plan_2026-09-28_review_fixes.md`. Truncated sources
+    now report "<label> — skipped (truncated)" (`src/sources/orchestrator.py`); the
+    pre-enrichment pass uses the filter minus its licence condition (`src/filtering.py`
+    `without_license`) and the full filter runs after enrichment.
+  - Rule: any stage that drops candidates reports what it dropped and why; a filter on a
+    field no source provides is refused, not silently applied.
 
 - **2026-09-18 — Empty filter ran; enrichment wasted; wrong counts; Run button stateless.**
   - Issue: an empty saved filter ran a full search from the web app; runs that matched

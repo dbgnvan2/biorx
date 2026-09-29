@@ -16,3 +16,4 @@ gui.py
 requirements.txt
 *.xlsx
 preprints/
+filters.json

@@ -1,0 +1,61 @@
+{
+  "filters": [
+    {
+      "name": "Inflammation",
+      "enabled": true,
+      "category": "any",
+      "days_back": 7,
+      "start_date": "",
+      "end_date": "",
+      "text_groups": [
+        {"title": "inflammation", "abstract": "", "both": ""}
+      ],
+      "authors": [],
+      "institution": "",
+      "paper_type": "any",
+      "version": "any",
+      "published": "any",
+      "license": "any",
+      "species": "no-animal",
+      "source_selection": {"all": true, "selected": []}
+    },
+    {
+      "name": "Loneliness",
+      "enabled": true,
+      "category": "any",
+      "days_back": 14,
+      "start_date": "",
+      "end_date": "",
+      "text_groups": [
+        {"title": "", "abstract": "", "both": "loneliness, social isolation"}
+      ],
+      "authors": [],
+      "institution": "",
+      "paper_type": "any",
+      "version": "any",
+      "published": "any",
+      "license": "any",
+      "species": "human",
+      "source_selection": {"all": true, "selected": []}
+    },
+    {
+      "name": "Agent-based simulation",
+      "enabled": false,
+      "category": "any",
+      "days_back": 30,
+      "start_date": "",
+      "end_date": "",
+      "text_groups": [
+        {"title": "", "abstract": "", "both": "agent-based model*, generative agent*"}
+      ],
+      "authors": ["Park"],
+      "institution": "",
+      "paper_type": "any",
+      "version": "any",
+      "published": "any",
+      "license": "cc-by",
+      "species": "any",
+      "source_selection": {"all": true, "selected": []}
+    }
+  ]
+}

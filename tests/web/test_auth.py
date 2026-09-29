@@ -117,6 +117,9 @@ def test_a_cookie_signed_with_another_secret_is_refused(ctx, client, signed_in):
 
 def test_a_valid_cookie_for_a_deleted_user_is_refused(ctx, client, signed_in):
     user_id = client.get("/api/me").json()["user_id"]
+    # Foreign keys are on (review M30): the rows that point at the user go first.
+    for table in ("user_filters", "user_reference_lists"):
+        ctx.db.conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
     ctx.db.conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
     ctx.db.conn.commit()
     assert client.get("/api/me").status_code == 401

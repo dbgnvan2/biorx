@@ -6,7 +6,7 @@ This project is a multi-source research tool designed to search, download, and s
 
 ### 1. **PyQt6 GUI (`gui.py`)**
 - **Search & Browse Tab:** Interactive search with multi-source selection, pagination, and direct actions (Download, Summarize, Bookmark).
-- **Configure Tab:** Manage search clusters and profiles stored in `key_terms.json`.
+- **Configure Tab:** Manage saved filters stored in `filters.json`.
 - **Reference Lists:** Manage collections of papers in named lists.
 - **Headless Mode:** Support for `--run-search`, `--run-summarize`, and `--run-full-cycle` for automation (e.g., via openclaw).
 
@@ -20,7 +20,7 @@ This project is a multi-source research tool designed to search, download, and s
 - Handles normalization to `CanonicalRecord`, deduplication (`dedup.py`), and ranking.
 
 ### 3. **Agents (`agents/`)**
-- `search_agent.py`: Executes automated searches based on `key_terms.json`.
+- `monitor.py`: Runs saved filters from `filters.json` headless.
 - `summarization_agent.py`: Processes downloaded PDFs using local LLM.
 
 ### 4. **Core Utilities (`src/`)**
@@ -64,6 +64,6 @@ This project is a multi-source research tool designed to search, download, and s
 - **Diagnosis:** Always check `tail -n 100 biorx.log` first for errors in adapters, database, or LLM calls.
 
 ## ⚙️ Configuration
-- `key_terms.json`: Search clusters/profiles.
+- `filters.json`: Your saved filters (local, not in git); `filters.seed.json`: examples new web accounts start with.
 - `sources_config.yaml`: Enabled/disabled search sources and API credentials.
 - `requirements.txt`: Project dependencies.

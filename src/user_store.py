@@ -1,7 +1,7 @@
 """
 Purpose: Persistence for web-app users, their saved filters, and their usage.
 Spec:    docs/implementation_plan_2026-09-15.md#2.5, W3, W4, W6
-Tests:   tests/web/test_user_store.py
+Tests:   tests/web/test_cap.py, tests/web/test_accounts.py, tests/web/test_spend.py
 
 Kept out of src/db.py, which already carries papers, summaries, bookmarks and
 reference lists; adding a fifth concern there would make it a file with several
@@ -164,6 +164,18 @@ def record_usage(db, user_id: str, kind: str, provider: str, model: str,
     return int(cur.lastrowid)
 
 
+def _owner_window_start(now: Optional[datetime] = None) -> str:
+    """The start of the rolling 24-hour allowance window, as stored timestamps
+    are written (UTC, "YYYY-MM-DD HH:MM:SS").
+
+    Purpose: One definition of "today" for enforcing the cap and showing it.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#T1
+    Tests:   tests/web/test_cap.py::test_t1_window_edge_enforce_and_display_agree
+    """
+    now = now or datetime.now(timezone.utc)
+    return (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def reserve_owner_usage(db, user_id: str, kind: str, cap: int,
                         provider: str = "", model: str = "") -> Optional[int]:
     """Claim one owner-key slot, atomically. Returns the row id, or None if the
@@ -179,7 +191,7 @@ def reserve_owner_usage(db, user_id: str, kind: str, cap: int,
     """
     if cap <= 0:
         return None
-    since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+    since = _owner_window_start()
     cur = db.conn.execute(
         "INSERT INTO usage_events (user_id, kind, provider, model, key_source) "
         "SELECT ?, ?, ?, ?, 'owner' WHERE ("
@@ -326,7 +338,7 @@ def session_token_totals(db, user_id: str, since: "datetime") -> Dict[str, Any]:
 
 def owner_usage_today(db, user_id: str, kind: str = "summary") -> int:
     """How many owner-key actions this user has run in the last 24 hours."""
-    since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+    since = _owner_window_start()
     row = db.conn.execute(
         "SELECT COUNT(*) AS n FROM usage_events "
         "WHERE user_id = ? AND kind = ? AND key_source = 'owner' AND created_at >= ?",
@@ -409,14 +421,18 @@ def filter_name_taken(db, user_id: str, name: str,
 
     Purpose: Refuse a save that would silently overwrite another filter.
     Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#A2
-    Tests:   tests/web/test_filters_routes.py::test_a2_rename_onto_existing_is_409
+    Tests:   tests/web/test_filters_routes.py::test_a2_rename_onto_existing_is_409,
+             tests/web/test_filters_routes.py::test_a2_non_ascii_case_pair_is_taken
+
+    Compared with str.casefold in Python: SQLite's lower() folds ASCII only,
+    so "CAFÉ" and "café" passed as different names (batch-3 gate note 3).
     """
-    row = db.conn.execute(
-        "SELECT id FROM user_filters WHERE user_id = ? AND lower(name) = lower(?) "
-        "AND (? IS NULL OR id <> ?)",
-        (user_id, _clean_filter_name(name), exclude_id, exclude_id),
-    ).fetchone()
-    return row is not None
+    wanted = _clean_filter_name(name).casefold()
+    rows = db.conn.execute(
+        "SELECT id, name FROM user_filters WHERE user_id = ? AND (? IS NULL OR id <> ?)",
+        (user_id, exclude_id, exclude_id),
+    ).fetchall()
+    return any(r["name"].casefold() == wanted for r in rows)
 
 
 def insert_filter(db, user_id: str, name: str, filter_dict: Dict[str, Any],
@@ -460,13 +476,27 @@ def delete_filter(db, user_id: str, filter_id: int) -> bool:
 
 
 def seed_filters_from_file(db, user_id: str, filters: List[Dict[str, Any]]) -> int:
-    """Give a new user a copy of the shared filters.json as a starting point."""
+    """Give a new user a copy of the seed filters as a starting point.
+
+    Spec:  docs/implementation_plan_2026-09-28_review_fixes.md#M32
+    Tests: tests/web/test_accounts.py::test_m32_seed_from_seed_file,
+           tests/web/test_accounts.py::test_m32_seed_never_overwrites
+
+    Inserts, never upserts: two entries with one name used to collapse into
+    the later one without a word (batch-3 gate note 2). A clash is skipped
+    and logged; so is an entry with no name.
+    """
     count = 0
     for f in filters:
-        name = f.get("name")
+        name = (f.get("name") or "").strip()
         if not name:
+            logger.warning("Seed filter with no name skipped for %s", user_id)
             continue
-        upsert_filter(db, user_id, name, f, enabled=bool(f.get("enabled", True)))
+        if filter_name_taken(db, user_id, name):
+            logger.warning("Seed filter %r skipped for %s: that name is taken",
+                           name, user_id)
+            continue
+        insert_filter(db, user_id, name, f, enabled=bool(f.get("enabled", True)))
         count += 1
     return count
 
@@ -524,11 +554,13 @@ def create_reference_list(db, user_id: str, name: str) -> int:
 
 
 def delete_reference_list(db, user_id: str, list_id: int) -> None:
-    """Delete a list and its items in one transaction.
+    """Delete a list; its items and reviews go with it.
 
-    The items are deleted explicitly: the schema's ON DELETE CASCADE does
-    nothing because SQLite leaves foreign keys off unless each connection
-    enables them, and this codebase does not.
+    Spec:  docs/implementation_plan_2026-09-28_review_fixes.md#M30
+    Tests: tests/test_db_migrations.py::test_m30_orphans_cleaned_and_cascade_on
+
+    Every connection turns foreign keys on (src/db.py), so the schema's ON
+    DELETE CASCADE removes the list's items and reviews.
     """
     try:
         owned = db.conn.execute(
@@ -536,8 +568,6 @@ def delete_reference_list(db, user_id: str, list_id: int) -> None:
             (user_id, list_id),
         ).fetchone()
         if owned:
-            db.conn.execute(
-                "DELETE FROM user_reference_list_items WHERE list_id = ?", (list_id,))
             db.conn.execute(
                 "DELETE FROM user_reference_lists WHERE user_id = ? AND id = ?",
                 (user_id, list_id),

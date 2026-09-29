@@ -30,9 +30,14 @@ def test_s3_legacy_labels_normalise_to_ids():
 
 
 def test_s3_every_saved_filter_normalises_without_unknown_values(caplog):
-    """The real filters.json (and so every seeded web account) still reads."""
-    data = json.loads((ROOT / "filters.json").read_text())
-    filters = data.get("filters", data) if isinstance(data, dict) else data
+    """The seed file (so every new web account) and, when this machine has
+    one, the owner's own filters.json still read."""
+    filters = []
+    for name in ("filters.seed.json", "filters.json"):
+        if (ROOT / name).exists():
+            data = json.loads((ROOT / name).read_text())
+            filters += data.get("filters", data) if isinstance(data, dict) else data
+    assert filters
     for f in filters:
         n = normalise_filter(f)
         for facet in vocab.FACETS:

@@ -31,9 +31,13 @@ def test_save_then_load_roundtrips(tmp_path):
     assert json.loads(path.read_text())["filters"] == filters
 
 
-def test_load_reads_the_real_filters_json():
-    """The live file is the contract, not a hand-built fixture."""
-    filters = load_filters_file(REPO_ROOT / "filters.json")
+@pytest.mark.parametrize("name", ["filters.seed.json", "filters.json"])
+def test_load_reads_the_real_filters_json(name):
+    """The real files are the contract, not a hand-built fixture. filters.json
+    is the owner's local state (review M32), so it is checked where it exists."""
+    if name == "filters.json" and not (REPO_ROOT / name).exists():
+        pytest.skip("no local filters.json on this machine")
+    filters = load_filters_file(REPO_ROOT / name)
     assert filters and all("name" in f for f in filters)
 
 

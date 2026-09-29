@@ -57,7 +57,6 @@ def test_c_src_imports_cleanly_without_deprecation_warning():
     affected = [
         "src.sources.arxiv",
         "src.sources.biorxiv_medrxiv",
-        "src.sources.cache",
         "src.sources.europepmc",
         "src.sources.psyarxiv",
         "src.sources.socarxiv",

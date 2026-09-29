@@ -95,9 +95,14 @@ def test_every_saved_filter_in_filters_json_is_readable_by_the_filter():
     The shapes in the live filters.json are the contract. Hand-built fixtures
     are what let the `authors`-as-string assumption survive review.
     """
-    data = json.loads((REPO_ROOT / "filters.json").read_text())
-    saved = data["filters"] if isinstance(data, dict) and "filters" in data else data
-    assert saved, "filters.json has no filters to check against"
+    # The seed file always; the owner's filters.json too when this machine
+    # has one (it is local state, not in git — review M32).
+    saved = []
+    for name in ("filters.seed.json", "filters.json"):
+        if (REPO_ROOT / name).exists():
+            data = json.loads((REPO_ROOT / name).read_text())
+            saved += data["filters"] if isinstance(data, dict) and "filters" in data else data
+    assert saved, "no saved filters to check against"
 
     papers = [_paper()]
     for f in saved:
