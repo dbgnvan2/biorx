@@ -180,10 +180,13 @@ species:
     - rat bite fever
     - rat lungworm
     # Reagents and preparations (re-gate 3 F7).
+    # Both word orders (re-gate 4 F9).
     - mouse human chimeric
+    - human mouse chimeric
     - mouse mouse hybridoma
     - rat tail collagen
     - rat liver microsomes
+    - rat liver microsomal
     - rat brain homogenate
     - mouse skin extract
 

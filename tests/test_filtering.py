@@ -250,6 +250,10 @@ def test_br7_hyphen_compounds_with_other_senses_are_kept():
               # of the hyphen (F7).
               "Anti mouse antibody staining of human biopsies",
               "A mouse-human chimeric antibody in lymphoma patients",
+              # Re-gate 4 F9: the other word order, both spellings.
+              "A human-mouse chimeric antibody in lymphoma patients",
+              "Human mouse chimeric antibody therapy",
+              "Rat liver microsomal metabolism of a new antiepileptic",
               "Mouse-mouse hybridoma production of human-reactive antibodies",
               "Rat-tail collagen scaffolds for human keratinocytes",
               "Rat liver microsomes predict human drug clearance",
