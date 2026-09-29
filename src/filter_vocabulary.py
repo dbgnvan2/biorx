@@ -185,29 +185,45 @@ def animal_title_pattern() -> Optional["re.Pattern[str]"]:
     Tests:   tests/test_filtering.py::test_br7_no_animal_drops_animal_titles
 
     Whole words or phrases from species.animal_title_terms, any case. None
-    when the list is empty (then nothing is excluded here). A hyphen on the
-    left is part of the word: "anti-mouse antibody" is a reagent, not a
-    mouse study (re-gate 2 F4).
+    when the list is empty (then nothing is excluded here).
     """
     terms = [str(t).strip() for t in (load()["species"].get("animal_title_terms") or [])
              if str(t).strip()]
     if not terms:
         return None
     alternatives = "|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True))
-    return re.compile(rf"(?<![\w-])(?:{alternatives})(?!\w)", re.IGNORECASE)
+    return re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", re.IGNORECASE)
 
 
 @lru_cache(maxsize=1)
 def animal_title_exceptions() -> Optional["re.Pattern[str]"]:
-    """species.animal_title_exceptions as one pattern ("mouse tracking",
-    "Chinese hamster ovary"): phrases in which an animal word is not the
-    animal studied."""
-    phrases = [str(t).strip() for t in (load()["species"].get("animal_title_exceptions") or [])
+    """Purpose: Phrases in which an animal word is not the animal studied.
+    Spec:    docs/cycles/2026-09-29_browser-run.md (species re-check)
+    Tests:   tests/test_filtering.py::test_br7_hyphen_compounds_with_other_senses_are_kept
+
+    species.animal_title_exceptions ("mouse tracking", "Chinese hamster
+    ovary"), where a space also matches a hyphen, and each of
+    species.animal_title_reagent_prefixes joined to an animal term by a
+    hyphen, a space or nothing ("anti-mouse", "anti rat"). None when both
+    lists are empty.
+    """
+    species = load()["species"]
+    parts = []
+    phrases = [str(t).strip() for t in (species.get("animal_title_exceptions") or [])
                if str(t).strip()]
-    if not phrases:
+    for phrase in sorted(phrases, key=len, reverse=True):
+        words = re.split(r"[\s-]+", phrase)
+        parts.append(r"[\s-]+".join(re.escape(w) for w in words))
+    prefixes = [str(t).strip() for t in (species.get("animal_title_reagent_prefixes") or [])
+                if str(t).strip()]
+    terms = [str(t).strip() for t in (species.get("animal_title_terms") or []) if str(t).strip()]
+    if prefixes and terms:
+        pre = "|".join(re.escape(p) for p in prefixes)
+        animals = "|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True))
+        parts.append(rf"(?<!\w)(?:{pre})[\s-]?(?:{animals})(?!\w)")
+    if not parts:
         return None
-    return re.compile("|".join(re.escape(p) for p in sorted(phrases, key=len, reverse=True)),
-                      re.IGNORECASE)
+    return re.compile("|".join(parts), re.IGNORECASE)
 
 
 def title_names_an_animal_study(title: str) -> bool:

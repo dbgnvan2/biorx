@@ -100,9 +100,11 @@ Checked in the browser afterwards; screenshots 32–37.
   words (mouse, rat, rodent, hamster, macaque, zebrafish, …) plus "<animal>
   model" phrases for names with other senses (bovine, porcine, rabbit,
   canine, equine, murine); exception phrases ("mouse tracking", "Chinese
-  hamster ovary", "rat-bite fever", "rat race", "mouse-ear cress") are taken
-  out first; a word joined on its left by a hyphen ("anti-mouse antibody") is
-  not matched; a word in capitals is an acronym (second re-gate F4–F6).
+  hamster ovary", "rat-bite fever", "rat-tail collagen", "mouse-human
+  chimeric") are taken out first, a hyphen and a space counting the same; an
+  animal word after a reagent prefix (`animal_title_reagent_prefixes`:
+  "anti-mouse antibody") is taken out too, while "knockout-mouse model" still
+  counts; a word in capitals is an acronym (re-gates 2–3, F4–F8).
   Known gap, stated in the file and a test: veterinary titles such as
   "Bovine mastitis" are not caught. Tests: `tests/test_filtering.py::test_br7_*`.
 - **Stored summaries with tags:** a startup migration cleans titles,

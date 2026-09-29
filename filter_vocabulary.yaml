@@ -163,23 +163,29 @@ species:
     - canine models
     - equine model
     - equine models
-  # A word joined on its left by a hyphen is not matched: "anti-mouse
-  # antibody", "anti-rat IgG" are reagents (re-gate 2 F4). A word joined on
-  # its right still is ("Mouse-derived organoids"), so compounds with a
-  # human-research sense are listed below.
+  # An animal word after one of these prefixes names a reagent, not the
+  # animal studied: "anti-mouse antibody", "anti rat IgG" (re-gates 2-3,
+  # F4/F8). Only these prefixes: "knockout-mouse model" is an animal study.
+  animal_title_reagent_prefixes:
+    - anti
   # Phrases in which a word above does not mean the animal studied. They are
-  # taken out of the title before the check.
+  # taken out of the title before the check. A hyphen and a space are the
+  # same here: "rat tail collagen" also covers "rat-tail collagen".
   animal_title_exceptions:
     - mouse tracking
-    - mouse-tracking
     - computer mouse
-    - mouse-ear cress
     - mouse ear cress
     - chinese hamster ovary
     - rat race
-    - rat-bite fever
     - rat bite fever
     - rat lungworm
+    # Reagents and preparations (re-gate 3 F7).
+    - mouse human chimeric
+    - mouse mouse hybridoma
+    - rat tail collagen
+    - rat liver microsomes
+    - rat brain homogenate
+    - mouse skin extract
 
 category:
   # bioRxiv subject categories, sent to the bioRxiv/medRxiv API as they are.

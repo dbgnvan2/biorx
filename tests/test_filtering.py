@@ -245,16 +245,33 @@ def test_br7_hyphen_compounds_with_other_senses_are_kept():
               "Rat lungworm angiostrongyliasis in Hawaii",
               "Mouse-ear cress root development",
               "Burnout and the rat race among junior doctors",
-              "Rodenticide poisoning in toddlers"]
+              "Rodenticide poisoning in toddlers",
+              # Re-gate 3: prefix without a hyphen, and the right-hand side
+              # of the hyphen (F7).
+              "Anti mouse antibody staining of human biopsies",
+              "A mouse-human chimeric antibody in lymphoma patients",
+              "Mouse-mouse hybridoma production of human-reactive antibodies",
+              "Rat-tail collagen scaffolds for human keratinocytes",
+              "Rat liver microsomes predict human drug clearance",
+              "Rat-brain homogenate as a binding control",
+              "Mouse-skin extract in a patch test"]
     kept = filter_papers([_t(t) for t in titles], {"species": "no-animal"})
     assert [p["title"] for p in kept] == titles
 
 
-def test_br7_hyphen_on_the_right_and_plural_models_still_drop():
-    """The F4 boundary change must not lose animal titles; F5 plural models."""
+def test_br7_hyphenated_animal_titles_and_plural_models_still_drop():
+    """Hyphenated animal titles on either side still drop (re-gate 3 F8); F5 plural models."""
     titles = ["Mouse-derived intestinal organoids", "Rat-specific gene expression atlas",
               "Bovine models of tuberculosis", "Ovine models of fetal growth",
               "Canine models of osteosarcoma", "Equine models of asthma",
               # F6: only the CHO cell line is an exception, not any hamster ovary.
-              "Syrian hamster ovary cells after infection"]
+              "Syrian hamster ovary cells after infection",
+              # Re-gate 3 F8: a hyphen before the animal word is still an
+              # animal study unless the prefix is a reagent prefix.
+              "A knockout-mouse model of colitis", "Transgenic-mouse studies of amyloid",
+              "SCID-mouse xenograft growth", "Nude-mouse xenograft of melanoma",
+              "Wild-type-mouse controls for gut microbiota", "Germ-free-mouse colonization",
+              "A knockout-rat model of hypertension",
+              # Only the prefix phrase is taken out: the rest still counts.
+              "An anti-mouse antibody for immunostaining in mice"]
     assert filter_papers([_t(t) for t in titles], {"species": "no-animal"}) == []
