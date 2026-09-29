@@ -86,6 +86,7 @@ def run_search(
     dry_run: bool = False,
     sources_failed: Optional[list] = None,
     enrich_problems: Optional[list] = None,
+    source_problems: Optional[list] = None,
 ) -> list:
     """
     Run a single search and return the deduplicated records that match the filter.
@@ -103,6 +104,9 @@ def run_search(
         max_results:    Maximum results to return
         dry_run:        If True, don't download PDFs
         sources_failed: If provided, failed source names are appended here.
+        source_problems: If provided, "name (kind)" is appended for each, so
+                        a source cut off at --max ("truncated") is not
+                        reported as if it had failed.
         enrich_problems: If provided, one line per enrichment service whose
                         lookups failed is appended here (review finding 1).
 
@@ -121,6 +125,7 @@ def run_search(
     print(f"[{filter_name}] Searching...", file=sys.stderr)
 
     failed_this_run: list = []
+    kinds: dict = {}
 
     def on_status(message: str) -> None:
         print(f"[{filter_name}] {message}", file=sys.stderr)
@@ -129,6 +134,7 @@ def run_search(
         # Structured, not parsed from the status text (review S2).
         if source_name not in failed_this_run:
             failed_this_run.append(source_name)
+            kinds[source_name] = _kind
 
     def on_enrich_problem(label: str, failed: int, attempted: int) -> None:
         line = f"[{filter_name}] {label} failed for {failed} of {attempted} papers"
@@ -160,12 +166,15 @@ def run_search(
     )
 
     if failed_this_run:
+        described = [f"{name} ({kinds[name]})" for name in failed_this_run]
         print(
-            f"[{filter_name}] Failed sources: {', '.join(failed_this_run)}",
+            f"[{filter_name}] Sources not fully searched: {', '.join(described)}",
             file=sys.stderr,
         )
         if sources_failed is not None:
             sources_failed.extend(failed_this_run)
+        if source_problems is not None:
+            source_problems.extend(described)
 
     return matched
 
@@ -309,6 +318,7 @@ def main(args=None):
     # Run searches and emit results
     all_records = []
     all_sources_failed: list = []
+    all_source_problems: list = []
     all_enrich_problems: list = []
     total_downloaded = 0
     total_failed_downloads = 0
@@ -322,6 +332,7 @@ def main(args=None):
             dry_run=parsed.dry_run,
             sources_failed=all_sources_failed,
             enrich_problems=all_enrich_problems,
+            source_problems=all_source_problems,
         )
 
         # Emit as JSONL to stdout (records are already filtered plain dicts)
@@ -358,8 +369,10 @@ def main(args=None):
 
     # Exit 2 on any source failure or PDF download failure (P2: nonzero exit for cron)
     if all_sources_failed:
+        # With the reason: "truncated" means --max cut the source off, which
+        # is not an outage; the run is still incomplete, so still exit 2.
         print(
-            f"Sources failed: {', '.join(all_sources_failed)}",
+            f"Sources not fully searched: {', '.join(all_source_problems)}",
             file=sys.stderr,
         )
         return 2

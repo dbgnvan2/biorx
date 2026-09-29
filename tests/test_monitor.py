@@ -165,7 +165,12 @@ def test_b1_truncation_sets_exit_2(capsys):
              {"name": "T", "enabled": True, "text_groups": [{"both": "stress"}], "authors": []}]):
         code = monitor.main(["--all"])
     assert code == 2
-    assert "Failed sources: europepmc" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    # The reason is given: a source cut off at --max has not failed (found by
+    # the live after-run of batch 1, which printed "Sources failed" for it).
+    assert "[T] Sources not fully searched: europepmc (truncated)" in err
+    assert "Sources not fully searched: europepmc (truncated)\n" in err
+    assert "failed" not in err.lower().replace("not fully searched", "")
 
 
 def test_b5_license_filter_sees_enriched_license():
