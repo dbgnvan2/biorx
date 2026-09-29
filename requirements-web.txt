@@ -6,18 +6,18 @@
 # code — review the pins periodically rather than floating them.
 
 # Shared with the desktop app
-requests==2.32.5
+requests==2.33.0
 pdfplumber==0.11.10
 PyYAML==6.0.2
 
 # Imported directly by src/safe_fetch.py (the PDF proxy pins its connection
 # with urllib3 and verifies TLS against certifi). Both also arrive with
 # requests; pinned so a blank machine gets the versions verified here.
-urllib3==2.6.3
+urllib3==2.7.0
 certifi==2026.2.25
 
 # .env loading for desktop/CLI entry points (src/env_file.py); its tests run in CI.
-python-dotenv==1.0.0
+python-dotenv==1.2.2
 
 # Summaries PDF export (src/summary_pdf.py). Pure Python.
 fpdf2==2.8.7
@@ -29,7 +29,7 @@ starlette==1.6.0
 itsdangerous==2.2.0
 
 # Credentials at rest
-cryptography==46.0.6
+cryptography==50.0.0
 
 # LLM backends. DeepSeek is reached over its OpenAI-compatible HTTP API with
 # `requests`, so it needs no SDK of its own.
