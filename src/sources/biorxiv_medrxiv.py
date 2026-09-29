@@ -24,7 +24,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SERVERS = ("biorxiv", "medrxiv")
 SERVER_LABELS = {"biorxiv": "bioRxiv", "medrxiv": "medRxiv"}
-API_PAGE_SIZE = 100    # the details endpoint returns 100 papers per cursor
+# The details endpoint's page size is not assumed: it was 100 and is 30 today
+# (checked 2026-09-29). Each server's cursor advances by what it sent, and a
+# server is done when its reported total is reached or it sends nothing.
 
 
 class BiorxivMedrxivAdapter:
@@ -39,7 +41,9 @@ class BiorxivMedrxivAdapter:
         self.last_page_size = 0
         self.last_total = 0
         self._totals: Dict[str, int] = {}
+        self._next: Dict[str, int] = {}        # server -> next cursor
         self._exhausted: set = set()
+        self.has_more = True
         from src.biorxiv_api import BioRxivAPI
         self._api = BioRxivAPI(timeout=timeout, user_agent=polite_user_agent(self.sources_config))
 
@@ -63,21 +67,25 @@ class BiorxivMedrxivAdapter:
         Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#B7
         Tests:   tests/test_adapters.py::test_b7_date_range_used,
                  tests/test_adapters.py::test_b7_medrxiv_queried,
-                 tests/test_adapters.py::test_b7_pages_through_each_server
+                 tests/test_adapters.py::test_b7_pages_through_each_server,
+                 tests/test_adapters.py::test_b7_reads_past_a_30_paper_page
 
         The API is date-range based, not keyword-based; text filtering happens
-        client-side. `query` is accepted but not sent. The API returns 100
-        papers per cursor, so `page` maps to cursor (page-1)*100 on each server,
-        and the page returned is the union of the servers' pages. A server
-        whose last page was short is not asked again.
+        client-side. `query` is accepted but not sent. Each call returns one
+        page per server, the union of the servers' pages. A server's cursor
+        advances by the papers it sent; it is done when it has sent its
+        reported total, or nothing. `has_more` tells the caller whether any
+        server has more (the page size is the API's, not ours: assuming 100
+        when it sent 30 read 60 of ~4,900 papers and said nothing — browser
+        run 2026-09-29).
         """
         fd = filter_dict or {}
         start_date, end_date = get_date_range(fd)
         category = fd.get("category", "(any)")
         category = None if category in ("(any)", "", None) else category
-        cursor = (page - 1) * API_PAGE_SIZE
         if page == 1:
             self._totals = {}
+            self._next = {}
             self._exhausted = set()
 
         out: List[RawRecord] = []
@@ -85,6 +93,7 @@ class BiorxivMedrxivAdapter:
         for server in self._servers():
             if server in self._exhausted:
                 continue
+            cursor = self._next.get(server, 0)
             resp = with_retry(
                 lambda: self._api.search_by_date_range(
                     start_date, end_date, category=category, server=server, cursor=cursor),
@@ -96,7 +105,9 @@ class BiorxivMedrxivAdapter:
                 self._totals[server] = int(msgs[0].get("total", 0) or 0)
             except (TypeError, ValueError):
                 self._totals[server] = 0
-            if len(papers) < API_PAGE_SIZE:
+            self._next[server] = cursor + len(papers)
+            if not papers or (self._totals[server]
+                              and self._next[server] >= self._totals[server]):
                 self._exhausted.add(server)
             for p in papers:
                 if not p.get("server"):
@@ -108,6 +119,7 @@ class BiorxivMedrxivAdapter:
         # as the source's total (the orchestrator reads both).
         self.last_page_size = returned
         self.last_total = total
+        self.has_more = any(s not in self._exhausted for s in self._servers())
         return out
 
     def get_by_id(self, identifier: str) -> Optional[RawRecord]:

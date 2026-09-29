@@ -13,6 +13,7 @@ import requests
 from .base import RawRecord, with_retry
 from .schema import CanonicalRecord
 from .errors import SourceUnavailableError, RateLimitedError
+from .markup import markup_to_text
 
 logger = logging.getLogger(__name__)
 
@@ -20,22 +21,13 @@ BASE_URL = "https://api.crossref.org/works"
 
 
 def _strip_jats(text: str) -> str:
-    """Strip JATS/XML markup from a Crossref abstract string.
+    """Plain text from a Crossref JATS abstract (<jats:p>…</jats:p>).
 
-    Crossref returns abstracts like:
-        <jats:p>Background: ...</jats:p><jats:p>Methods: ...</jats:p>
-    We remove all tags and normalise whitespace to plain text.
+    Shared with Europe PMC (src/sources/markup.py): only known tags are
+    removed, so "p < 0.05 … x > 1" in the text survives, which the old
+    blanket <[^>]+> removal did not.
     """
-    if not text or "<" not in text:
-        return text
-    # Replace block-level tags with newlines to preserve paragraph breaks
-    text = re.sub(r"</?(jats:p|jats:sec|jats:title|p|br)[^>]*>", "\n", text, flags=re.IGNORECASE)
-    # Strip remaining tags
-    text = re.sub(r"<[^>]+>", "", text)
-    # Collapse multiple blank lines, normalise whitespace
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    text = re.sub(r"[ \t]+", " ", text)
-    return text.strip()
+    return markup_to_text(text)
 
 
 class CrossrefAdapter:

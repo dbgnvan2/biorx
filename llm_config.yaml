@@ -27,6 +27,10 @@ providers:
     # The model installed on this Mac (`ollama list`); qwen:7b never was.
     model: qwen3.5:4b
     timeout: 120
+    # qwen3.5 is a thinking model: asked for JSON with thinking on, it puts the
+    # answer in "thinking" and returns an empty response. "disabled" sends
+    # think=false. Leave it empty for a model with no thinking mode.
+    thinking: disabled
     # No api_key_env: a local Ollama needs no credential.
 
   deepseek:

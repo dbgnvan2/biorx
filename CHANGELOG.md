@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-29 — fixes from the browser run
+
+A run through the common flows in a browser, with screenshots:
+`docs/cycles/2026-09-29_browser-run.md`.
+
+### Fixed
+- **bioRxiv and medRxiv searches read about 1% of the papers in the date
+  range, without saying so.** Their API now sends 30 papers at a time and the
+  search stopped after the first batch. It now reads on until the Max results
+  limit, and says when that limit cut it off.
+- **Summaries with the local model (Ollama, qwen3.5) always failed** with
+  "empty response". Thinking is now turned off for it (`llm_config.yaml`).
+- **Europe PMC abstracts showed HTML tags** such as `<h4>Objective</h4>`.
+  They now read as text ("Objective: …"). Crossref abstracts use the same
+  rules, which no longer drop text between a "<" and a ">" in the abstract.
+- **An API key for Ollama was kept in the browser** after the server refused
+  it, and every summary then failed. The page now refuses it before saving,
+  and choosing Ollama clears a key kept in the browser.
+
 ## 2026-09-28 — tests that can fail, foreign keys on, dead code out
 
 Review fixes, batch 8 (the last). Gates: `docs/cycles/2026-09-28_review-batch8-qa-gate.md`

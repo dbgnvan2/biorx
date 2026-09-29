@@ -14,6 +14,7 @@ from .base import RawRecord, with_retry
 from .schema import CanonicalRecord, AuthorRecord, SourceHit, RecordFlags, make_canonical_id
 from .errors import SourceUnavailableError, RateLimitedError
 from .config import polite_user_agent
+from .markup import markup_to_text
 
 logger = logging.getLogger(__name__)
 
@@ -330,8 +331,11 @@ class EuropePmcAdapter:
 
         return CanonicalRecord(
             canonical_id=cid,
-            title=raw.get("title", "") or "",
-            abstract=raw.get("abstractText", "") or "",
+            # Europe PMC sends HTML in both (<h4>, <p>, <sub>); the page showed
+            # the tags as text (browser run 2026-09-29). The canonical id above
+            # keeps the raw title, so ids of stored papers do not change.
+            title=markup_to_text(raw.get("title", "") or ""),
+            abstract=markup_to_text(raw.get("abstractText", "") or ""),
             authors=authors,
             year=year,
             published_date=pub_date,

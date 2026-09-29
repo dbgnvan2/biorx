@@ -391,11 +391,19 @@ class SourceOrchestrator:
             if not page_size_seen:
                 break
             seen_raw += page_size_seen
-            last_page_full = page_size_seen >= self.PAGE_SIZE
+            # An adapter that knows whether its source has more says so
+            # (has_more); a page shorter than ours is then not the end. The
+            # bioRxiv API sends 30 at a time, so "shorter than 50" stopped it
+            # after one page (browser run 2026-09-29).
+            reported_more = getattr(adapter, "has_more", None)
+            if isinstance(reported_more, bool):
+                last_page_full = reported_more
+            else:
+                last_page_full = page_size_seen >= self.PAGE_SIZE
 
             if not raw_records:
                 # Whole page filtered out but the source has more — keep paging.
-                if page_size_seen < self.PAGE_SIZE:
+                if not last_page_full:
                     break
                 page += 1
                 continue
@@ -438,7 +446,7 @@ class SourceOrchestrator:
             if src_total and fetched >= src_total:
                 break
 
-            if page_size_seen < self.PAGE_SIZE:
+            if not last_page_full:
                 break  # last page
 
             page += 1

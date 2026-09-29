@@ -432,8 +432,12 @@ function renderMe() {
   }
   $("model-hint").textContent = me.default_model ? `(default: ${me.default_model})` : "";
   const keyInput = $("api-key");
-  if (document.activeElement !== keyInput && local.key) {
-    keyInput.placeholder = `Local key saved (…${local.key.slice(-4)}). Enter a new one to replace.`;
+  if (document.activeElement !== keyInput) {
+    // Reset as well as set: a key cleared by Save (switching to a provider
+    // with no key) left "Local key saved (…0000)" showing (browser run).
+    keyInput.placeholder = local.key
+      ? `Local key saved (…${local.key.slice(-4)}). Enter a new one to replace.`
+      : "Stored encrypted; only the last 4 are ever shown";
   }
   const serverStatus = {
     user:    `Server also has your encrypted key (…${me.key_last4}).`,
@@ -463,12 +467,21 @@ async function saveKey() {
   const modelVal    = $("preferred-model").value.trim();
   const providerVal = $("key-provider").value;
   const existingLocal = localSettings();
-  const keyToStore = keyVal || existingLocal.key;
+  // A provider that takes no key (local Ollama) is refused one here, before
+  // it is saved anywhere: the browser used to keep a key the server had
+  // refused, and send it with every summary, each then refused with a 400.
+  const keyless = (state.me.keyless_providers || []).includes(providerVal);
+  if (keyVal && keyless) {
+    notice(`${providerVal} does not take an API key, so nothing was saved.`);
+    return;
+  }
+  const keyToStore = keyless ? "" : (keyVal || existingLocal.key);
   let localOk = true;
   if (keyToStore) {
     localOk = saveLocalSettings(providerVal, keyToStore, modelVal);
     if (keyVal && localOk) $("api-key").value = "";
-  } else if (modelVal !== existingLocal.model) {
+  } else if (existingLocal.key || modelVal !== existingLocal.model) {
+    // Also clears a key kept here when switching to a keyless provider.
     localOk = saveLocalSettings(providerVal, "", modelVal);
   }
   let serverError = "";
@@ -485,7 +498,7 @@ async function saveKey() {
   const problems = [];
   if (!localOk) problems.push("this browser is blocking storage, so nothing was saved here");
   if (serverError) problems.push(`the server copy was not updated: ${serverError}`);
-  if (problems.length) notice(`Settings not fully saved — ${problems.join("; ")}.`);
+  if (problems.length) notice(`Settings not fully saved — ${problems.join("; ").replace(/\.$/, "")}.`);
   else notice("Settings saved.", "ok");
 }
 
@@ -496,7 +509,6 @@ async function removeKey() {
   try { state.me = await api("DELETE", "/api/me/llm-key"); }
   catch (e) { serverError = e.message; }
   try { state.me = await api("GET", "/api/me"); } catch (e) {}
-  $("api-key").placeholder = "Stored encrypted; only the last 4 are ever shown";
   renderMe();
   const problems = [];
   if (!localOk) problems.push("the key saved in this browser could not be cleared");

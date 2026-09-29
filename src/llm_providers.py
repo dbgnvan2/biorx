@@ -429,7 +429,8 @@ def build_client(pconf: ProviderConfig, api_key: str, max_chars: int,
     if pconf.dialect == "ollama":
         from .llm import OllamaClient
         return OllamaClient(base_url=pconf.base_url, model=model,
-                            timeout=pconf.timeout, max_chars=max_chars)
+                            timeout=pconf.timeout, max_chars=max_chars,
+                            thinking=pconf.thinking)
     raise ProviderUnavailableError(f"unknown provider dialect: {pconf.dialect!r}")
 
 

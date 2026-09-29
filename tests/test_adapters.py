@@ -509,3 +509,36 @@ def test_b5_real_licences_read():
     from src import filter_vocabulary as vocab
     ids = {vocab.license_id(EuropePmcAdapter().normalize(r).license) for r in _epmc_sample()}
     assert {"cc-by", "cc0", "cc-by-nc-nd", "cc-by-nd"} <= ids
+
+
+def _api_with_pages(pools, page=30):
+    """A stand-in for the bioRxiv details API as it answers today: `page`
+    papers per call from a pool per server, with the pool size as `total`."""
+    def fake(collections):
+        return collections
+    colls = {}
+    for server, n in pools.items():
+        papers = [{"doi": f"10.1101/{server}{i}", "title": f"{server} {i}", "version": "1"}
+                  for i in range(n)]
+        for c in range(0, n, page):
+            colls[(server, c)] = papers[c:c + page]
+    adapter, calls = _biorxiv_adapter(colls)
+    return adapter, calls
+
+
+def test_b7_reads_past_a_30_paper_page():
+    """Browser run 2026-09-29: the API sends 30 papers per call. Assuming 100
+    ended every server after its first page, so a search read 60 of ~4,900.
+    Real scale for the cap: pools several pages deep on both servers."""
+    adapter, calls = _api_with_pages({"biorxiv": 95, "medrxiv": 40})
+    fd = {"days_back": 7}
+    got, page = [], 1
+    while True:
+        got += adapter.search("x", page=page, filter_dict=fd)
+        if not adapter.has_more:
+            break
+        page += 1
+    assert len(got) == 135 and len({p["doi"] for p in got}) == 135
+    assert [c[3] for c in calls if c[0] == "biorxiv"] == [0, 30, 60, 90]
+    assert [c[3] for c in calls if c[0] == "medrxiv"] == [0, 30]
+    assert adapter.last_total == 135

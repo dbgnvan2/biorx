@@ -108,6 +108,12 @@ def _me(ctx: AppContext, user_id: str) -> dict:
         "owner_summaries_cap": cap,
         "owner_summaries_remaining": max(0, cap - used),
         "available_providers": sorted(ctx.llm_config.get("providers", {})),
+        # Providers that take no API key (local Ollama). The page refuses a
+        # key for one before saving it anywhere (browser run 2026-09-29: a
+        # refused key stayed in the browser and every summary then got 400).
+        "keyless_providers": sorted(
+            n for n in ctx.llm_config.get("providers", {})
+            if (pc := provider_config(ctx.llm_config, n)) and not pc.needs_key),
     }
 
 

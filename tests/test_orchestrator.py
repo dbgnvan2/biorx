@@ -803,3 +803,28 @@ def test_s2_failures_structured_not_parsed():
     assert failures == [("europepmc", "truncated"), ("biorxiv_medrxiv", "unavailable")]
     # The line people read uses the one label map.
     assert "bioRxiv / medRxiv — skipped (unavailable)" in statuses
+
+
+def test_b7_orchestrator_reads_a_30_per_page_source_to_its_budget():
+    """Browser run 2026-09-29, end to end: a source that sends 30 per page
+    (below the orchestrator's 50) is read until the budget, and the cut is
+    reported with the source's total instead of passing for a complete read."""
+    import tests.test_adapters as ta
+    adapter, _ = ta._api_with_pages({"biorxiv": 400, "medrxiv": 200})
+    adapter.for_search = lambda: adapter
+    statuses = []
+    orch = _orch_with({"biorxiv_medrxiv": adapter})
+    records = orch.search({"days_back": 7, "text_groups": [{"both": "biorxiv"}]},
+                          {"all": True, "selected": []}, max_results=250,
+                          on_status=statuses.append)
+    assert "bioRxiv / medRxiv — skipped (truncated)" in statuses, statuses
+    assert "bioRxiv / medRxiv: 300 of 600 read (result limit reached)" in statuses, statuses
+    assert len(records) > 60                      # more than the first page of each server
+    # Read to the end when the budget allows it: not reported as truncated.
+    adapter2, _ = ta._api_with_pages({"biorxiv": 95, "medrxiv": 40})
+    adapter2.for_search = lambda: adapter2
+    statuses2 = []
+    _orch_with({"biorxiv_medrxiv": adapter2}).search(
+        {"days_back": 7, "text_groups": [{"both": "rxiv"}]}, {"all": True, "selected": []},
+        max_results=1000, on_status=statuses2.append)
+    assert not any("truncated" in s for s in statuses2), statuses2

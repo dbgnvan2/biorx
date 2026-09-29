@@ -648,3 +648,37 @@ def test_m29_ollama_400_is_not_retried():
         with pytest.raises(ProviderResponseError):
             OllamaClient().generate("prompt")
     assert post.call_count == 1
+
+
+# ── Ollama thinking models (browser run 2026-09-29) ───────────────────────────
+
+@pytest.mark.parametrize("thinking, expected", [("disabled", False), ("enabled", True), ("", None)])
+def test_ollama_think_flag_follows_config(thinking, expected):
+    """qwen3.5 asked for JSON with thinking on answered only in "thinking", so
+    every summary failed as an empty response. The flag comes from config;
+    with no setting nothing is sent, for models that have no thinking mode."""
+    ok = MagicMock()
+    ok.json.return_value = {"response": '{"a": 1}', "prompt_eval_count": 1, "eval_count": 1}
+    with patch("src.llm.requests.post", return_value=ok) as post:
+        OllamaClient(thinking=thinking).generate("p", json_schema={"type": "object"})
+    payload = post.call_args.kwargs["json"]
+    assert payload.get("think") is expected if expected is not None else "think" not in payload
+
+
+def test_ollama_config_disables_thinking_for_qwen35():
+    from src.llm_config import load_llm_config, provider_config
+    from src.llm_providers import build_client
+    cfg = load_llm_config()
+    pconf = provider_config(cfg, "ollama")
+    assert pconf.thinking == "disabled"
+    assert build_client(pconf, api_key="", max_chars=1000).thinking == "disabled"
+
+
+def test_ollama_answer_only_in_thinking_is_named_in_the_log(caplog):
+    import logging
+    only_thinking = MagicMock()
+    only_thinking.json.return_value = {"response": "", "thinking": '{"a": 1}'}
+    with patch("src.llm.requests.post", return_value=only_thinking), \
+         caplog.at_level(logging.WARNING, logger="src.llm"):
+        text, _ = OllamaClient().generate("p", json_schema={"type": "object"})
+    assert text == "" and "thinking: disabled" in caplog.text

@@ -21,7 +21,7 @@ class OllamaClient:
     """Client for Ollama API."""
 
     def __init__(self, base_url: str = OLLAMA_URL, model: str = OLLAMA_MODEL,
-                 timeout: int = 120, max_chars: int = 3000):
+                 timeout: int = 120, max_chars: int = 3000, thinking: str = ""):
         """
         Initialize Ollama client.
 
@@ -30,7 +30,11 @@ class OllamaClient:
             model: Model name, as `ollama list` shows it (e.g. 'qwen3.5:4b')
             timeout: Seconds to wait for a generation (llm_config.yaml timeout)
             max_chars: Paper text sent per summary (llm_config.yaml max_text_chars)
+            thinking: llm_config.yaml `thinking` for this provider: "disabled"
+                sends think=false, "enabled" think=true, "" sends nothing
+                (models without a thinking mode may refuse the flag).
         """
+        self.thinking = (thinking or "").strip().lower()
         self.base_url = base_url
         self.model = model
         self.timeout = timeout
@@ -92,6 +96,11 @@ class OllamaClient:
             payload["system"] = context
         if json_schema is not None:
             payload["format"] = "json"
+        # A thinking model (qwen3.5) asked for JSON puts its whole answer in
+        # "thinking" and leaves "response" empty, so every summary failed as
+        # "empty response" (found by the 2026-09-29 browser run).
+        if self.thinking in ("disabled", "enabled"):
+            payload["think"] = self.thinking == "enabled"
 
         url = f"{self.base_url}/api/generate"
         for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -115,7 +124,11 @@ class OllamaClient:
                 result = response.json()
             except ValueError as e:
                 raise ProviderResponseError(f"Ollama returned non-JSON: {e}") from e
-            return (result.get("response") or "").strip(), from_ollama(result)
+            text = (result.get("response") or "").strip()
+            if not text and (result.get("thinking") or "").strip():
+                logger.warning("Ollama model %s answered only in 'thinking'; set "
+                               "thinking: disabled for it in llm_config.yaml", self.model)
+            return text, from_ollama(result)
         raise ProviderUnavailableError("Ollama failed")   # pragma: no cover
 
     def summarize_paper(

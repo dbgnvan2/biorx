@@ -113,6 +113,7 @@ PROFILE_FIELDS = {
     "preferred_model", "key_source", "key_last4",
     "byo_enabled", "byo_disabled_reason", "owner_summaries_used_today",
     "owner_summaries_cap", "owner_summaries_remaining", "available_providers",
+    "keyless_providers",
 }
 
 
@@ -202,3 +203,11 @@ def test_m3_clearing_the_key_drops_the_stale_model(signed_in, enc_secret):
     signed_in.delete("/api/me/llm-key")
     signed_in.put("/api/me/llm-key", json={"provider": "anthropic", "api_key": "sk-ant-222222222222"})
     assert signed_in.get("/api/me").json()["preferred_model"] == ""
+
+
+def test_br1_me_lists_keyless_providers(signed_in):
+    """The page needs this to refuse a key for local Ollama before saving it
+    (browser run 2026-09-29). Read from config, not hard-coded."""
+    me = signed_in.get("/api/me").json()
+    assert me["keyless_providers"] == ["ollama"]
+    assert set(me["keyless_providers"]) <= set(me["available_providers"])

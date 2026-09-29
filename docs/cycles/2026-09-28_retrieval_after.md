@@ -19,6 +19,12 @@ run from the batch-8 branch with the owner's `filters.json`. Read-only.
 
 Every selected source answered; the three HTTP errors (B2: empty dates) are
 gone. bioRxiv/medRxiv now reads the filter's whole date window (B7).
+
+**Correction (2026-09-29, browser run):** the bioRxiv/medRxiv "60" was not an
+improvement. The API sends 30 papers per call and the adapter stopped after
+the first call per server, so it read 60 of about 4,900 papers and said
+nothing; every one of the 60 was dropped by the filter. Fixed; see
+`docs/cycles/2026-09-29_browser-run.md` F2.
 Crossref enrichment was rate-limited for 115 of 130 papers on this run (the
 filter had been run three times in a few minutes); the run said so on its
 own line and exited 2.

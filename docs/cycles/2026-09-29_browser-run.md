@@ -1,0 +1,91 @@
+# Browser run — common flows, 2026-09-29
+
+Plan section 11 of `docs/implementation_plan_2026-09-28_review_fixes.md`:
+"Front-end flows end to end — common-flow browser run, with screenshots".
+Screenshots: `docs/cycles/2026-09-29_browser-run/` (numbered in the order taken).
+
+**Setup.** Local server (`.claude/launch.json` → `biorx-browser-run`, port 8767)
+on a fresh, empty data folder, with a personal access code made for the run
+(`python -m src.access_codes add --for "Browser Test"`), the local Ollama model
+`qwen3.5:4b`, and live publication sources. Production was not used: signing in
+there needs the owner's own code and PIN.
+
+## Flows
+
+| # | Flow | Result | Screenshot |
+|---|---|---|---|
+| 1 | New code → choose PIN → signed in | works; header shows the model | 01–03 |
+| 2 | Run saved filter "Inflammation" | runs; Run/Search disabled while running; 119 matching; all six sources answered | 04–05 |
+| 3 | Page through results | "1–25 of 119" → "26–50 of 119"; Previous disabled on page 1 | 06–07 |
+| 4 | Summarize a paper with no free full text | abstract kept, labelled "not a model summary", with where it looked | 08 |
+| 5 | Summarize a paper with full text | **failed** ("provider returned an empty response") → fixed, see F1 | 09–10, 13 |
+| 6 | Ad-hoc search, bioRxiv/medRxiv only | **1 match from 60 of ~4,900 papers** → fixed, see F2 | 11–12 |
+| 7 | Save results as a reference list | saved, list shows 5 papers, summary mark kept | 14–15 |
+| 8 | Summarize checked → Cancel | dialog shows papers, estimate and payer; Cancel sends no summary request (network log); batch buttons disabled while the dialog is open | 16–17 |
+| 9 | Review checked → Go ahead | review stored and shown; says it was based on abstracts only | 18–20 |
+| 10 | Filters tab: open a filter; Save as a case-only duplicate name | facets load from the vocabulary (species "Human studies only"); duplicate refused with a clear message | 21–23 |
+| 11 | Settings: save a key for Ollama | server refused it, but the browser **kept it** → fixed, see F3 | 24–27 |
+| 12 | Europe PMC abstract text | raw `<h4>` tags shown → fixed, see F4 | 08, 28 |
+| 13 | Sign out → wrong PIN → right PIN | "Welcome back"; wrong PIN refused; right PIN signs in, data kept | 29–30 |
+| 14 | Phone width (375 px) | no sideways scroll (page width 375) | 31 |
+
+## Found and fixed
+
+- **F1 — local summaries always failed.** `qwen3.5` is a thinking model: asked
+  for JSON it put the whole answer in Ollama's `thinking` field and returned an
+  empty `response`. Reproduced with a direct call. Fix: `llm_config.yaml`
+  `providers.ollama.thinking: disabled` sends `think: false` (the existing
+  per-provider `thinking` setting, now honoured by the Ollama client); an
+  answer only in `thinking` is logged with the setting to change.
+  Tests: `tests/test_tokens.py::test_ollama_think_flag_follows_config`,
+  `::test_ollama_config_disables_thinking_for_qwen35`,
+  `::test_ollama_answer_only_in_thinking_is_named_in_the_log`.
+  After: screenshot 13, a full-text summary from the local model.
+- **F2 — bioRxiv/medRxiv read about 1% of their papers, silently.** The
+  details API now sends 30 papers per call (it was 100; checked with direct
+  calls: 3,433 bioRxiv and 1,491 medRxiv papers for 15–29 Sep). The adapter
+  took a page shorter than 100 as the last page, so each search read 30 per
+  server and reported nothing. Fix: each server's cursor advances by what it
+  sent and it is done when its reported total is reached; the adapter says
+  `has_more`, and the orchestrator trusts that over "shorter than our 50".
+  The Max results limit now cuts it off visibly ("had more results than Max
+  results allows", screenshot 12). The batch-1 after-run
+  (`2026-09-28_retrieval_after.md`) read "30 → 60" as an improvement; it was
+  this bug. Tests: `tests/test_adapters.py::test_b7_reads_past_a_30_paper_page`,
+  `tests/test_orchestrator.py::test_b7_orchestrator_reads_a_30_per_page_source_to_its_budget`.
+- **F3 — a refused key stayed in the browser.** Saving a key with Ollama
+  selected: the server refused it (batch 7, M8), but the page had already
+  stored it, and sent it with every summary, each then refused with a 400.
+  Fix: `/api/me` lists `keyless_providers` (from config); the page refuses a
+  key for one before storing anything, and switching to one clears a key kept
+  in the browser. The "Local key saved (…0000)" hint is now reset when the
+  key goes (screenshot 27 was taken before that part of the fix).
+  Tests: `tests/web/test_frontend_wiring.py::test_br1_*`,
+  `tests/web/test_llm_key_routes.py::test_br1_me_lists_keyless_providers`.
+- **F4 — Europe PMC abstracts showed HTML tags.** Europe PMC sends
+  `<h4>Objective</h4>`, `<p>`, `<sub>`; the page (correctly) escapes them,
+  so they showed as text. Fix: `src/sources/markup.py` turns known tags into
+  text ("Objective: …"), shared with Crossref's JATS abstracts. Crossref's old
+  helper removed anything between `<` and `>`, which eats "p < 0.05 … x > 1";
+  only known tag names are removed now. Summaries stored before the fix keep
+  their tags. Tests: `tests/test_markup.py`.
+
+## Found, not fixed
+
+- **bioRxiv/medRxiv coverage is still small.** With F2 fixed, a 200-paper
+  budget reads ~200–300 of ~4,900 papers in a 14-day window (the API has no
+  keyword search; filtering happens here). It is now reported, not silent. A
+  better design counts matches rather than papers read for date-only sources,
+  with its own page limit — a decision for the owner.
+- The review text is Markdown (`**Shared Themes**`) and is shown as raw text
+  (screenshot 20).
+- The summary label reads "ollama · qwen3.5:4b · none key" for a provider with
+  no key.
+- The reference list's Source column shows the internal id `biorxiv_medrxiv`;
+  search results show "bioRxiv" / "medRxiv".
+- A Europe PMC paper "… in Rats" passed the Inflammation filter's "exclude
+  animal studies": that facet is sent to Europe PMC as `NOT ANIMAL` and is not
+  re-checked here.
+- "Save all" and "Save as…" use the browser's `prompt()`; the run answered it
+  with a stub (`window.prompt` replaced in the page) because the test browser
+  cannot type into native dialogs.

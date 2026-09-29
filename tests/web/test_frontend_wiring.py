@@ -539,7 +539,7 @@ def test_dt2_client_polls_the_discover_endpoint():
 
 # ── Cold sweep (2026-09-17) ───────────────────────────────────────────────────
 
-def _run_handler(name, api_stub, extra=""):
+def _run_handler(name, api_stub, extra="", with_store=False):
     """Run one of the client's settings handlers in node with a stubbed api()
     and DOM, returning the notices it produced."""
     source = APP_JS.read_text()
@@ -559,8 +559,9 @@ function notice(m, kind = "error") { notices.push([kind, m]); }
 function renderMe() {}
 const state = { me: { user_id: "u-1", byo_enabled: true, preferred_model: "" } };
 """ + api_stub + extra
+    out = "{notices, store}" if with_store else "notices"
     script = prelude + consts + "\n" + "\n".join(fns) + \
-        f"\n{name}().then(() => console.log(JSON.stringify(notices)));"
+        f"\n{name}().then(() => console.log(JSON.stringify({out})));"
     import json
     import shutil
     import subprocess
@@ -2952,3 +2953,56 @@ def test_m36_js_calls_match_method_and_path(app):
     assert 'api("GET", "/api/me")' in source
     mutated = source.replace('api("GET", "/api/me")', 'api("DELETE", "/api/me")', 1)
     assert _wrong_calls(app, mutated) == [("DELETE", "/api/me")]
+
+
+
+# ── Browser run 2026-09-29: a key for a keyless provider ─────────────────────
+
+_KEYLESS = """
+async function api(method, path) {
+  notices.push(["api", method + " " + path]);
+  return state.me;
+}
+state.me.keyless_providers = ["ollama"];
+"""
+
+
+def test_br1_key_for_keyless_provider_is_refused_before_saving():
+    """The server refused an Ollama key, but the browser had already kept it
+    and sent it with every summary, each then refused with a 400."""
+    got = _run_handler("saveKey", _KEYLESS,
+                       '\n$("api-key").value = "sk-test-key-0000"; $("key-provider").value = "ollama";',
+                       with_store=True)
+    assert got["notices"] == [["error", ""], ["error", "ollama does not take an API key, so nothing was saved."]]
+    assert got["store"] == {}                      # nothing kept in the browser
+
+
+def test_br1_switching_to_a_keyless_provider_clears_the_browser_key():
+    got = _run_handler("saveKey", _KEYLESS,
+                       '\n$("key-provider").value = "ollama";'
+                       'store["biorx_local_key:u-1"] = "sk-old-key-9999";'
+                       'store["biorx_local_provider:u-1"] = "deepseek";',
+                       with_store=True)
+    assert not any(k.startswith("biorx_local_key") for k in got["store"]), got["store"]
+
+
+def test_br1_a_key_for_a_keyed_provider_is_still_kept():
+    got = _run_handler("saveKey", _KEYLESS,
+                       '\n$("api-key").value = "sk-test-key-0000"; $("key-provider").value = "deepseek";',
+                       with_store=True)
+    assert "sk-test-key-0000" in got["store"].values()
+
+
+def test_br1_placeholder_follows_the_browser_key():
+    """The "Local key saved (…0000)" hint stayed after the key was cleared."""
+    body = _js_block(r"function renderMe\(\) \{.*?\n\}")
+    snippet = body[body.index("const keyInput"):body.index("const serverStatus")]
+    assert ": \"Stored encrypted; only the last 4 are ever shown\"" in snippet
+    got = _node_eval([
+        "const el = {placeholder: 'Local key saved (…0000). Enter a new one to replace.'};",
+        "const document = {activeElement: null};",
+        "function $(id) { return el; }",
+        "function run(local) { " + snippet + " return el.placeholder; }",
+    ], "[run({key: ''}), run({key: 'sk-abcd1234'})]")
+    assert got == ["Stored encrypted; only the last 4 are ever shown",
+                   "Local key saved (…1234). Enter a new one to replace."]

@@ -3,6 +3,19 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the browser run (`docs/cycles/2026-09-29_browser-run.md`) — not fixed
+
+- **Decision needed:** bioRxiv/medRxiv have no keyword search, so a 200-paper
+  budget reads ~200–300 of ~4,900 papers in two weeks (now reported, not
+  silent). Counting matches instead of papers read, with a page limit, would
+  cover the window.
+- Review text is Markdown and shows as raw `**…**`.
+- Summary label "none key" for a provider with no key.
+- Reference list Source column shows `biorxiv_medrxiv`, not the label.
+- "Exclude animal studies" is only sent to Europe PMC (`NOT ANIMAL`), not
+  re-checked here; a "… in Rats" paper passed.
+- Summaries stored before the markup fix still contain HTML tags.
+
 ## CI race (`docs/cycles/2026-09-28_review-ci-race-qa-gate.md`) — APPROVED
 
 - CI was red on and off from batch 2 to batch 7: a test returned while its
@@ -15,8 +28,7 @@
 - Both low findings answered in 0bf9ddb (suite count in the report; name
   folding matches each comparison — login names as SQLite's lower(), filter
   names with casefold).
-- Open from the plan's human checks (`docs/spec_coverage_review_fixes.md`):
-  no per-batch browser run with screenshots was recorded.
+- The browser run is done (`docs/cycles/2026-09-29_browser-run.md`).
 - `gui.py` still imports modules whose interfaces changed in this review; it
   is not updated (retiring).
 
