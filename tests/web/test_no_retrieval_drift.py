@@ -93,8 +93,12 @@ ROOT = Path(__file__).parent.parent.parent
 #   after one, reading ~1% of the window silently; the adapter reports has_more and
 #   the orchestrator trusts it. F4 Europe PMC/Crossref text through the new shared
 #   src/sources/markup.py, now protected too. QA gate finding 1 — W1.a required)
+# Updated from 26327ec → f854662 (owner's decision 2026-09-29: bioRxiv/medRxiv count
+#   matches against Max results, bounded by a configured page limit — orchestrator
+#   filters a filters_locally source per page; PubMed label; markup decodes entities
+#   before removing tags — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "26327ec"
+BASELINE = "f854662"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
