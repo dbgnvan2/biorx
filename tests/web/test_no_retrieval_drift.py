@@ -88,8 +88,13 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from de3c124 → dd0f496 (review batch 3, S2: orchestrator.search normalises the
 #   filter, refuses an empty one, and reports source failures through
 #   on_source_failure; one label map via config.source_label — W1.a required)
+# Updated from dd0f496 → 26327ec (browser run 2026-09-29, docs/cycles/2026-09-29_browser-run.md:
+#   F2 bioRxiv/medRxiv paging — the API sends 30 per call and the adapter stopped
+#   after one, reading ~1% of the window silently; the adapter reports has_more and
+#   the orchestrator trusts it. F4 Europe PMC/Crossref text through the new shared
+#   src/sources/markup.py, now protected too. QA gate finding 1 — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "dd0f496"
+BASELINE = "26327ec"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
@@ -107,6 +112,7 @@ PROTECTED = [
     "src/sources/biorxiv_medrxiv.py",
     "src/sources/crossref.py",
     "src/sources/unpaywall.py",
+    "src/sources/markup.py",
 ]
 
 
