@@ -99,8 +99,11 @@ ROOT = Path(__file__).parent.parent.parent
 #   before removing tags — W1.a required)
 # Updated from f854662 → 7acd226 (bioRxiv-budget QA gate F2: a filters_locally source
 #   reports matches through on_progress and papers read through on_status — W1.a required)
+# Updated from 7acd226 → 21d2b35 (production run 2026-09-29: the orchestrator counts matches
+#   that repeat a paper already read, so papers read = match + do not + repeats +
+#   unreadable, and warns when they do not add up — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "7acd226"
+BASELINE = "21d2b35"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
