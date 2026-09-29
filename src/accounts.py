@@ -286,15 +286,30 @@ def check_new_pin(pin: str) -> None:
         raise AccountError(f"Choose a PIN of at least {pin_min_length()} characters.")
 
 
+def setup_code_pending(db, user_id: str) -> bool:
+    row = _by_id(db, user_id)
+    return bool(row and not row["pin_hash"] and row["setup_code_hash"])
+
+
 def has_pin(db, user_id: str) -> bool:
     row = _by_id(db, user_id)
     return bool(row and row["pin_hash"])
 
 
-def sign_in_user(db, user_id: str, pin: str, now: Optional[datetime] = None) -> str:
+class SetupCodeNeeded(AccountError):
+    """The PIN was reset by the owner; the new PIN needs the setup code they gave."""
+
+
+def sign_in_user(db, user_id: str, pin: str, now: Optional[datetime] = None,
+                 setup_code: str = "") -> str:
     """Check the PIN of a user already picked out by their access code
     (docs/implementation_plan_2026-09-18_invite_codes.md#PC4). Same lockout as
-    sign_in. A user with no PIN (new, or reset by the owner) sets it here."""
+    sign_in. A user with no PIN (new, or reset by the owner) sets it here.
+
+    After an owner reset the new PIN also needs the one-time setup code the
+    owner handed over (review M5): the access code alone is not secret, and
+    whoever presented it first after the reset used to take the account.
+    """
     now = now or _now()
     row = _by_id(db, user_id)
     if row is None:
@@ -302,17 +317,26 @@ def sign_in_user(db, user_id: str, pin: str, now: Optional[datetime] = None) -> 
         raise BadCredentials("That code or PIN is not right.")
     _check_lock(row, now)
     if not row["pin_hash"]:
+        if row["setup_code_hash"]:
+            if not setup_code:
+                raise SetupCodeNeeded(
+                    "Your PIN was reset. Enter the setup code the owner gave you.")
+            attempt = _claim_attempt(db, row, now)
+            if not verify_secret(setup_code.strip().upper(), row["setup_code_hash"]):
+                _failed(db, user_id, attempt, now)
+                raise BadCredentials("That setup code is not right.")
         check_new_pin(pin)
         # Only set if still unset, so two people racing to choose a PIN for
         # one code cannot overwrite each other.
         cur = db.conn.execute(
-            "UPDATE users SET pin_hash = ?, failed_logins = 0, locked_until = NULL "
+            "UPDATE users SET pin_hash = ?, failed_logins = 0, locked_until = NULL, "
+            "setup_code_hash = NULL "
             "WHERE user_id = ? AND pin_hash IS NULL RETURNING session_nonce",
             (hash_secret(pin), user_id))
         got = cur.fetchone()
         db.conn.commit()
         if got is None:
-            return sign_in_user(db, user_id, pin, now)
+            return sign_in_user(db, user_id, pin, now, setup_code)
         return _signed_in(db, user_id, got[0] or "")
     attempt = _claim_attempt(db, row, now)
     if not verify_secret(pin, row["pin_hash"]):

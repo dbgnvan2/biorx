@@ -58,7 +58,7 @@ const state = {
   checkedPapers: new Set(),   // canonical_ids of checked search results
   summarizing: new Set(),     // paperKey()s with a summary in progress
   activeTab: "search",
-  sources: [],                // from /healthz
+  sources: [],                // from /api/config
   // Filters tab
   filters: [],
   activeFilterId: null,
@@ -70,7 +70,7 @@ const state = {
   activeListId: null,
   refItems: [],
   refSummaries: [],           // stored summaries for the open list (RL1)
-  findByTitleDefault: true,   // server default for title search (/healthz)
+  findByTitleDefault: true,   // server default for title search (/api/config)
   // Discover
   discoverJobId: null,
   discoverPolling: null,
@@ -150,7 +150,7 @@ const LS_MY_CODE = "biorx_my_code";
 const SIGN_IN_MESSAGE = "Sign in to continue.";
 let gateCode = "";       // the code the PIN step is for
 let gatePinSet = true;   // false: a new code, or a PIN the owner reset
-let gatePinMin = 6;      // LOGIN_PIN_MIN_LENGTH, from /healthz
+let gatePinMin = 6;      // LOGIN_PIN_MIN_LENGTH, from /api/gate
 
 function gateError(message) {
   $("gate-error").textContent = message;
@@ -193,7 +193,7 @@ async function showGate(message) {
   $("gate").classList.remove("hidden");
   gateError(message && message !== SIGN_IN_MESSAGE ? message : "");
   try {
-    const health = await api("GET", "/healthz");
+    const health = await api("GET", "/api/gate");
     // The old name sign-in only while the shared access code is still set (PC8).
     $("show-legacy").classList.toggle("hidden", !health.access_code_set);
     if (health.pin_min_length) gatePinMin = health.pin_min_length;
@@ -215,6 +215,9 @@ async function lookupCode(code) {
   gateError("");
   gateCode = code;
   gatePinSet = !!who.pin_set;
+  // M5: after an owner PIN reset, the new PIN needs their one-time setup code.
+  $("setup-code-wrap").classList.toggle("hidden", !who.setup_code_required);
+  $("setup-code").value = "";
   $("welcome").textContent = gatePinSet
     ? `Welcome back, ${who.name}.`
     : `Welcome, ${who.name}. Choose a PIN you will remember.`;
@@ -243,10 +246,12 @@ async function pinSignIn() {
     return;
   }
   try {
-    state.me = await api("POST", "/api/session", { code: gateCode, pin });
+    state.me = await api("POST", "/api/session",
+                         { code: gateCode, pin, setup_code: $("setup-code").value.trim() });
   } catch (e) { gateError(e.message); return; }
   $("my-pin").value = "";
   $("my-pin-confirm").value = "";
+  $("setup-code").value = "";
   rememberCode($("remember-code").checked ? gateCode : "");
   showApp();
 }
@@ -337,7 +342,7 @@ const LS_FIND_BY_TITLE = "biorx_find_by_title";
 
 /* FT3: look for free copies by title as well as DOI. This browser's choice if
    it made one, else the server's default (sources_config.yaml full_text.
-   find_by_title, via /healthz) — gate finding F1: the config was ignored.
+   find_by_title, via /api/config) — gate finding F1: the config was ignored.
    Pure apart from reading storage, for the node-run test. */
 function findByTitle() {
   let choice = null;
@@ -602,7 +607,7 @@ function failedSourcesText(job) {
 
 async function loadSources() {
   try {
-    const health = await api("GET", "/healthz");
+    const health = await api("GET", "/api/config");     // signed-in only (M7)
     state.sources = (health.sources || []).filter(s => s.enabled);
     state.findByTitleDefault = health.find_by_title_default !== false;
     $("find-by-title").checked = findByTitle();

@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
 from datetime import date
@@ -35,6 +35,8 @@ class SessionRequest(BaseModel):
     name: str = Field(default="", max_length=100)
     pin: str = Field(default="", max_length=200)
     create: bool = False
+    # After an owner PIN reset: the one-time code they handed over (review M5).
+    setup_code: str = Field(default="", max_length=20)
 
 
 class LookupRequest(BaseModel):
@@ -170,8 +172,31 @@ def _entry_or_refuse(ctx: AppContext, code: str,
     return entry
 
 
+def sign_in_guard(request: Request, ctx: AppContext = Depends(get_context)):
+    """Purpose: Limit sign-in attempts per address and hashing at once (review M4).
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#M4
+    Tests:   tests/web/test_auth.py::test_m4_sign_in_rate_limited,
+             tests/web/test_auth.py::test_m4_scrypt_concurrency_bounded
+    """
+    import os
+    from src.sign_in_limits import client_address
+    limiter = ctx.get_sign_in_limiter()
+    address = client_address(request, os.environ.get("TRUST_PROXY", "") == "1")
+    if not limiter.allow(address):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail="Too many sign-in attempts from here. Wait a minute and try again.")
+    if not limiter.try_slot():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="The server is busy signing people in. Try again in a moment.")
+    try:
+        yield
+    finally:
+        limiter.release_slot()
+
+
 @router.post("/api/session/lookup")
-def lookup_code(body: LookupRequest, ctx: AppContext = Depends(get_context)):
+def lookup_code(body: LookupRequest, ctx: AppContext = Depends(get_context),
+                _guard: None = Depends(sign_in_guard)):
     """Who a code belongs to, for "Welcome back, NAME" (PC14). Public, and says
     only the name and whether a PIN is set — never an id, key or data."""
     entry = _entry_or_refuse(ctx, body.code, same_work=False)
@@ -181,7 +206,9 @@ def lookup_code(body: LookupRequest, ctx: AppContext = Depends(get_context)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="This code is not set up correctly. Ask the owner.")
     return {"name": entry.for_name,
-            "pin_set": bool(user_id and accounts.has_pin(ctx.db, user_id))}
+            "pin_set": bool(user_id and accounts.has_pin(ctx.db, user_id)),
+            # After an owner reset the new PIN needs the setup code (M5).
+            "setup_code_required": bool(user_id and accounts.setup_code_pending(ctx.db, user_id))}
 
 
 def _code_sign_in(ctx: AppContext, body: SessionRequest) -> tuple:
@@ -205,7 +232,8 @@ def _code_sign_in(ctx: AppContext, body: SessionRequest) -> tuple:
             _seed_filters(ctx, user_id)
             return user_id, True
         user_id = access_codes.bound_user_by_key(ctx.db, entry.key)
-    return accounts.sign_in_user(ctx.db, user_id, body.pin), False
+    return accounts.sign_in_user(ctx.db, user_id, body.pin,
+                                 setup_code=body.setup_code), False
 
 
 def _refuse_if_cut_off(ctx: AppContext, user_id: str) -> None:
@@ -222,7 +250,8 @@ def _refuse_if_cut_off(ctx: AppContext, user_id: str) -> None:
 
 @router.post("/api/session")
 def create_session(body: SessionRequest, response: Response,
-                   ctx: AppContext = Depends(get_context)):
+                   ctx: AppContext = Depends(get_context),
+                   _guard: None = Depends(sign_in_guard)):
     """Sign in with a personal code + PIN; a new code creates its account.
 
     The old way — shared access code + name + PIN — still signs in accounts
@@ -254,7 +283,8 @@ def create_session(body: SessionRequest, response: Response,
 
 @router.post("/api/session/recover")
 def recover_session(body: RecoverRequest, response: Response,
-                    ctx: AppContext = Depends(get_context)):
+                    ctx: AppContext = Depends(get_context),
+                    _guard: None = Depends(sign_in_guard)):
     """Forgot PIN: name + recovery code + new PIN. Returns a new recovery code."""
     _gate(ctx, body.access_code)
     try:
@@ -271,7 +301,30 @@ def recover_session(body: RecoverRequest, response: Response,
 
 
 @router.delete("/api/session")
-def end_session(response: Response):
+def end_session(request: Request, response: Response,
+                ctx: AppContext = Depends(get_context)):
+    """Sign out: end the session on the server, not only in this browser.
+
+    Purpose: A copy of the cookie stops working at sign-out (review M6).
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#M6
+    Tests:   tests/web/test_auth.py::test_m6_sign_out_invalidates_copies
+
+    Clearing the cookie alone left any copy of it valid for its 30 days. The
+    account's session nonce is renewed, which ends every session of the
+    account (all devices). Only a currently valid cookie can do this, so an
+    old, already-ended copy cannot sign the real user out.
+    """
+    import hmac
+    from .auth import read_session_nonce
+    from .deps import SESSION_COOKIE
+    got = read_session_nonce(ctx, request.cookies.get(SESSION_COOKIE))
+    if got is not None:
+        user_id, nonce = got
+        row = ctx.db.conn.execute("SELECT session_nonce FROM users WHERE user_id = ?",
+                                  (user_id,)).fetchone()
+        if row is not None and hmac.compare_digest((row["session_nonce"] or "").encode(),
+                                                   nonce.encode()):
+            accounts.end_sessions(ctx.db, user_id)
     clear_session(response)
     return {"ok": True}
 
@@ -299,15 +352,27 @@ def put_llm_key(body: LlmKeyRequest,
 
     The response carries the masked fragment only; the key never travels back.
     """
-    if provider_config(ctx.llm_config, body.provider) is None:
+    pconf = provider_config(ctx.llm_config, body.provider)
+    if pconf is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"{body.provider!r} is not a configured provider.",
         )
+    if not pconf.needs_key:
+        # review M8: a keyless provider takes no key.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"{pconf.name} does not take an API key.")
+    row = ctx.db.conn.execute("SELECT llm_provider FROM users WHERE user_id = ?",
+                              (user_id,)).fetchone()
+    previous_provider = (row["llm_provider"] or "") if row else ""
     try:
         user_store.set_llm_key(ctx.db, user_id, body.provider, body.api_key)
         if body.model:
             user_store.set_preferred_model(ctx.db, user_id, body.model)
+        elif previous_provider and previous_provider != body.provider:
+            # review M3: the old provider's model would be sent to the new
+            # provider, and every summary would fail until cleared by hand.
+            user_store.set_preferred_model(ctx.db, user_id, "")
     except crypto.KeyEncryptionUnavailable as e:
         # Storage is off because KEY_ENC_SECRET is absent. Say so plainly
         # rather than storing the key unencrypted.

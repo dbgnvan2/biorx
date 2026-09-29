@@ -452,12 +452,22 @@ def resolve_client(user_provider: str = "", user_key: str = "",
 
     # 1. The user's own key, for the provider they chose.
     if user_key:
-        name = user_provider or default_provider(cfg)
+        if not user_provider:
+            # Assuming the server's default sent a DeepSeek key to Anthropic (or
+            # the reverse) whenever the default changed (review M9).
+            raise NoLLMCredentialError("say which provider this key is for")
+        name = user_provider
         pconf = provider_config(cfg, name)
         if pconf is None:
             raise NoLLMCredentialError(
                 f"your key is set for {name!r}, which is not a configured provider"
             )
+        if not pconf.needs_key:
+            # A made-up "key" for a keyless provider (the owner's local Ollama)
+            # was recorded as the user's own and let them pick any model there
+            # (review M8).
+            raise NoLLMCredentialError(
+                f"{pconf.name} does not take an API key; remove the key to use it")
         effective_model = user_model.strip() or pconf.model
         return ResolvedLLM(build_client(pconf, user_key, budget, user_model), pconf.name,
                            effective_model, "user")

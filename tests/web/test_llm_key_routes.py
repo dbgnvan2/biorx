@@ -165,3 +165,27 @@ def test_me1_preferred_model_with_own_key_is_reported(signed_in, enc_secret):
     body = signed_in.get("/api/me").json()
     assert body["key_source"] == "user"
     assert body["model"] == "claude-haiku-4-5"
+
+
+# ── M3 / M8: saving a key ────────────────────────────────────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M3, #M8
+
+def test_m3_provider_change_clears_model(ctx, signed_in, enc_secret):
+    signed_in.put("/api/me/llm-key", json={"provider": "deepseek", "api_key": "sk-user-111111",
+                                           "model": "deepseek-chat"})
+    me = signed_in.get("/api/me").json()
+    assert me["preferred_model"] == "deepseek-chat"
+    signed_in.put("/api/me/llm-key", json={"provider": "anthropic", "api_key": "sk-ant-222222"})
+    assert signed_in.get("/api/me").json()["preferred_model"] == ""
+
+
+def test_m3_same_provider_keeps_model(ctx, signed_in, enc_secret):
+    signed_in.put("/api/me/llm-key", json={"provider": "deepseek", "api_key": "sk-user-111111",
+                                           "model": "deepseek-chat"})
+    signed_in.put("/api/me/llm-key", json={"provider": "deepseek", "api_key": "sk-user-333333"})
+    assert signed_in.get("/api/me").json()["preferred_model"] == "deepseek-chat"
+
+
+def test_m8_key_for_keyless_provider_refused_on_save(signed_in, enc_secret):
+    r = signed_in.put("/api/me/llm-key", json={"provider": "ollama", "api_key": "sk-anything"})
+    assert r.status_code == 400 and "does not take an API key" in r.json()["detail"]

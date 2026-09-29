@@ -326,3 +326,16 @@ def test_repo_config_uses_deepseek_flash_with_thinking_off():
     assert pconf.thinking == "disabled"
     client = build_client(pconf, "k", 1000)
     assert client.thinking == "disabled"
+
+
+# ── M8 / M9: a user key names a provider that takes keys ─────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M8, #M9
+
+def test_m8_key_for_keyless_provider_refused():
+    with pytest.raises(NoLLMCredentialError, match="does not take an API key"):
+        resolve_client(user_provider="ollama", user_key="anything")
+
+
+def test_m9_key_without_provider_refused():
+    with pytest.raises(NoLLMCredentialError, match="which provider"):
+        resolve_client(user_provider="", user_key="sk-user-abc")

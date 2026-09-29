@@ -50,6 +50,14 @@ class AppContext:
     codes: Optional[CodeStore] = None
     orchestrator: Any = None
     startup_warnings: list = field(default_factory=list)
+    # Sign-in attempt limits (review M4); built from llm_config on first use.
+    sign_in_limiter: Any = None
+
+    def get_sign_in_limiter(self):
+        if self.sign_in_limiter is None:
+            from src.sign_in_limits import from_config
+            self.sign_in_limiter = from_config(self.llm_config)
+        return self.sign_in_limiter
 
     def get_orchestrator(self):
         """Build the SourceOrchestrator lazily.

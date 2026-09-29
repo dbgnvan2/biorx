@@ -491,7 +491,11 @@ class Database:
                                 # A random value in every session cookie; a new
                                 # one on PIN reset, recovery or merge ends all
                                 # cookies issued before it. NULL = never changed.
-                                ("session_nonce", "TEXT")):
+                                ("session_nonce", "TEXT"),
+                                # A one-time code the owner hands over with a
+                                # PIN reset; choosing the new PIN needs it
+                                # (review M5). Stored hashed; NULL = none.
+                                ("setup_code_hash", "TEXT")):
             self._add_column_if_missing(cursor, "users", col, definition)
         cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login_name "

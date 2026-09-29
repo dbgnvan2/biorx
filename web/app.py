@@ -128,13 +128,37 @@ def create_app(ctx: AppContext = None) -> FastAPI:
 
     @application.get("/healthz")
     def healthz():
-        """Liveness plus the effective configuration. Never reports a secret —
-        only whether one is present. Includes startup_warnings so the caller
-        can surface "Unpaywall off, no contact email" to the user (P25)."""
+        """Liveness, for the platform's healthcheck. Nothing else: it is public,
+        and it used to show anyone the database path, the model and whether an
+        owner key or the shared code was set (review M7)."""
+        return {"ok": True}
+
+    @application.get("/api/gate")
+    def gate_config():
+        """What the sign-in page needs before anyone is signed in (review M7):
+        whether the old name sign-in is offered, the PIN length, and the
+        server's startup warnings — a broken codes file stops everyone signing
+        in, so its warning cannot be behind a sign-in."""
+        c: AppContext = application.state.ctx
+        from src.accounts import pin_min_length as accounts_pin_min_length
+        c.get_orchestrator()        # built lazily; it records its startup warnings
+        return {"access_code_set": bool(c.access_code),
+                "pin_min_length": accounts_pin_min_length(),
+                "codes_in_use": bool(c.codes and c.codes.entries()),
+                "startup_warnings": list(c.startup_warnings) + _codes_file_warning(c)}
+
+    from .auth import current_user
+    from fastapi import Depends
+
+    @application.get("/api/config")
+    def server_config(user_id: str = Depends(current_user)):
+        """The effective configuration, for signed-in users (review M7). Never
+        reports a secret — only whether one is present. Includes
+        startup_warnings so the page can surface "Unpaywall off, no contact
+        email" (P25)."""
         c: AppContext = application.state.ctx
         from src import crypto
         from src.llm_config import default_provider, provider_config
-        from src.accounts import pin_min_length as accounts_pin_min_length
 
         provider = default_provider(c.llm_config)
         pconf = provider_config(c.llm_config, provider)
@@ -150,16 +174,12 @@ def create_app(ctx: AppContext = None) -> FastAPI:
             for sid in enabled_sources
         ]
         return {
-            "ok": True,
-            "access_code_set": bool(c.access_code),
             "byo_keys_enabled": crypto.is_enabled(),
             "provider": provider,
             "model": pconf.model if pconf else "",
             "owner_key_set": bool(pconf.owner_key()) if pconf else False,
-            "db_path": str(c.db.db_path),
             "startup_warnings": list(c.startup_warnings) + _codes_file_warning(c),
             "codes_in_use": bool(c.codes and c.codes.entries()),
-            "pin_min_length": accounts_pin_min_length(),
             "sources": sources_list,
             # Where summaries look for free full text (plan 2026-09-19 C4).
             # Unpaywall needs a contact email; without one it is not listed.

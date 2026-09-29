@@ -32,7 +32,7 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import NamedTuple, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -632,9 +632,25 @@ def renew_entry(path: str, for_name: str, today: Optional[date] = None) -> date:
     return new_expiry
 
 
-def reset_pin(db, store: CodeStore, for_name: str) -> str:
+class ResetResult(NamedTuple):
+    user_id: str
+    setup_code: str         # hand this to the person with their access code
+
+
+def new_setup_code() -> str:
+    """Eight characters from an unambiguous alphabet, as XXXX-XXXX."""
+    import secrets
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    raw = "".join(secrets.choice(alphabet) for _ in range(8))
+    return f"{raw[:4]}-{raw[4:]}"
+
+
+def reset_pin(db, store: CodeStore, for_name: str) -> ResetResult:
     """Clear the PIN of the account a person's code belongs to (PC6). Their
-    next sign-in with the code asks for a new PIN. Returns the user id."""
+    next sign-in with the code asks for a new PIN — and, since review M5, for
+    the one-time setup code returned here, which the owner hands over. The
+    account's stored LLM key is removed too, so whoever held the code in the
+    meantime could not spend it."""
     want = " ".join(for_name.split()).lower()
     matches = [e for e in store.entries() if e.for_name.lower() == want]
     if not matches:
@@ -653,8 +669,15 @@ def reset_pin(db, store: CodeStore, for_name: str) -> str:
         db.conn.execute("UPDATE users SET pin_hash = NULL, failed_logins = 0, "
                         "locked_until = NULL WHERE user_id = ?", (uid,))
     end_sessions(db, user_id)
+    from .accounts import hash_secret
+    from .user_store import clear_llm_key
+    code = new_setup_code()
+    for uid in merged_family(db, user_id):
+        clear_llm_key(db, uid)
+    db.conn.execute("UPDATE users SET setup_code_hash = ? WHERE user_id = ?",
+                    (hash_secret(code), user_id))
     db.conn.commit()
-    return user_id
+    return ResetResult(user_id, code)
 
 
 def describe(db, store: CodeStore, today: Optional[date] = None) -> List[dict]:
@@ -730,11 +753,13 @@ def _main(argv=None) -> int:
         print(f"WARNING: {w}")
     if args.cmd == "reset-pin":
         try:
-            reset_pin(db, store, args.for_name)
+            result = reset_pin(db, store, args.for_name)
         except LookupError as e:
             print(e)
             return 1
         print(f"{args.for_name} will choose a new PIN the next time they enter their code.")
+        print(f"Give them this one-time setup code as well: {result.setup_code}")
+        print("Their stored LLM key was removed; they can add it again in Settings.")
         return 0
     for r in describe(db, store):
         extra = f"  account={r['account']}" if r["account"] else ""

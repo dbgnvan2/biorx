@@ -16,6 +16,7 @@ from tests.web.conftest import ACCESS_CODE, TEST_PIN, account_body
 # route added to this set is a deliberate decision, not an oversight.
 PUBLIC = {
     ("/healthz", "get"),          # liveness, for the platform
+    ("/api/gate", "get"),         # what the sign-in page needs (review M7)
     ("/api/session", "post"),     # the sign-in itself
     ("/api/session/recover", "post"),  # forgot PIN: gated by the access code, not a session
     ("/api/session/lookup", "post"),   # "Welcome back, NAME" before sign-in (PC14/PC15)
@@ -26,7 +27,7 @@ PUBLIC = {
 # The exact number of authenticated operations. An exact count, not a floor:
 # a floor stays satisfied while the route table halves (learnings P29). Update
 # this deliberately when a route is added or removed.
-PROTECTED_ROUTE_COUNT = 41   # + GET /api/jobs/running (review A7): one user's
+PROTECTED_ROUTE_COUNT = 42   # + GET /api/config (review M7): moved off /healthz   # + GET /api/jobs/running (review A7): one user's
                              # own jobs
                              # + GET /api/vocabulary (review S3): served to
                              # the signed-in page with the filter editor
@@ -319,3 +320,95 @@ def test_a_cookie_from_before_session_nonces_still_works(ctx, client):
     token = URLSafeTimedSerializer(ctx.session_secret, salt="biorx-session-v1").dumps(uid)
     client.cookies.set("biorx_session", token)
     assert client.get("/api/me").status_code == 200
+
+
+# ── M4: sign-in attempts are limited ─────────────────────────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M4
+
+def test_m4_sign_in_rate_limited(ctx, app, client, monkeypatch):
+    from src.sign_in_limits import SignInLimiter
+    ctx.sign_in_limiter = SignInLimiter(per_minute=10, concurrent=4)
+    codes = [client.post("/api/session/lookup", json={"code": "ZZZZ-ZZZZ-ZZZZ"}).status_code
+             for _ in range(11)]
+    assert codes[:10] == [401] * 10          # wrong code, answered normally
+    assert codes[10] == 429
+    # One budget across the three routes.
+    assert client.post("/api/session", json={"code": "ZZZZ-ZZZZ-ZZZZ", "pin": "x"}).status_code == 429
+
+
+def test_m4_limit_is_per_address(ctx, monkeypatch):
+    from src.sign_in_limits import SignInLimiter, client_address
+    lim = SignInLimiter(per_minute=1, concurrent=1)
+    assert lim.allow("1.1.1.1") and not lim.allow("1.1.1.1") and lim.allow("2.2.2.2")
+
+    class Req:
+        headers = {"x-forwarded-for": "9.9.9.9, 10.0.0.1"}
+        client = type("C", (), {"host": "10.0.0.1"})()
+    assert client_address(Req(), trust_proxy=True) == "9.9.9.9"
+    assert client_address(Req(), trust_proxy=False) == "10.0.0.1"   # header not trusted
+
+
+def test_m4_allowance_refills():
+    from src.sign_in_limits import SignInLimiter
+    now = [0.0]
+    lim = SignInLimiter(per_minute=60, concurrent=1, clock=lambda: now[0])
+    for _ in range(60):
+        assert lim.allow("a")
+    assert not lim.allow("a")
+    now[0] += 1.0                      # one second: one attempt back
+    assert lim.allow("a") and not lim.allow("a")
+
+
+def test_m4_scrypt_concurrency_bounded(ctx, client):
+    from unittest.mock import patch
+    from src.sign_in_limits import SignInLimiter
+    ctx.sign_in_limiter = SignInLimiter(per_minute=100, concurrent=1)
+    assert ctx.sign_in_limiter.try_slot()          # another sign-in is hashing
+    with patch("src.accounts.verify_secret") as hashed:
+        r = client.post("/api/session", json={"code": "ZZZZ-ZZZZ-ZZZZ", "pin": "x"})
+    assert r.status_code == 503 and "busy" in r.json()["detail"]
+    hashed.assert_not_called()
+    ctx.sign_in_limiter.release_slot()
+    assert client.post("/api/session", json={"code": "ZZZZ-ZZZZ-ZZZZ", "pin": "x"}).status_code == 401
+
+
+# ── M6: signing out ends the session on the server ───────────────────────────
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M6
+
+def test_m6_sign_out_invalidates_copies(app):
+    from fastapi.testclient import TestClient
+    body = account_body(ACCESS_CODE)
+    a = TestClient(app)
+    assert a.post("/api/session", json=body).status_code == 200
+    copied = a.cookies.get("biorx_session")
+    thief = TestClient(app)
+    thief.cookies.set("biorx_session", copied)
+    assert thief.get("/api/me").status_code == 200
+    assert a.delete("/api/session").status_code == 200
+    assert thief.get("/api/me").status_code == 401        # the copy is dead too
+
+
+def test_m6_an_ended_cookie_cannot_sign_the_user_out(app):
+    """Adversarial: replaying an old, already-ended cookie to DELETE must not
+    end the user's current session."""
+    from fastapi.testclient import TestClient
+    body = account_body(ACCESS_CODE)
+    first = TestClient(app)
+    first.post("/api/session", json=body)
+    old = first.cookies.get("biorx_session")
+    first.delete("/api/session")                          # old cookie now ended
+    code_body = {"code": body["code"], "pin": body["pin"]}
+    current = TestClient(app)
+    assert current.post("/api/session", json=code_body).status_code == 200
+    replay = TestClient(app)
+    replay.cookies.set("biorx_session", old)
+    replay.delete("/api/session")
+    assert current.get("/api/me").status_code == 200
+
+
+def test_m10_current_user_is_sync():
+    """Review M10: it runs blocking SQLite and file checks; as a plain def,
+    FastAPI runs it in the thread pool, not on the event loop."""
+    import inspect
+    from web.auth import current_user
+    assert not inspect.iscoroutinefunction(current_user)

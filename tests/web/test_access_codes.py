@@ -76,7 +76,7 @@ def test_pc2_bad_entries_are_reported(caplog):
 
 def test_pc2_healthz_reports_a_count_not_the_entries(app, client):
     _write("codes:\n  - code: SHORT\n    for: Secret Person\n    created: 2026-09-18\n")
-    body = client.get("/healthz").json()
+    body = client.get("/api/gate").json()
     joined = " ".join(body["startup_warnings"])
     assert "1 problem" in joined and "Secret Person" not in joined
 
@@ -91,8 +91,8 @@ def test_pc2_a_file_that_cannot_be_read_is_reported_not_a_crash(ctx, app, client
         assert entries == {} and len(warnings) == 1
     _codes_file().write_bytes(b"codes:\n  - code: \xff\xfe\n")
     os.utime(_codes_file(), ns=(1, 10**18))
-    assert client.get("/healthz").status_code == 200
-    assert any("problem" in w for w in client.get("/healthz").json()["startup_warnings"])
+    assert client.get("/api/gate").status_code == 200
+    assert any("problem" in w for w in client.get("/api/gate").json()["startup_warnings"])
     # Not "your code is wrong": the file is the problem, and it says so (503).
     _, r = _sign_in(app, code)
     assert r.status_code == 503 and r.json()["detail"] == access_codes.UNAVAILABLE_MESSAGE
@@ -147,9 +147,9 @@ def test_pc2_disabled_fails_closed_and_unknown_keys_are_reported():
 
 def test_pc2_a_missing_file_is_reported(ctx, client, caplog):
     add_code("Present")
-    assert client.get("/healthz").json()["codes_in_use"] is True
+    assert client.get("/api/gate").json()["codes_in_use"] is True
     _codes_file().unlink()
-    body = client.get("/healthz").json()
+    body = client.get("/api/gate").json()
     assert body["codes_in_use"] is False
     assert any("no access codes file" in w.lower() for w in body["startup_warnings"])
     assert any("has gone" in r.getMessage() for r in caplog.records)
@@ -243,12 +243,18 @@ def test_pc6_reset_pin(ctx, app):
     c, r = _sign_in(app, code, pin="old-pin-111")
     uid = r.json()["user_id"]
     c.post("/api/filters", json={"name": "Mine", "filter": {"text_groups": []}})
-    assert access_codes.reset_pin(ctx.db, ctx.codes, "erin") == uid
+    result = access_codes.reset_pin(ctx.db, ctx.codes, "erin")
+    assert result.user_id == uid
     lookup = TestClient(app).post("/api/session/lookup", json={"code": code}).json()
-    assert lookup == {"name": "Erin", "pin_set": False}
+    assert lookup == {"name": "Erin", "pin_set": False, "setup_code_required": True}
     # The reset also ends sessions opened with the old PIN.
     assert c.get("/api/me").status_code == 401
-    c2, r = _sign_in(app, code, pin="new-pin-222")
+    # Review M5: the code alone no longer chooses the new PIN.
+    c2 = TestClient(app)
+    r = c2.post("/api/session", json={"code": code, "pin": "new-pin-222"})
+    assert r.status_code == 400 and "setup code" in r.json()["detail"]
+    r = c2.post("/api/session", json={"code": code, "pin": "new-pin-222",
+                                      "setup_code": result.setup_code.lower()})
     assert r.status_code == 200 and r.json()["user_id"] == uid
     assert _sign_in(app, code, pin="old-pin-111")[1].status_code == 401
     assert any(f["name"] == "Mine" for f in c2.get("/api/filters").json()["filters"])
@@ -269,7 +275,7 @@ def test_pc7_existing_account_keeps_pin_and_data(ctx, app):
     lid = user_store.create_reference_list(ctx.db, uid, "Dave's list")
     code = add_code("Dave", account="dave")
     lookup = TestClient(app).post("/api/session/lookup", json={"code": code}).json()
-    assert lookup == {"name": "Dave", "pin_set": True}
+    assert lookup == {"name": "Dave", "pin_set": True, "setup_code_required": False}
     c, r = _sign_in(app, code, pin="dave-pin-1")
     assert r.status_code == 200 and r.json()["user_id"] == uid
     assert [l["id"] for l in c.get("/api/references").json()["lists"]] == [lid]
@@ -526,10 +532,10 @@ def test_pc14_lookup_reveals_only_name(app):
     code = add_code("Lena")
     c = TestClient(app)
     assert c.post("/api/session/lookup", json={"code": code}).json() == {
-        "name": "Lena", "pin_set": False}
+        "name": "Lena", "pin_set": False, "setup_code_required": False}
     _sign_in(app, code)
     assert c.post("/api/session/lookup", json={"code": code}).json() == {
-        "name": "Lena", "pin_set": True}
+        "name": "Lena", "pin_set": True, "setup_code_required": False}
     assert "biorx_session" not in c.cookies                   # a lookup is not a sign-in
     r = c.post("/api/session/lookup", json={"code": "ZZZZ-ZZZZ-ZZZZ"})
     assert r.status_code == 401 and r.json()["detail"] == access_codes.BAD_CODE_OR_PIN
@@ -747,7 +753,7 @@ def test_pc2_valid_layouts_are_not_mistaken_for_a_blank_file(ctx, app, text):
 def test_pc2_healthz_names_a_blank_file_while_codes_are_in_use(ctx, client, app):
     _sign_in(app, add_code("Someone"))
     _write("")
-    warnings = client.get("/healthz").json()["startup_warnings"]
+    warnings = client.get("/api/gate").json()["startup_warnings"]
     assert any("missing, blank or unreadable" in w for w in warnings)
 
 
@@ -1035,3 +1041,53 @@ def test_pc11_ids_starting_with_a_dash_work_in_the_documented_form(tmp_path):
                           "--user-id=-dashy"], cwd=ROOT, env=env,
                          capture_output=True, text=True, timeout=60)
     assert out.returncode == 0, out.stdout + out.stderr
+
+
+
+# ── M5: a PIN reset needs the owner's setup code, and clears the stored key ──
+# Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M5
+
+def test_m5_reset_requires_setup_token(ctx, app):
+    code = add_code("Mona")
+    _sign_in(app, code, pin="first-pin-1")
+    result = access_codes.reset_pin(ctx.db, ctx.codes, "Mona")
+    assert len(result.setup_code) == 9 and result.setup_code[4] == "-"
+    thief = TestClient(app)
+    wrong = thief.post("/api/session", json={"code": code, "pin": "thief-pin-1",
+                                             "setup_code": "AAAA-AAAA"})
+    assert wrong.status_code == 401
+    assert thief.post("/api/session", json={"code": code, "pin": "thief-pin-1"}).status_code == 400
+    ok = TestClient(app).post("/api/session", json={"code": code, "pin": "mona-new-1",
+                                                    "setup_code": result.setup_code})
+    assert ok.status_code == 200
+    # Used once: the next sign-in is a normal PIN check.
+    again = TestClient(app).post("/api/session", json={"code": code, "pin": "mona-new-1"})
+    assert again.status_code == 200
+
+
+def test_m5_reset_clears_llm_key(ctx, app, enc_secret):
+    code = add_code("Kay")
+    c, r = _sign_in(app, code, pin="kay-pin-111")
+    uid = r.json()["user_id"]
+    c.put("/api/me/llm-key", json={"provider": "deepseek", "api_key": "sk-user-KAYKEY1234"})
+    assert user_store.get_llm_key(ctx.db, uid)[1] == "sk-user-KAYKEY1234"
+    access_codes.reset_pin(ctx.db, ctx.codes, "Kay")
+    assert not user_store.get_llm_key(ctx.db, uid)[1]
+
+
+def test_m5_cli_prints_the_setup_code(ctx, app, capsys):
+    """The owner runs `python -m src.access_codes reset-pin`; the code to hand
+    over must be in what it prints, and it must work."""
+    import os
+    import re as _re
+    code = add_code("Cli")
+    _sign_in(app, code, pin="cli-pin-111")
+    rc = access_codes._main(["--file", os.environ["ACCESS_CODES_FILE"],
+                             "--db", str(ctx.db.db_path), "reset-pin", "--for", "Cli"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    setup = _re.search(r"setup code as well: ([A-Z2-9]{4}-[A-Z2-9]{4})", out).group(1)
+    assert "LLM key was removed" in out
+    r = TestClient(app).post("/api/session", json={"code": code, "pin": "cli-new-11",
+                                                   "setup_code": setup})
+    assert r.status_code == 200

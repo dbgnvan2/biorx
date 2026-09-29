@@ -46,15 +46,24 @@ def test_uvicorn_can_still_read_the_app_attribute(monkeypatch, tmp_path):
             web_app._app = None
 
 
-def test_healthz_reports_configuration_but_never_a_secret(client, monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-NEVERSHOWTHIS")
-    body = client.get("/healthz").json()
+def test_m7_healthz_minimal(client):
+    """Review M7: the public liveness check shows nothing about the setup."""
+    assert client.get("/healthz").json() == {"ok": True}
 
-    assert body["ok"] is True
-    assert body["access_code_set"] is True
+
+def test_m7_gate_shows_only_what_sign_in_needs(client):
+    body = client.get("/api/gate").json()
+    assert set(body) == {"access_code_set", "pin_min_length", "codes_in_use",
+                         "startup_warnings"}
+
+
+def test_config_reports_configuration_but_never_a_secret(signed_in, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-NEVERSHOWTHIS")
+    body = signed_in.get("/api/config").json()
     assert set(body) >= {"provider", "model", "owner_key_set", "byo_keys_enabled"}
     assert "NEVERSHOWTHIS" not in str(body)
     assert isinstance(body["owner_key_set"], bool)
+    assert "db_path" not in body
 
 
 def test_healthz_needs_no_session(client):
@@ -142,7 +151,7 @@ def test_h_healthz_surfaces_startup_warnings_when_no_contact_email(client, monke
     ctx.sources_config = dict(ctx.sources_config)
     ctx.sources_config.pop("contact_email", None)
     ctx.orchestrator = None  # force a rebuild with the cleared config
-    body = client.get("/healthz").json()
+    body = client.get("/api/gate").json()
     assert "startup_warnings" in body, "/healthz must include startup_warnings key"
     assert any("BIORX_CONTACT_EMAIL" in w for w in body["startup_warnings"]), (
         "expected at least one warning mentioning BIORX_CONTACT_EMAIL; "
@@ -174,13 +183,13 @@ def test_h_app_js_reads_healthz_startup_warnings_on_boot():
     )
 
 
-def test_c4_healthz_lists_full_text_finders(client, ctx, monkeypatch):
+def test_c4_healthz_lists_full_text_finders(client, ctx, monkeypatch, signed_in):
     """C4: /healthz says where summaries look for full text; Unpaywall only
     when a contact email is configured."""
     ctx.sources_config = {"contact_email": "", "full_text": {"find_by_title": False}}
     monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
-    body = client.get("/healthz").json()
+    body = signed_in.get("/api/config").json()
     assert body["full_text_finders"] == ["the paper's own link", "OpenAlex", "Semantic Scholar"]
     assert body["find_by_title_default"] is False
     monkeypatch.setenv("BIORX_CONTACT_EMAIL", "me@example.org")
-    assert "Unpaywall" in client.get("/healthz").json()["full_text_finders"]
+    assert "Unpaywall" in signed_in.get("/api/config").json()["full_text_finders"]

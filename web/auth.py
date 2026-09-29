@@ -129,7 +129,7 @@ def get_context(request: Request) -> AppContext:
     return request.app.state.ctx
 
 
-async def current_user(
+def current_user(
     request: Request,
     ctx: AppContext = Depends(get_context),
     biorx_session: Optional[str] = Cookie(default=None),

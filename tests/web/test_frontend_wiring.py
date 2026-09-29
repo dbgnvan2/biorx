@@ -140,7 +140,8 @@ def test_the_client_calls_the_endpoints_that_matter():
     the client, this fails rather than a floor quietly still being met.
     """
     assert _api_paths_called_by_js() == {
-        "/healthz",
+        "/api/gate",
+        "/api/config",
         "/api/session",
         "/api/session/recover",
         "/api/session/lookup",
@@ -1588,8 +1589,8 @@ def test_d1_server_defaults_apply_when_nothing_is_saved(saved, server, expected)
     assert got == expected
 
 
-def test_d1_healthz_carries_default_selected(client):
-    sources = client.get("/healthz").json()["sources"]
+def test_d1_healthz_carries_default_selected(client, signed_in):
+    sources = signed_in.get("/api/config").json()["sources"]
     assert sources and all("default_selected" in s for s in sources)
 
 
@@ -1668,7 +1669,7 @@ def test_pc13_a_remembered_code_goes_straight_to_the_pin():
 def test_pc13_sign_in_sends_code_and_pin_and_remembers_only_if_ticked():
     code = _js_without_comments()
     body = re.search(r"async function pinSignIn\(\) \{.*?\n\}", code, re.DOTALL).group(0)
-    assert '{ code: gateCode, pin }' in body
+    assert '{ code: gateCode, pin, setup_code: $("setup-code").value.trim() }' in body
     assert 'rememberCode($("remember-code").checked ? gateCode : "")' in body
     assert "The two PINs are not the same." in body
     other = re.search(r"function useOtherCode\(\) \{.*?\n\}", code, re.DOTALL).group(0)

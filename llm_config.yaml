@@ -136,3 +136,10 @@ discover:
 jobs:
   search_workers: 2
   model_workers: 3
+
+# Sign-in limits (review M4). Each attempt runs a deliberately slow password
+# hash, so attempts are limited per client address, and only this many may be
+# hashing at once (more are answered "busy, try again").
+sign_in:
+  attempts_per_minute: 20
+  max_concurrent: 4

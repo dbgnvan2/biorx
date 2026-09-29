@@ -172,7 +172,7 @@ def test_k2_problem_reaches_healthz(ctx, client, monkeypatch):
     from src.llm_config import load_llm_config
     ctx.llm_config = load_llm_config()
     ctx.orchestrator = None
-    warnings = client.get("/healthz").json()["startup_warnings"]
+    warnings = client.get("/api/gate").json()["startup_warnings"]
     assert any("pasted twice" in w for w in warnings)
     assert not any(key[:12] in w for w in warnings)
 

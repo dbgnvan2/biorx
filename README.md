@@ -102,9 +102,11 @@ SESSION_COOKIE_INSECURE=1 uvicorn web.app:app --reload --port 8000
 Open http://127.0.0.1:8000, enter that code, and choose a PIN. `SESSION_COOKIE_INSECURE=1`
 is needed only over plain HTTP; never set it in a deployment.
 
-`GET /healthz` reports the effective configuration — which provider and model
-are in use, whether an owner key is set, whether personal keys can be stored —
-without ever reporting a secret. Check it first when something looks wrong.
+`GET /api/config` (signed in) reports the effective configuration — which
+provider and model are in use, whether an owner key is set, whether personal
+keys can be stored — without ever reporting a secret. `GET /api/gate` (public)
+shows the startup warnings, e.g. a broken codes file. `GET /healthz` only says
+the server is up. Check these first when something looks wrong.
 
 ### How access works
 
@@ -127,7 +129,7 @@ forgets theirs, look it up and tell them. The file is git-ignored; see
   open session ends on their next click. Nothing of theirs is deleted.
 - **See everyone:** `python -m src.access_codes list`.
 - Changes to the file apply without a restart. A bad entry (duplicate, too
-  short, unreadable date) is skipped and logged; `/healthz` shows how many.
+  short, unreadable date) is skipped and logged; `/api/gate` shows how many.
 - The browser can remember the code ("Remember my code on this device"), so
   most sign-ins ask only for the PIN, and a sign-in lasts 30 days.
 - After `reset-pin`, whoever enters the code first chooses the new PIN, so tell
@@ -163,7 +165,7 @@ PDFs are tried per paper.
 
 With no full text found, **no model is called**: the abstract is kept and shown as
 "Abstract only — no full text found (not a model summary)", with a ✓ Abstract only
-badge. Summarize on it later searches again. `/healthz` lists the active finders.
+badge. Summarize on it later searches again. `/api/config` lists the active finders.
 
 Google Scholar and ResearchGate are deliberately not used: neither offers a public
 API, both forbid automated access in their terms, and Scholar blocks scripts.
@@ -217,7 +219,9 @@ desktop GUI into a headless container.
    `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`; keep a copy
    of `KEY_ENC_SECRET`, changing it makes stored API keys unreadable),
    `DEFAULT_LLM_PROVIDER` (e.g. `deepseek`) and the matching provider key. Leave
-   `ACCESS_CODE` and `SESSION_COOKIE_INSECURE` unset.
+   `ACCESS_CODE` and `SESSION_COOKIE_INSECURE` unset. Set `TRUST_PROXY=1`, so the
+   sign-in attempt limit (`llm_config.yaml` `sign_in:`) counts each person's
+   address rather than Railway's proxy.
 4. Settings → Networking → **Generate Domain** for the public HTTPS address.
 5. Make access codes inside the running service (they go to
    `/data/access_codes.yaml`, on the volume). With the Railway CLI
@@ -228,8 +232,9 @@ desktop GUI into a headless container.
 
 #### Deploy checklist (manual — these cannot be tested in CI)
 
-- [ ] `GET /healthz` returns `codes_in_use: true`, the expected `provider`
-      and `model`, `owner_key_set: true`, and no access-code warnings.
+- [ ] `GET /healthz` returns `{"ok": true}`; `GET /api/gate` shows
+      `codes_in_use: true` and no warnings; signed in, `GET /api/config` shows
+      the expected `provider` and `model` and `owner_key_set: true`.
 - [ ] A wrong access code is refused; your code + PIN signs you in.
 - [ ] A saved search returns results, and "Stop" stops it.
 - [ ] One summary completes, and the model shown matches what you configured.
