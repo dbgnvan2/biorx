@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-09-28 — tests that can fail, foreign keys on, dead code out
+
+Review fixes, batch 8 (the last). Gates: `docs/cycles/2026-09-28_review-batch8-qa-gate.md`
+and `docs/cycles/2026-09-28_review-batch8-regate-qa-gate.md` (APPROVED).
+Status of every plan item: `docs/spec_coverage_review_fixes.md`.
+
+### Fixed
+- **A double click on "Summarize checked" or "Review checked" could bill a
+  paper twice.** Both now claim the run before anything else happens.
+- **Deleting a reference list removes its reviews.** Foreign keys are now
+  enforced; a startup migration removes reviews and list items whose list was
+  already deleted, and logs how many.
+- **An old database with login names that differ only in case opens** instead
+  of failing; the newer account is renamed "name (2)" and logged.
+- `monitor.py` says why a source was not fully searched ("truncated",
+  "unavailable", …) instead of calling every such source "failed".
+- The abstract scraper's page limit is in `sources_config.yaml`
+  (`full_text.scrape_max_chars`), and a cut page is logged.
+- Saved-filter names that differ only in accents' case ("CAFÉ"/"café") count
+  as the same name.
+
+### Changed
+- **New web accounts start from `filters.seed.json`.** `filters.json` is your
+  own local file for `monitor.py`: it is no longer in git or the Docker image.
+  To start one: `cp filters.seed.json filters.json`.
+- The allowance shown and the allowance enforced use one 24-hour window.
+- Removed unused code: `src/sources/cache.py` (and `BIORX_CACHE_PATH`), the
+  desktop bookmark methods, `upsert_filter`. Old design documents are marked
+  as historical.
+- README and CLAUDE.md say Python 3.12, the only version tested.
+
 ## 2026-09-28 — sign-in is harder to abuse
 
 Review fixes, batch 7. Gates: `docs/cycles/2026-09-28_review-batch7-qa-gate.md`

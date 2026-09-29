@@ -3,6 +3,17 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## From the review batch-8 gates (`docs/cycles/2026-09-28_review-batch8-*qa-gate.md`) — APPROVED
+
+- Both low findings answered in 0bf9ddb (suite count in the report; name
+  folding matches each comparison — login names as SQLite's lower(), filter
+  names with casefold).
+- Open from the plan's human checks (`docs/spec_coverage_review_fixes.md`):
+  M4 behind Railway's proxy needs a deploy; no per-batch browser run with
+  screenshots was recorded.
+- `gui.py` still imports modules whose interfaces changed in this review; it
+  is not updated (retiring).
+
 ## From the review batch-7 gates (`docs/cycles/2026-09-28_review-batch7-*qa-gate.md`) — APPROVED
 
 - Finding 1 (removing a key kept the old model) is fixed in e8c5dca.
