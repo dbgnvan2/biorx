@@ -189,15 +189,15 @@ def test_ac7_merge_moves_everything_and_the_old_cookie_follows(ctx, app):
     from fastapi import Response
     src = user_store.create_user(ctx.db, "dave")
     dst = user_store.create_user(ctx.db, "dave")
-    user_store.upsert_filter(ctx.db, src, "Shared", {"text_groups": []})
-    user_store.upsert_filter(ctx.db, dst, "Shared", {"text_groups": [{"both": "x"}]})
-    user_store.upsert_filter(ctx.db, src, "Only src", {"text_groups": []})
+    user_store.insert_filter(ctx.db, src, "Shared", {"text_groups": []})
+    user_store.insert_filter(ctx.db, dst, "Shared", {"text_groups": [{"both": "x"}]})
+    user_store.insert_filter(ctx.db, src, "Only src", {"text_groups": []})
     lid = user_store.create_reference_list(ctx.db, src, "Src list")
     pid = ctx.db.insert_paper({"title": "T", "doi": "10.1/m", "canonical_id": "doi:10.1/m"})
     user_store.add_reference_item(ctx.db, lid, pid)
 
-    user_store.upsert_filter(ctx.db, src, "Same", {"days_back": 7})
-    user_store.upsert_filter(ctx.db, dst, "Same", {"days_back": 7})
+    user_store.insert_filter(ctx.db, src, "Same", {"days_back": 7})
+    user_store.insert_filter(ctx.db, dst, "Same", {"days_back": 7})
     moved = accounts.merge_users(ctx.db, src, dst)
     assert moved == {"filters": 2, "filters_renamed": 1, "filters_identical_left": 1,
                      "lists": 1, "lists_renamed": 0}

@@ -390,27 +390,6 @@ def get_filter(db, user_id: str, filter_id: int) -> Optional[Dict[str, Any]]:
     return payload
 
 
-def upsert_filter(db, user_id: str, name: str, filter_dict: Dict[str, Any],
-                  enabled: bool = True) -> int:
-    """Create or replace a named filter for this user. Returns its id."""
-    name = (name or "").strip()[:200] or "Untitled"
-    payload = {k: v for k, v in filter_dict.items() if k not in ("id",)}
-    db.conn.execute(
-        "INSERT INTO user_filters (user_id, name, filter_json, enabled) "
-        "VALUES (?, ?, ?, ?) "
-        "ON CONFLICT(user_id, name) DO UPDATE SET "
-        "filter_json = excluded.filter_json, enabled = excluded.enabled, "
-        "updated_at = CURRENT_TIMESTAMP",
-        (user_id, name, json.dumps(payload), 1 if enabled else 0),
-    )
-    db.conn.commit()
-    row = db.conn.execute(
-        "SELECT id FROM user_filters WHERE user_id = ? AND name = ?",
-        (user_id, name),
-    ).fetchone()
-    return int(row["id"])
-
-
 def _clean_filter_name(name: str) -> str:
     return (name or "").strip()[:200] or "Untitled"
 

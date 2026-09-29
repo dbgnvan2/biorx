@@ -2077,10 +2077,10 @@ function groupsWithTerm(groups, term) {
 
 /* A name no existing filter already has.
 
-   POST /api/filters is an upsert on the name, so a new filter given a taken
-   name silently REPLACES that filter. Clicking "inflammaging" when a filter
-   called "inflammaging" exists would otherwise overwrite it; instead the new
-   one is "inflammaging (2)". Case-insensitive. Pure, for the node-run test. */
+   POST /api/filters refuses a taken name (409, review A2). Clicking
+   "inflammaging" when a filter called "inflammaging" exists would fail; instead
+   the new one is "inflammaging (2)". Case-insensitive. Pure, for the node-run
+   test. */
 function freeFilterName(base, takenNames, maxLen = 80) {
   const taken = new Set((takenNames || []).map(n => String(n).trim().toLowerCase()));
   let name = (base || "").trim().slice(0, maxLen) || "Discovered term";
@@ -2093,11 +2093,9 @@ const FILTER_NAME_MAX = 200;
 
 /* The open filter's name with the term appended: "sleep" → "sleep, apnea".
 
-   Saving goes through PUT, and a rename there is an upsert on the new name
-   that then deletes the old row. Renaming onto another filter's name would
-   overwrite that filter and delete this one, so the new name is made free
-   against every OTHER filter's name. The open filter's own name does not
-   count as taken.
+   Saving goes through PUT, which refuses a rename onto another filter's name
+   (409, review A2), so the new name is made free against every OTHER
+   filter's name. The open filter's own name does not count as taken.
 
    Returns null when the appended name would pass the server's limit — the
    caller keeps the old name and says so, rather than the server cutting the

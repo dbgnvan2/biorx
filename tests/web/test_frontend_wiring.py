@@ -873,13 +873,6 @@ def test_dc1_a_taken_name_is_never_reused(taken, expected):
     assert got == expected
 
 
-def test_dc1_the_upsert_hazard_is_real():
-    """Pins the reason freeFilterName exists. If the API stops upserting on
-    name, this fails and the guard can be reconsidered — until then, a name
-    collision is data loss."""
-    source = (Path(__file__).parent.parent.parent / "src" / "user_store.py").read_text()
-    upsert = re.search(r"def upsert_filter\(.*?\n\n\n", source, re.DOTALL).group(0)
-    assert "ON CONFLICT(user_id, name) DO UPDATE" in upsert
 
 
 def test_dc2_a_click_adds_the_term_as_its_own_group():
