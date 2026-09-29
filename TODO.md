@@ -3,6 +3,13 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## CI race (`docs/cycles/2026-09-28_review-ci-race-qa-gate.md`) — APPROVED
+
+- CI was red on and off from batch 2 to batch 7: a test returned while its
+  summary job ran on, the stub was undone, and the job reached the network.
+  Fixed in 7805ac4 (`settle_jobs` in tests/web/conftest.py). A red CI run
+  should have stopped the push each time; from here on, check CI after a push.
+
 ## From the review batch-8 gates (`docs/cycles/2026-09-28_review-batch8-*qa-gate.md`) — APPROVED
 
 - Both low findings answered in 0bf9ddb (suite count in the report; name
