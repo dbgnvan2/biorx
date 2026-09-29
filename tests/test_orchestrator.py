@@ -374,6 +374,28 @@ def test_i3_enrichment_outage_is_reported(caplog):
     assert any(r.exc_info for r in caplog.records), "the error's traceback is logged"
 
 
+def test_m19_code_error_not_counted_as_outage(caplog):
+    """Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M19.
+    An exception from our own code is a program error, logged with its
+    traceback; it is not reported as a source outage the user should retry."""
+    import logging
+    orch, keep, drop = _two_record_orch()
+    orch._crossref.enrich.side_effect = [RuntimeError("boom"), True]
+    orch._unpaywall.enrich.return_value = True
+    problems, messages = [], []
+    with caplog.at_level(logging.WARNING, logger="src.sources.orchestrator"):
+        orch.search(
+            filter_dict={"days_back": 7, "text_groups": [{"both": "x"}]},
+            source_selection={"all": True, "selected": []},
+            on_status=messages.append,
+            on_enrich_problem=lambda *a: problems.append(a),
+        )
+    assert problems == []
+    assert not any("Crossref failed" in m for m in messages)
+    assert "Crossref lookups hit a program error for 1 of 2 papers (details in the server log)" in messages
+    assert any(r.exc_info for r in caplog.records)
+
+
 # ── Page-end detection must use the source's page size (review finding 2) ─────
 
 def _orch_for_pagination():
