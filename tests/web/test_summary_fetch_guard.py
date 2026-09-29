@@ -21,6 +21,7 @@ import pytest
 
 from src import safe_fetch
 from src.paper_meta import recover_abstract
+from tests.web.conftest import settle_jobs
 
 
 class Tripwire:
@@ -106,6 +107,7 @@ def test_sum3_summary_job_passes_the_guarded_fetcher(ctx, signed_in, monkeypatch
             if "fetch_html" in seen:
                 break
             time.sleep(0.02)
+        settle_jobs(ctx)
     assert seen.get("fetch_html") is safe_fetch.fetch_html
 
 

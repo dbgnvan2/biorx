@@ -15,6 +15,7 @@ import pytest
 
 from src import user_store
 from src.tokens import UNCOUNTED, TokenUsage
+from tests.web.conftest import settle_jobs
 
 PAPER = {
     "title": "Attachment and sleep",
@@ -262,6 +263,7 @@ def test_regate1_a_preview_reserves_no_allowance_on_the_shared_key(
     # And the allowance is intact: a real review still runs after them.
     with patch("src.llm_providers.build_client", return_value=_llm()):
         start = signed_in.post("/api/reviews", json={"list_id": list_id})
+        settle_jobs(ctx)
     assert start.status_code == 202, "previews ate the allowance a review needed"
 
 

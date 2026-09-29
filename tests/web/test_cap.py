@@ -17,6 +17,7 @@ import pytest
 from src.tokens import UNCOUNTED
 
 from src import user_store
+from tests.web.conftest import settle_jobs
 
 PAPER = {"title": "Generative Agents", "abstract": "Interactive simulacra.",
          "doi": "10.1234/agents", "canonical_id": "arxiv:1"}
@@ -38,9 +39,10 @@ def _full_text(ctx, paper, outcome=None, by_title=None):
     return "Full text of the paper: methods, results and discussion."
 
 @pytest.fixture
-def no_pdf():
+def no_pdf(ctx):
     with patch("web.routes_summaries._extract_text", side_effect=_full_text):
         yield
+        settle_jobs(ctx)            # no job may outlive the stub (see settle_jobs)
 
 
 @pytest.fixture
@@ -117,6 +119,7 @@ def test_the_cap_counts_only_owner_key_usage(ctx, signed_in, owner_key, no_pdf):
     with patch("src.llm_providers.build_client", return_value=_ok_client()):
         assert signed_in.post("/api/summaries",
                               json={"paper": PAPER}).status_code == 202
+        settle_jobs(ctx)
 
 
 def test_one_users_spending_does_not_cap_another(ctx, app, owner_key, no_pdf):
@@ -136,6 +139,7 @@ def test_one_users_spending_does_not_cap_another(ctx, app, owner_key, no_pdf):
 
         bob.post("/api/session", json=account_body(ACCESS_CODE))
         assert bob.post("/api/summaries", json={"paper": _paper(4)}).status_code == 202
+        settle_jobs(ctx)
 
 
 def test_usage_rows_never_contain_a_key(ctx, signed_in, owner_key, no_pdf):
@@ -152,7 +156,7 @@ def test_usage_rows_never_contain_a_key(ctx, signed_in, owner_key, no_pdf):
 
 # ── The cap must hold under a burst, not only in sequence ─────────────────────
 
-def test_the_cap_holds_against_simultaneous_requests(app, owner_key, no_pdf):
+def test_the_cap_holds_against_simultaneous_requests(ctx, app, owner_key, no_pdf):
     """
     Regression for a proven check-then-act race: the cap was read at submission
     but usage was written only when the job finished, so requests arriving
@@ -187,6 +191,7 @@ def test_the_cap_holds_against_simultaneous_requests(app, owner_key, no_pdf):
         start.set()
         for t in threads:
             t.join(timeout=10)
+        settle_jobs(ctx)
 
     accepted = codes.count(202)
     refused = codes.count(429)

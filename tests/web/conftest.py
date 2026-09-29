@@ -198,3 +198,24 @@ def papers_at_source(monkeypatch):
 
     monkeypatch.setattr(TestClient, "post", post)
     return known
+
+
+def settle_jobs(ctx, timeout: float = 10.0) -> None:
+    """Wait until no background job in ctx is queued or running.
+
+    Call it before leaving a `with patch(...)` block (or a stub fixture) that
+    a job depends on. A test that returns while its job still runs lets the
+    job carry on after the stub is gone, and it then reaches the real network
+    — intermittently, by timing, which is how CI failed on and off from
+    review batch 2 to batch 7 (a real PDF download after `no_pdf` was undone).
+    """
+    import time
+    from src.jobs import TERMINAL
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with ctx.jobs._lock:
+            busy = [j for j in ctx.jobs._jobs.values() if j.status not in TERMINAL]
+        if not busy:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"{len(busy)} job(s) still running after {timeout}s")

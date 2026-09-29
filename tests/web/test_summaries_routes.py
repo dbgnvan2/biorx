@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from src import user_store
 from src.tokens import UNCOUNTED
-from tests.web.conftest import ACCESS_CODE, account_body
+from tests.web.conftest import ACCESS_CODE, account_body, settle_jobs
 
 PAPER = {
     "title": "Generative Agents", "abstract": "A study of interactive simulacra.",
@@ -40,18 +40,20 @@ def _full_text(ctx, paper, outcome=None, by_title=None):
     return "Full text of the paper: methods, results and discussion."
 
 @pytest.fixture
-def no_pdf():
+def no_pdf(ctx):
     """No full text anywhere: the abstract stands in and the model is not called
     (plan 2026-09-19 C1). Finding text is its own concern (test_fulltext.py)."""
     with patch("web.routes_summaries._extract_text", return_value=""):
         yield
+        settle_jobs(ctx)            # no job may outlive the stub
 
 
 @pytest.fixture
-def with_full_text():
+def with_full_text(ctx):
     """Full text was found, so the model runs."""
     with patch("web.routes_summaries._extract_text", side_effect=_full_text):
         yield
+        settle_jobs(ctx)            # no job may outlive the stub
 
 
 def _await(client, job_id, timeout=5):
@@ -296,6 +298,7 @@ def test_a_normal_sized_paper_is_accepted(signed_in, ctx, monkeypatch, with_full
     ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
     with patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
         r = signed_in.post("/api/summaries", json={"paper": PAPER})
+        settle_jobs(ctx)
     assert r.status_code == 202
 
 
