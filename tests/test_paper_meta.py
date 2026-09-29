@@ -315,3 +315,22 @@ def test_b8_scanner_is_linear_without_the_cap(page):
     for _ in paper_meta._scan_html(page):
         pass
     assert time.monotonic() - started < 5
+
+
+def test_b8_scrape_cap_from_config_and_logged(caplog):
+    """Gate 6 note 2: the cap comes from sources_config.yaml, and a cut page
+    says so in the log instead of reading as "no abstract"."""
+    import logging
+    from src import paper_meta
+    from src.sources.config import load_sources_config
+    assert paper_meta.scrape_max_chars() == \
+        load_sources_config()["full_text"]["scrape_max_chars"]
+    page = ("<p>" + "x" * 5000 + "</p>"
+            + '<div class="abstract">' + "Late abstract text. " * 8 + '</div>')
+    with caplog.at_level(logging.INFO, logger="src.paper_meta"):
+        assert paper_meta._abstract_from_html(page, max_chars=1000) == ""
+    assert f"read the first 1000 of {len(page)} characters" in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="src.paper_meta"):
+        assert "Late abstract" in paper_meta._abstract_from_html(page, max_chars=len(page))
+    assert "read the first" not in caplog.text

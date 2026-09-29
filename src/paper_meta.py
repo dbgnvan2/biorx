@@ -125,8 +125,24 @@ def scrape_abstract_from_url(url: str, fetch_html=None) -> str:
 
 
 # The scraper reads at most this much of a page. Abstracts sit near the top;
-# the cap bounds the work a hostile page can cause (review B8).
+# the cap bounds the work a hostile page can cause (review B8). Set in
+# sources_config.yaml full_text.scrape_max_chars; this is the default.
 SCRAPE_MAX_CHARS = 512_000
+
+
+def scrape_max_chars() -> int:
+    """Purpose: How much of a publisher page the abstract scraper reads.
+    Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#B8 (gate 6 note 2)
+    Tests:   tests/test_paper_meta.py::test_b8_scrape_cap_from_config_and_logged
+    """
+    from .sources.config import load_sources_config
+    try:
+        ft = load_sources_config().get("full_text") or {}
+        return int(ft.get("scrape_max_chars", SCRAPE_MAX_CHARS))
+    except (OSError, ValueError, TypeError) as e:
+        logger.warning("Could not read full_text.scrape_max_chars (%s); using %d",
+                       e, SCRAPE_MAX_CHARS)
+        return SCRAPE_MAX_CHARS
 # A tag longer than this is treated as text: real tags are short, and every
 # attribute regex below runs on one tag at a time, never on the page.
 _MAX_TAG_CHARS = 4000
@@ -199,12 +215,16 @@ def _scan_html(page: str):
             i = end
 
 
-def _abstract_from_html(page: str) -> str:
+def _abstract_from_html(page: str, max_chars: Optional[int] = None) -> str:
     """The abstract a publisher page carries, or "". Tries, in order:
     JSON-LD (schema.org description/abstract), the description meta tags, and
     an element whose id or class names it the abstract (review B8: one linear
-    pass, see _scan_html)."""
-    page = page[:SCRAPE_MAX_CHARS]
+    pass, see _scan_html). A page longer than the cap is cut, and the cut is
+    logged, so "no abstract found" on a cut page can be told apart (P2)."""
+    limit = scrape_max_chars() if max_chars is None else max_chars
+    if len(page) > limit:
+        logger.info("Abstract scrape read the first %d of %d characters", limit, len(page))
+        page = page[:limit]
     json_ld = []
     meta = {}
     in_ld = False

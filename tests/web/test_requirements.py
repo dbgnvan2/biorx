@@ -142,3 +142,14 @@ def test_b10_lock_matches_the_pins_and_is_hashed():
     text = LOCK.read_text()
     entries = [b for b in re.split(r"\n(?=[A-Za-z])", text) if "==" in b.split("\n")[0]]
     assert entries and all("--hash=sha256:" in b for b in entries)
+
+
+def test_b10_dockerfile_regen_command_matches_the_lock_header():
+    """Gate 6 note 3: the comment's command makes the same lock the header records."""
+    root = Path(__file__).parent.parent.parent
+    comment = re.search(r"#\s+(pip-compile [^\n]+)", (root / "Dockerfile").read_text()).group(1)
+    header = re.search(r"#\s+(pip-compile [^\n]+)", (root / "requirements-web.lock").read_text()).group(1)
+    flags = lambda cmd: {f.split("=")[0] for f in cmd.split() if f.startswith("--")}
+    # --no-index in the header is written by pip-compile itself for
+    # --no-emit-index-url; --output-file is spelt -o in the comment.
+    assert flags(comment) == flags(header) - {"--no-index", "--output-file"}
