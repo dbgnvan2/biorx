@@ -51,11 +51,16 @@ def safe_filename(name: str) -> str:
 
 
 def source_label(paper: Dict[str, Any]) -> str:
-    """Where a paper came from, as the page shows it (app.js paperSourceText):
-    the journal or server name, else the stored source. `source` alone is the
-    internal id, e.g. "biorxiv_medrxiv" (production PDF, 2026-09-30)."""
-    return (paper.get("journal_or_server") or paper.get("source")
-            or paper.get("server") or "").strip()
+    """Where a paper came from, by the same rule as app.js paperSourceText:
+    the journal or server name, else the stored source, skipping blank or
+    whitespace-only values. `source` alone is the internal id, e.g.
+    "biorxiv_medrxiv" (production PDF, 2026-09-30). `server` is not used: old
+    rows default it to "biorxiv"."""
+    for key in ("journal_or_server", "source"):
+        value = str(paper.get(key) or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _row(item: Dict[str, Any], pdf_url_of) -> List[str]:

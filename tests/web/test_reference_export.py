@@ -268,7 +268,10 @@ def test_m6a2_the_tricky_escapes_survive_a_real_reader():
     ({"source": "biorxiv_medrxiv", "server": "medrxiv", "journal_or_server": "medRxiv"}, "medRxiv"),
     ({"source": "europepmc", "journal_or_server": "Lancet (PubMed)"}, "Lancet (PubMed)"),
     ({"source": "Europe PMC", "journal_or_server": ""}, "Europe PMC"),   # older rows
-    ({"server": "biorxiv"}, "biorxiv"),
+    ({"server": "biorxiv"}, ""),              # server is not used: old rows default it
+    ({"journal_or_server": "   ", "source": "europepmc"}, "europepmc"),   # gate finding 1
+    ({"journal_or_server": " medRxiv ", "source": "x"}, "medRxiv"),
+    ({"journal_or_server": None, "source": "  "}, ""),
     ({}, ""),
 ])
 def test_sl1_source_label_matches_the_page(paper, expected):

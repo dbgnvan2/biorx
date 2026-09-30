@@ -3043,8 +3043,11 @@ def test_br6_both_tables_label_the_source_the_same_way():
     assert code.count("tag.textContent = paperSourceText(") == 2
     got = _node_eval([_js_block(r"function paperSourceText\(paper\) \{.*?\n\}")],
                      '[paperSourceText({journal_or_server: "medrxiv", source: "biorxiv_medrxiv", server: "biorxiv"}),'
-                     ' paperSourceText({source: "europepmc", server: "biorxiv"})]')
-    assert got == ["medrxiv", "europepmc"]
+                     ' paperSourceText({source: "europepmc", server: "biorxiv"}),'
+                     ' paperSourceText({journal_or_server: "   ", source: "europepmc"}),'
+                     ' paperSourceText({journal_or_server: " medRxiv ", source: "x"}),'
+                     ' paperSourceText({server: "biorxiv"})]')
+    assert got == ["medrxiv", "europepmc", "europepmc", "medRxiv", ""]
 
 
 def test_br11_every_table_scrolls_inside_its_card():

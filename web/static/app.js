@@ -2940,9 +2940,15 @@ function markdownBlocks(text) {
 
 /* Where a paper came from, the same in the search results and in a
    reference list; the list showed the internal id "biorxiv_medrxiv" (browser
-   run 2026-09-29). `server` is not used: old rows default it to "biorxiv". */
+   run 2026-09-29). `server` is not used: old rows default it to "biorxiv".
+   A blank or whitespace-only value falls through to the next. The exports use
+   the same rule (src/reference_export.py source_label). */
 function paperSourceText(paper) {
-  return paper.journal_or_server || paper.source || "";
+  for (const value of [paper.journal_or_server, paper.source]) {
+    const text = String(value || "").trim();
+    if (text) return text;
+  }
+  return "";
 }
 
 /* Who paid for a summary, in words. The raw value read "none key" for local
