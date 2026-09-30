@@ -108,8 +108,10 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from 7ea410b → a92857b (plan 2026-09-29 tiers 2–3: unpaywall.py sends the contact
 #   User-Agent (T2.3), config.py gains user_agent_with, query_builder.py's arXiv all:
 #   note corrected (T3.6, docstring only) — W1.a required)
+# Updated from a92857b → a9cfc35 (QA gate 2026-09-30 F1: the T1.1 surname key keeps lower-case
+#   particles, so "da Silva" and "Silva" stay two authors — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "a92857b"
+BASELINE = "a9cfc35"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
