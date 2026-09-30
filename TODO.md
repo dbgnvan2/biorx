@@ -5,9 +5,11 @@
 
 ## From the browser run (`docs/cycles/2026-09-29_browser-run.md`)
 
-- All findings fixed (see the report). Open: a search including
-  bioRxiv/medRxiv now takes about 3 minutes for two weeks — every paper in the
-  window is read. If that is too slow, lower `max_pages` or cache the window.
+- All findings fixed (see the report). A search including bioRxiv/medRxiv
+  takes about 3 minutes for two weeks — every paper in the window is read.
+  **Accepted by the owner 2026-09-30 (decision D0).** Revisit only if it gets in
+  the way: cache the window per date range (plan option C) rather than lower
+  `max_pages`, which would read less of the window.
 
 ## CI race (`docs/cycles/2026-09-28_review-ci-race-qa-gate.md`) — APPROVED
 
@@ -236,7 +238,7 @@ Also open from this batch:
 - **Done 2026-09-30 (decision D2): the name sign-in, the recover route, the recovery dialog and those functions are removed.** **End of the switch-over:** once `ACCESS_CODE` is removed everywhere, delete
   the old name sign-in, `POST /api/session/recover`, the recovery-code dialog,
   and `accounts.sign_in`/`create_account`/`recover` if nothing else uses them.
-- Per-user spend is not visible in the web app (usage plan, not yet approved).
+- **Skipped for now by the owner 2026-09-30 (decision D3).** Per-user spend is not visible in the web app (usage plan, not yet approved).
 - **Lockout can be used to annoy:** anyone who knows a name (old way) or a
   code can keep that account locked by sending 5 wrong PINs every 15 minutes.
   The usual lockout trade-off; a per-IP limit (above) would narrow it.
@@ -276,7 +278,7 @@ Also open from this batch:
 - **Fixed 2026-09-30 (plan T2.2): values left out come from llm_config.yaml.** **`OllamaClient.generate` has a hardcoded 120 s timeout** (`src/llm.py`) and
   ignores the provider's `timeout` in `llm_config.yaml`; a slow local model
   (qwen3.5:4b on this Mac) times out on Discover Terms. Also P4.
-- **Discover shares the summary cap.** An owner-billed discover run takes a
+- **Left as is 2026-09-30: goes with D3 (spend visibility), skipped for now.** **Discover shares the summary cap.** An owner-billed discover run takes a
   "summary" slot (settled correctly now). If discover needs its own allowance,
   add a kind and a cap.
 - **"Use date range" checkbox** in the Search tab has the stacked layout the

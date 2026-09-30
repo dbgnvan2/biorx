@@ -3,7 +3,7 @@
 **Source of findings:** `REVIEW-biorx-2026-09-28.md` (fully fixed across batches 1–8),
 the browser run + production check (`docs/cycles/2026-09-29_browser-run.md`), and a fresh
 reconciliation of `TODO.md`'s deferred tail against current code.
-**Status:** Tiers 1–3 done 2026-09-30 except where noted below.
+**Status:** Closed 2026-09-30 — every item done, not needed, or deferred by the owner (see the table).
 
 | Item | Status | Proof |
 |---|---|---|
@@ -18,7 +18,7 @@ reconciliation of `TODO.md`'s deferred tail against current code.
 | T2.2 | done | `tests/test_tokens.py::test_t22_*` |
 | T2.3 | done | `tests/test_h_environment.py::test_t23_*` |
 | T2.4 | already fixed (list, both run, warned); now tested | `tests/test_monitor.py::test_t24_*` |
-| T2.5 | not changed — a product decision (own allowance or not), with D3 | — |
+| T2.5 | not changed — goes with D3, skipped for now | — |
 | T2.6 | not needed — a full-text summary is stored and reused (`src/summarize.py`), so its PDF is never fetched twice; a re-fetch only follows a try that found no PDF | — |
 | T2.7 | done | `tests/web/test_jobs.py::test_t27_*`, `tests/web/test_frontend_wiring.py::test_t27_*` |
 | T3.1 | done | `src/paper_meta.py` `_OUR_BUGS` comment |
@@ -27,11 +27,12 @@ reconciliation of `TODO.md`'s deferred tail against current code.
 | T3.4 | done | `tests/test_paper_meta.py::test_t34_*` |
 | T3.5 | done (widened to `docs/` except `docs/cycles/`) | `tests/test_h_environment.py::test_t35_*` |
 | T3.6 | done (note corrected: extra hits are filtered out) | `src/sources/query_builder.py` `_group_to_arxiv` |
-| T3.7 | blocked on D3 | — |
+| T3.7 | skipped for now (D3) | — |
 | T3.8 | done (ignored, not deleted) | `tests/web/test_deploy_files.py::test_t38_*` |
 | D1 | decided 2026-09-30: retire `gui.py` — done | `tests/web/test_deploy_files.py::test_d1_desktop_app_is_retired` |
 | D2 | decided 2026-09-30: remove the old name sign-in — done (T2.1) | as T2.1 |
-| D0, D3 | open — the owner's decisions | — |
+| D0 | decided 2026-09-30: accept the ~3-minute bioRxiv/medRxiv searches for now (option A); a cache (option C) only if it gets in the way | `TODO.md` (browser run section) |
+| D3 | decided 2026-09-30: skip spend visibility for now (with T2.5, T3.7) | — |
 
 Original status: PLAN — no code written.
 **Surface:** web app, shared `src/`, `agents/monitor.py`. `gui.py` is still not changed
