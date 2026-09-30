@@ -105,8 +105,11 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from 21d2b35 → 7ea410b (plan 2026-09-29 T1.1: dedup keys a multi-word surname on its
 #   last word in every branch, so Europe PMC "da Silva" and arXiv "Ana da Silva" merge
 #   — W1.a required)
+# Updated from 7ea410b → a92857b (plan 2026-09-29 tiers 2–3: unpaywall.py sends the contact
+#   User-Agent (T2.3), config.py gains user_agent_with, query_builder.py's arXiv all:
+#   note corrected (T3.6, docstring only) — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "7ea410b"
+BASELINE = "a92857b"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
