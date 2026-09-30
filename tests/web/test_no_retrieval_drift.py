@@ -110,8 +110,11 @@ ROOT = Path(__file__).parent.parent.parent
 #   note corrected (T3.6, docstring only) — W1.a required)
 # Updated from a92857b → a9cfc35 (QA gate 2026-09-30 F1: the T1.1 surname key keeps lower-case
 #   particles, so "da Silva" and "Silva" stay two authors — W1.a required)
+# Updated from a9cfc35 → 2765a9f (decision D1, desktop app retired: comments in orchestrator.py,
+#   query_builder.py and schema.py no longer name the GUI as a front end; no code
+#   change — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "a9cfc35"
+BASELINE = "2765a9f"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
