@@ -111,11 +111,41 @@ def test_redirect_to_internal_address_is_refused(internal):
               {"evil.example": [PUBLIC], "internal.example": [internal]})
 
 
-def test_redirect_to_http_is_refused():
+def test_redirect_to_http_internal_address_is_refused():
+    """An http:// redirect is asked for as https:// (br13) and then checked
+    like any hop: the metadata address is still refused and never requested."""
     routes = {"https://evil.example/p.pdf":
               FakeResp(302, {"Location": "http://169.254.169.254/latest/meta-data/"})}
+    get = http(routes)
+    with pytest.raises(FetchRefused):
+        fetch_pdf("https://evil.example/p.pdf", 10_000,
+                  getaddrinfo=dns({"evil.example": [PUBLIC],
+                                   # an IP literal resolves to itself
+                                   "169.254.169.254": ["169.254.169.254"]}), get=get)
+    assert get.calls == [("https://evil.example/p.pdf", PUBLIC)]
+
+
+@pytest.mark.parametrize("location", ["ftp://pub.example/x.pdf", "file:///etc/passwd",
+                                      "gopher://pub.example/x"])
+def test_redirect_to_another_scheme_is_refused(location):
+    routes = {"https://evil.example/p.pdf": FakeResp(302, {"Location": location})}
     with pytest.raises(FetchRefused, match="https"):
-        fetch("https://evil.example/p.pdf", routes, {"evil.example": [PUBLIC]})
+        fetch("https://evil.example/p.pdf", routes,
+              {"evil.example": [PUBLIC], "pub.example": [PUBLIC]})
+
+
+def test_br13_http_redirect_is_followed_as_https():
+    """Production check 2026-09-29: doi.org sends many DOIs to an http://
+    address (http://biorxiv.org/lookup/doi/…); refusing it hid open copies
+    behind "URL must use https"."""
+    routes = {"https://doi.org/10.1/x": FakeResp(302, {"Location": "http://pub.example/x.pdf"}),
+              "https://pub.example/x.pdf": FakeResp()}
+    data, get = fetch("https://doi.org/10.1/x", routes,
+                      {"doi.org": [PUBLIC], "pub.example": ["151.101.1.1"]})
+    assert data == PDF
+    assert get.calls == [("https://doi.org/10.1/x", PUBLIC),
+                         ("https://pub.example/x.pdf", "151.101.1.1")]
+    assert not any(url.startswith("http://") for url, _ip in get.calls)
 
 
 def test_the_internal_host_is_never_requested():

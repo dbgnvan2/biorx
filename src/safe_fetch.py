@@ -244,7 +244,11 @@ def _fetch_public(url: str, max_bytes: int, timeout: float, headers: dict,
                 location = resp.headers.get("Location", "")
                 if not location:
                     raise FetchFailed("Redirect without a location.")
-                url = urllib.parse.urljoin(url, location)
+                # doi.org sends many DOIs on to an http:// address
+                # (http://biorxiv.org/lookup/doi/…); ask for the https form,
+                # which the next hop checks like any other (production check
+                # 2026-09-29: "URL must use https" hid an open copy).
+                url = https_candidate(urllib.parse.urljoin(url, location))
                 continue
 
             if resp.status_code >= 400:

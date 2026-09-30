@@ -158,3 +158,12 @@ copy of the app on your own computer can read them.
 Tests: `tests/web/test_safe_fetch.py::test_br12_*`,
 `tests/test_fulltext.py::test_br12_*`,
 `tests/web/test_summaries_routes.py::test_br12_refusal_notes_reach_the_finder`.
+
+The same production summary showed "OpenAlex: URL must use https.": OpenAlex
+gave `https://doi.org/10.64898/2026.09.25.754282`, and doi.org answered 302 to
+`http://biorxiv.org/lookup/doi/…` (checked with curl; a 2020 bioRxiv DOI does
+the same). The fetcher refused any http:// hop. A redirect to http:// is now
+followed as https:// and checked like every hop. Tests:
+`tests/web/test_safe_fetch.py::test_br13_http_redirect_is_followed_as_https`,
+`::test_redirect_to_http_internal_address_is_refused`,
+`::test_redirect_to_another_scheme_is_refused`.

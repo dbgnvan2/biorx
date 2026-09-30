@@ -15,6 +15,11 @@
   papers cannot get a full-text summary there; the summary says so once and
   points to running the app on your own computer. The wording is in
   `sources_config.yaml` (`full_text.refused_download_notes`).
+- A download that is redirected to an `http://` address is now asked for as
+  `https://`. doi.org sends many DOIs to plain-http addresses
+  (`http://biorxiv.org/lookup/doi/…`), so a free copy found through a DOI link
+  was refused with "URL must use https". The address checks on every hop are
+  unchanged; other schemes (ftp, file) are still refused.
 - On a narrow screen, a results table made the whole page scroll sideways
   (385 px wide page, 586 px of content). Tables now scroll inside their card.
 
