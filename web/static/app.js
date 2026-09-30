@@ -1924,7 +1924,7 @@ function renderFilterTestResults(papers) {
     const tdSrc = document.createElement("td");
     const tag = document.createElement("span");
     tag.className = "tag";
-    tag.textContent = p.journal_or_server || p.source || "";
+    tag.textContent = paperSourceText(p);
     tdSrc.appendChild(tag);
     tr.append(tdTitle, tdAuth, tdDate, tdSrc);
     body.appendChild(tr);

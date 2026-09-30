@@ -3039,8 +3039,11 @@ def test_br5_key_source_label_reads_as_words():
 
 
 def test_br6_both_tables_label_the_source_the_same_way():
+    """Search results, the reference list and the Filter test table (the last
+    added by the whitespace gate) all use paperSourceText; none builds its own."""
     code = _js_without_comments()
-    assert code.count("tag.textContent = paperSourceText(") == 2
+    assert code.count("tag.textContent = paperSourceText(") == 3
+    assert "p.journal_or_server || p.source" not in code
     got = _node_eval([_js_block(r"function paperSourceText\(paper\) \{.*?\n\}")],
                      '[paperSourceText({journal_or_server: "medrxiv", source: "biorxiv_medrxiv", server: "biorxiv"}),'
                      ' paperSourceText({source: "europepmc", server: "biorxiv"}),'
