@@ -102,8 +102,11 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from 7acd226 → 21d2b35 (production run 2026-09-29: the orchestrator counts matches
 #   that repeat a paper already read, so papers read = match + do not + repeats +
 #   unreadable, and warns when they do not add up — W1.a required)
+# Updated from 21d2b35 → 7ea410b (plan 2026-09-29 T1.1: dedup keys a multi-word surname on its
+#   last word in every branch, so Europe PMC "da Silva" and arXiv "Ana da Silva" merge
+#   — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "21d2b35"
+BASELINE = "7ea410b"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
