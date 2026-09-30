@@ -210,6 +210,38 @@ def test_t11_multi_word_surname_merges_across_sources():
     assert len(d) == 1, [r.source_hits[0].source for r in d.results()]
 
 
+def test_t11_da_silva_and_silva_are_not_merged():
+    """QA gate 2026-09-30 F1 (the plan's own adversarial case): Europe PMC
+    "da Silva" and arXiv "Ana Silva", same title and year, are two authors."""
+    from src.sources.dedup import Deduplicator
+    from src.sources.europepmc import EuropePmcAdapter
+    from src.sources.arxiv import ArxivAdapter
+    raw = _raw_epmc("Agents That Simulate Societies")
+    raw["authorList"]["author"] = [{"fullName": "da Silva A", "lastName": "da Silva",
+                                    "firstName": "Ana"}]
+    d = Deduplicator()
+    d.add(EuropePmcAdapter().normalize(raw))
+    d.add(ArxivAdapter.__new__(ArxivAdapter).normalize({
+        "arxiv_id_full": "2401.00001v1", "title": "Agents That Simulate Societies",
+        "authors": ["Ana Silva"], "published": "2024-01-02"}))
+    assert len(d) == 2
+
+
+@pytest.mark.parametrize("family,display,same", [
+    ("da Silva", "Ana da Silva", True),
+    ("van der Berg", "Jan van der Berg", True),
+    ("da Silva", "Ana Silva", False),
+    ("de la Cruz", "Maria Cruz", False),
+    ("Smith", "John Smith", True),
+])
+def test_t11_surname_keys(family, display, same):
+    from types import SimpleNamespace
+    from src.sources.dedup import _surname
+    a = _surname(SimpleNamespace(family=family, display_name=""))
+    b = _surname(SimpleNamespace(family="", display_name=display))
+    assert (a == b) is same, (a, b)
+
+
 def test_t11_same_title_other_first_author_not_merged():
     """Adversarial: same title and year, first author Silva vs Souza."""
     from src.sources.dedup import Deduplicator

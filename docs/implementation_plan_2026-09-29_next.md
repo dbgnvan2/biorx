@@ -8,7 +8,7 @@ reconciliation of `TODO.md`'s deferred tail against current code.
 | Item | Status | Proof |
 |---|---|---|
 | Stored " (PubMed)" labels | done | `tests/test_db_migrations.py::test_br14_stored_pubmed_label_fixed` |
-| T1.1 | done | `tests/test_dedup.py::test_t11_*` |
+| T1.1 | done (particles kept: "Ana da Silva" = "da Silva", "Ana Silva" ≠ "da Silva" — QA gate F1) | `tests/test_dedup.py::test_t11_*` |
 | T1.2 | not changed — `reference_list_items` is only used by `gui.py` (D1); the web app's `user_reference_list_items` is `UNIQUE(list_id, paper_id)` | `src/db.py` (table), `src/user_store.py` |
 | T1.3 | done | `tests/test_fulltext.py::test_t13_openalex_refusal_reads_as_temporary` |
 | T1.4 | done | `tests/web/test_frontend_wiring.py::test_f1_find_by_title_falls_back_to_the_server_default`, `tests/web/test_summaries_routes.py::test_t14_*` |

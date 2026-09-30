@@ -88,7 +88,7 @@
 - LOW / P19 — two source-label maps: `config.SOURCE_LABELS` ("bioRxiv / medRxiv")
   and `orchestrator._SOURCE_LABELS` ("bioRxiv/medRxiv") now both feed messages.
   S2 (batch 3) makes one public `source_label()`.
-- **Fixed 2026-09-30 (plan T1.1): every branch keys on the surname's last word.** LOW / M22 residual — a multi-word surname ("da Silva") is "dasilva" from
+- **Fixed 2026-09-30 (plan T1.1): a display name keeps the lower-case particles before its last word, so "Ana da Silva" matches family "da Silva" and "Ana Silva" does not.** LOW / M22 residual — a multi-word surname ("da Silva") is "dasilva" from
   Europe PMC's lastName but "silva" from arXiv's last word, so those two copies
   still do not merge by title.
 - Known GUI effect (retiring app, not fixed): the desktop app's institution
