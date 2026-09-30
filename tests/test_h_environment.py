@@ -430,6 +430,9 @@ def test_h_pdf_download_sends_biorx_user_agent(monkeypatch, tmp_path):
         return _Resp()
 
     monkeypatch.setattr(requests_mod, "get", fake_get)
+    # Without a contact address the header is the bare name. Pinned so a real
+    # BIORX_CONTACT_EMAIL loaded from .env cannot add a mailto (D1/D2 gate).
+    monkeypatch.setenv("BIORX_CONTACT_EMAIL", "")
     handler = PDFHandler(output_dir=str(tmp_path))
     handler.download_pdf("https://biorxiv.org/fake.pdf", doi="10.1/test", title="Test")
     assert captured.get("headers", {}).get("User-Agent") == "biorx/1.0", (
