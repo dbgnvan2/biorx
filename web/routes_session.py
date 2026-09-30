@@ -195,13 +195,15 @@ def sign_in_guard(request: Request, ctx: AppContext = Depends(get_context)):
     from src.sign_in_limits import client_address
     limiter = ctx.get_sign_in_limiter()
     address = client_address(request, os.environ.get("TRUST_PROXY", "") == "1")
-    if not limiter.allow(address):
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                            detail="Too many sign-in attempts from here. Wait a minute and try again.")
+    # The slot first: a request turned away because the server is busy must
+    # not also use up one of this address's attempts (plan 2026-09-29 T1.5a).
     if not limiter.try_slot():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail="The server is busy signing people in. Try again in a moment.")
     try:
+        if not limiter.allow(address):
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                                detail="Too many sign-in attempts from here. Wait a minute and try again.")
         yield
     finally:
         limiter.release_slot()

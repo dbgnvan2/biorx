@@ -366,3 +366,20 @@ def test_br12_biorxiv_and_medrxiv_notes_are_configured():
     notes = load_sources_config()["full_text"]["refused_download_notes"]
     assert "own computer" in notes["www.biorxiv.org"]
     assert "own computer" in notes["www.medrxiv.org"]
+
+
+def test_t13_openalex_refusal_reads_as_temporary():
+    """Plan 2026-09-29 T1.3: only Unpaywall's 401/403 is a settings problem
+    (its contact email); an OpenAlex or Semantic Scholar 403 is a quota."""
+    from src.fulltext import Refused
+    get = _json({"unpaywall.org": {"best_oa_location": None, "oa_locations": []},
+                 "openalex.org": Refused("refused the request (HTTP 403)"),
+                 "semanticscholar": Refused("refused the request (HTTP 401)")})
+    r = find_full_text({**PAPER, "doi": "10.1/x"}, _download({}), own_links=[],
+                       email="me@x.org", get_json=get)
+    assert ("OpenAlex: refused the request (HTTP 403) — it may be limiting requests; "
+            "try again later") in r.tried
+    assert any(t.startswith("Semantic Scholar: refused the request (HTTP 401) — it may be")
+               for t in r.tried)
+    assert not any("check its settings" in t for t in r.tried)
+    assert {"OpenAlex", "Semantic Scholar"} <= set(r.unreachable)

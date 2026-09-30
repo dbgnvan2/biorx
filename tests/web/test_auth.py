@@ -375,6 +375,48 @@ def test_m4_scrypt_concurrency_bounded(ctx, client):
     assert client.post("/api/session", json={"code": "ZZZZ-ZZZZ-ZZZZ", "pin": "x"}).status_code == 401
 
 
+def test_t15a_a_busy_answer_does_not_use_an_attempt(ctx, client):
+    """Plan 2026-09-29 T1.5a: the attempt was spent before the hashing slot
+    was taken, so 503s used up an address's allowance."""
+    from src.sign_in_limits import SignInLimiter
+    ctx.sign_in_limiter = SignInLimiter(per_minute=2, concurrent=1)
+    assert ctx.sign_in_limiter.try_slot()                  # the server is busy
+    for _ in range(5):
+        assert client.post("/api/session/lookup",
+                           json={"code": "ZZZZ-ZZZZ-ZZZZ"}).status_code == 503
+    ctx.sign_in_limiter.release_slot()
+    codes = [client.post("/api/session/lookup", json={"code": "ZZZZ-ZZZZ-ZZZZ"}).status_code
+             for _ in range(3)]
+    assert codes == [401, 401, 429]                        # both attempts were still there
+
+
+def test_t15a_a_limited_request_gives_its_slot_back(ctx, client):
+    from src.sign_in_limits import SignInLimiter
+    ctx.sign_in_limiter = SignInLimiter(per_minute=1, concurrent=1)
+    assert client.post("/api/session/lookup", json={"code": "ZZZZ-ZZZZ-ZZZZ"}).status_code == 401
+    assert client.post("/api/session/lookup", json={"code": "ZZZZ-ZZZZ-ZZZZ"}).status_code == 429
+    assert ctx.sign_in_limiter.try_slot()                  # not left held by the 429
+    ctx.sign_in_limiter.release_slot()
+
+
+@pytest.mark.parametrize("section,per_minute,concurrent", [
+    ({"attempts_per_minute": "lots", "max_concurrent": 3}, 20, 3),
+    ({"attempts_per_minute": 5, "max_concurrent": None}, 5, 4),
+    ({"attempts_per_minute": 0, "max_concurrent": -2}, 20, 4),
+    ("not a section", 20, 4),
+])
+def test_t15c_bad_sign_in_settings_fall_back(section, per_minute, concurrent, caplog):
+    """Plan 2026-09-29 T1.5c: int() on a typo stopped the server starting."""
+    from src.sign_in_limits import from_config
+    lim = from_config({"sign_in": section})
+    assert lim.per_minute == per_minute
+    taken = 0
+    while lim.try_slot():
+        taken += 1
+    assert taken == concurrent
+    assert "sign_in" in caplog.text
+
+
 # ── M6: signing out ends the session on the server ───────────────────────────
 # Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M6
 

@@ -334,3 +334,23 @@ def test_b8_scrape_cap_from_config_and_logged(caplog):
     with caplog.at_level(logging.INFO, logger="src.paper_meta"):
         assert "Late abstract" in paper_meta._abstract_from_html(page, max_chars=len(page))
     assert "read the first" not in caplog.text
+
+
+# ── T1.6: a landing page is not tried as the paper's own PDF ─────────────────
+
+def test_t16_landing_page_is_not_tried_as_the_pdf():
+    """Plan 2026-09-29 T1.6: a stored paper keeps Unpaywall's landing page in
+    best_oa_url (a PMC article page) when it had no PDF link."""
+    from src.paper_meta import summary_pdf_link
+    pmc = {"doi": "10.1/x", "pmcid": "PMC123", "source": "europepmc",
+           "best_oa_url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC123"}
+    assert summary_pdf_link(pmc) == "https://doi.org/10.1/x"
+    for url in ("https://europepmc.org/articles/PMC123/pdf/x.pdf",
+                "https://academic.oup.com/j/article-pdf/1/2/3/x",
+                "https://repo.example/bitstream/1/paper.PDF"):
+        assert summary_pdf_link({**pmc, "best_oa_url": url}) == url
+    assert summary_pdf_link({**pmc, "pdf_url": "https://p/x.pdf"}) == "https://p/x.pdf"
+    # bioRxiv still gets its constructed PDF link.
+    bx = {"doi": "10.1101/1", "source": "biorxiv_medrxiv", "version": "2",
+          "best_oa_url": "https://www.biorxiv.org/content/10.1101/1v2"}
+    assert summary_pdf_link(bx) == "https://www.biorxiv.org/content/10.1101/1v2.full.pdf"

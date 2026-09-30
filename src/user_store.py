@@ -102,7 +102,7 @@ def set_preferred_model(db, user_id: str, model: str) -> None:
     db.conn.commit()
 
 
-def clear_llm_key(db, user_id: str) -> None:
+def clear_llm_key(db, user_id: str, commit: bool = True) -> None:
     """Remove this user's own key. Also drops the preferred_model: it is only
     consulted when the user has a key (spend.admit passes it to resolve_client
     for the key's provider), so leaving it would resurrect the stale model
@@ -112,7 +112,8 @@ def clear_llm_key(db, user_id: str) -> None:
         "llm_key_last4 = '', preferred_model = '' WHERE user_id = ?",
         (user_id,),
     )
-    db.conn.commit()
+    if commit:
+        db.conn.commit()
 
 
 def get_llm_key(db, user_id: str) -> tuple:

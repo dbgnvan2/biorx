@@ -2288,6 +2288,10 @@ def test_ft1_2_abstract_only_entry_is_retried():
     (None, True, True),
     ("on", False, True),    # this browser's own choice wins
     ("off", True, False),
+    # Plan 2026-09-29 T1.4: /api/config failed, so the server default is not
+    # known: send nothing and let the server's config decide, not "on".
+    (None, None, None),
+    ("off", None, False),
 ])
 def test_f1_find_by_title_falls_back_to_the_server_default(stored, server_default, expected):
     import json

@@ -279,3 +279,29 @@ def test_br8_stored_markup_cleaned_once(tmp_path, caplog):
     with caplog.at_level(logging.INFO, logger="src.db"):
         Database(path).close()                     # second open: nothing to do
     assert "Cleaned source markup" not in caplog.text
+
+
+def test_br14_stored_pubmed_label_fixed(tmp_path, caplog):
+    """Production check 2026-09-29: 6 summaries sat on papers stored as
+    " (PubMed)" (a PubMed paper without a journal, before the label fix)."""
+    path = str(tmp_path / "labels.db")
+    db = Database(path)
+    bare = db.insert_paper({"doi": "10.1/a", "canonical_id": "doi:10.1/a", "title": "A",
+                            "journal_or_server": " (PubMed)"})
+    padded = db.insert_paper({"doi": "10.1/b", "canonical_id": "doi:10.1/b", "title": "B",
+                              "journal_or_server": " Lancet (PubMed) "})
+    good = db.insert_paper({"doi": "10.1/c", "canonical_id": "doi:10.1/c", "title": "C",
+                            "journal_or_server": "Lancet (PubMed)"})
+    other = db.insert_paper({"doi": "10.1/d", "canonical_id": "doi:10.1/d", "title": "D",
+                             "journal_or_server": "bioRxiv"})
+    db.close()
+    with caplog.at_level(logging.INFO, logger="src.db"):
+        db = Database(path)
+    got = [db.get_paper_by_id(i)["journal_or_server"] for i in (bare, padded, good, other)]
+    assert got == ["PubMed", "Lancet (PubMed)", "Lancet (PubMed)", "bioRxiv"]
+    assert "Fixed the source label of 2 stored papers" in caplog.text
+    db.close()
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="src.db"):
+        Database(path).close()
+    assert "Fixed the source label" not in caplog.text

@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import urllib.parse
 import html as html_lib
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -71,6 +72,29 @@ def pdf_url(paper: Dict[str, Any]) -> str:
     if doi:
         return f"https://doi.org/{doi}"
     return paper.get("source_url", paper.get("url", ""))
+
+
+def _looks_like_pdf(url: str) -> bool:
+    path = urllib.parse.urlparse(url or "").path.lower()
+    return path.endswith(".pdf") or "/pdf" in path or "pdf/" in path
+
+
+def summary_pdf_link(paper: Dict[str, Any]) -> str:
+    """Purpose: The link a summary tries first for the paper's own PDF.
+    Spec:    docs/implementation_plan_2026-09-29_next.md#T1.6
+    Tests:   tests/test_paper_meta.py::test_t16_landing_page_is_not_tried_as_the_pdf
+
+    Like pdf_url, but best_oa_url is used only when it looks like a PDF:
+    stored papers keep Unpaywall's landing page there when it had no PDF
+    link (a PMC article page), and fetching it as a PDF only cost a download
+    before the Unpaywall step found the real one.
+    """
+    if paper.get("pdf_url"):
+        return paper["pdf_url"]
+    best = paper.get("best_oa_url") or ""
+    if best and _looks_like_pdf(best):
+        return best
+    return pdf_url({**paper, "best_oa_url": ""})
 
 
 def paper_link(paper: Dict[str, Any]) -> str:

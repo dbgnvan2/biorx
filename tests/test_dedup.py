@@ -183,3 +183,41 @@ def test_m22_arxiv_record_carries_its_datacite_doi():
         "arxiv_id_full": "2401.00001v2", "title": "T"})
     assert r.doi == "10.48550/arXiv.2401.00001"
     assert r.canonical_id == "arxiv:2401.00001"     # stored references unchanged
+
+
+def test_t11_multi_word_surname_merges_across_sources():
+    """Plan 2026-09-29 T1.1: Europe PMC's lastName "da Silva" keyed "dasilva",
+    arXiv's "Ana da Silva" keyed "silva" — the same paper never merged."""
+    from src.sources.dedup import Deduplicator
+    from src.sources.europepmc import EuropePmcAdapter
+    from src.sources.arxiv import ArxivAdapter
+    from src.sources.biorxiv_medrxiv import BiorxivMedrxivAdapter
+
+    title = "Agents That Simulate Societies"
+    raw = _raw_epmc(title)
+    raw["authorList"]["author"] = [{"fullName": "da Silva A", "lastName": "da Silva",
+                                    "firstName": "Ana"}]
+    epmc = EuropePmcAdapter().normalize(raw)
+    arx = ArxivAdapter.__new__(ArxivAdapter).normalize({
+        "arxiv_id_full": "2401.00001v1", "title": title, "authors": ["Ana da Silva"],
+        "published": "2024-01-02"})
+    bx = BiorxivMedrxivAdapter.__new__(BiorxivMedrxivAdapter).normalize({
+        "title": title, "authors": "da Silva, A.; Doe, B.", "pub_date": "2024-01-03",
+        "server": "biorxiv"})
+    d = Deduplicator()
+    for r in (epmc, arx, bx):
+        d.add(r)
+    assert len(d) == 1, [r.source_hits[0].source for r in d.results()]
+
+
+def test_t11_same_title_other_first_author_not_merged():
+    """Adversarial: same title and year, first author Silva vs Souza."""
+    from src.sources.dedup import Deduplicator
+    from src.sources.arxiv import ArxivAdapter
+    a = ArxivAdapter.__new__(ArxivAdapter)
+    d = Deduplicator()
+    d.add(a.normalize({"arxiv_id_full": "2401.00001v1", "title": "Agents",
+                       "authors": ["Ana da Silva"], "published": "2024-01-02"}))
+    d.add(a.normalize({"arxiv_id_full": "2401.00002v1", "title": "Agents",
+                       "authors": ["Ana de Souza"], "published": "2024-01-02"}))
+    assert len(d) == 2

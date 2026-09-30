@@ -16,7 +16,7 @@ from src import spend, user_store
 from src.jobs import Job, JobLookup
 from src.llm_providers import (LLMError, NoLLMCredentialError,  # noqa: F401 (re-exported)
                                ProviderResponseError)
-from src.paper_meta import pdf_url, recover_abstract
+from src.paper_meta import recover_abstract, summary_pdf_link
 
 from .auth import current_user, get_context
 from .deps import AppContext
@@ -163,7 +163,7 @@ def _extract_text(ctx: AppContext, paper: Dict[str, Any],
     settings = cfg.get("full_text") or {}
     if by_title is None:
         by_title = bool(settings.get("find_by_title", True))
-    own = pdf_url(paper)
+    own = summary_pdf_link(paper)
     found = find_full_text(
         paper, _download_pdf_text,
         own_links=[own] if own else [],

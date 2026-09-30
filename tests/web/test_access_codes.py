@@ -1091,3 +1091,25 @@ def test_m5_cli_prints_the_setup_code(ctx, app, capsys):
     r = TestClient(app).post("/api/session", json={"code": code, "pin": "cli-new-11",
                                                    "setup_code": setup})
     assert r.status_code == 200
+
+
+
+def test_t15b_reset_pin_is_one_transaction(ctx, app, monkeypatch):
+    """Plan 2026-09-29 T1.5b: a failure part-way through a reset left the PIN
+    cleared (committed by end_sessions) while the old key stayed."""
+    code = add_code("Faye")
+    c, r = _sign_in(app, code, pin="old-pin-111")
+    uid = r.json()["user_id"]
+    before = ctx.db.conn.execute("SELECT pin_hash, session_nonce FROM users WHERE user_id = ?",
+                                 (uid,)).fetchone()
+    from src import user_store
+
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr(user_store, "clear_llm_key", boom)
+    with pytest.raises(RuntimeError):
+        access_codes.reset_pin(ctx.db, ctx.codes, "faye")
+    after = ctx.db.conn.execute("SELECT pin_hash, session_nonce FROM users WHERE user_id = ?",
+                                (uid,)).fetchone()
+    assert tuple(after) == tuple(before)                  # nothing half-done
+    assert c.get("/api/me").status_code == 200           # the session still works

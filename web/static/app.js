@@ -70,7 +70,9 @@ const state = {
   activeListId: null,
   refItems: [],
   refSummaries: [],           // stored summaries for the open list (RL1)
-  findByTitleDefault: true,   // server default for title search (/api/config)
+  // Server default for title search (/api/config); null until it is known,
+  // and then the server applies its own config (plan 2026-09-29 T1.4).
+  findByTitleDefault: null,
   // Discover
   discoverJobId: null,
   discoverPolling: null,
@@ -343,12 +345,15 @@ const LS_FIND_BY_TITLE = "biorx_find_by_title";
 /* FT3: look for free copies by title as well as DOI. This browser's choice if
    it made one, else the server's default (sources_config.yaml full_text.
    find_by_title, via /api/config) — gate finding F1: the config was ignored.
+   null when neither is known (/api/config failed): the request then leaves
+   it to the server's config instead of assuming "on" (plan 2026-09-29 T1.4).
    Pure apart from reading storage, for the node-run test. */
 function findByTitle() {
   let choice = null;
   try { choice = localStorage.getItem(LS_FIND_BY_TITLE); } catch (e) { choice = null; }
   if (choice === "on") return true;
   if (choice === "off") return false;
+  if (state.findByTitleDefault === null || state.findByTitleDefault === undefined) return null;
   return state.findByTitleDefault !== false;
 }
 
@@ -622,7 +627,7 @@ async function loadSources() {
     const health = await api("GET", "/api/config");     // signed-in only (M7)
     state.sources = (health.sources || []).filter(s => s.enabled);
     state.findByTitleDefault = health.find_by_title_default !== false;
-    $("find-by-title").checked = findByTitle();
+    $("find-by-title").checked = findByTitle() !== false;
     if (health.startup_warnings && health.startup_warnings.length) {
       notice("⚠ " + health.startup_warnings.join(" | "), "warn");
     }
@@ -3152,7 +3157,7 @@ function wire() {
 
   // Settings tab
   $("btn-save-default-sources").addEventListener("click", saveDefaultSources);
-  $("find-by-title").checked = findByTitle();
+  $("find-by-title").checked = findByTitle() !== false;
   $("find-by-title").addEventListener("change", (e) => {
     try { localStorage.setItem(LS_FIND_BY_TITLE, e.target.checked ? "on" : "off"); } catch (err) {}
   });

@@ -16,12 +16,15 @@ Settings: llm_config.yaml `sign_in:`.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Dict, Optional, Tuple
 
 DEFAULT_PER_MINUTE = 20
 DEFAULT_CONCURRENT = 4
+logger = logging.getLogger(__name__)
+
 MAX_TRACKED = 10_000        # addresses remembered; the oldest are dropped
 
 
@@ -57,10 +60,30 @@ class SignInLimiter:
         self._slots.release()
 
 
+def _setting(section: dict, name: str, default: int) -> int:
+    """A whole number from `sign_in:`, or the default with a warning — a typo
+    in the config must not stop the server starting (plan 2026-09-29 T1.5c)."""
+    value = section.get(name, default)
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        logger.warning("llm_config.yaml sign_in.%s is not a whole number (%r); using %d",
+                       name, value, default)
+        return default
+    if number < 1:
+        logger.warning("llm_config.yaml sign_in.%s must be at least 1 (%r); using %d",
+                       name, value, default)
+        return default
+    return number
+
+
 def from_config(config: Optional[dict]) -> SignInLimiter:
     section = (config or {}).get("sign_in") or {}
-    return SignInLimiter(per_minute=section.get("attempts_per_minute", DEFAULT_PER_MINUTE),
-                         concurrent=section.get("max_concurrent", DEFAULT_CONCURRENT))
+    if not isinstance(section, dict):
+        logger.warning("llm_config.yaml sign_in: is not a section; using the defaults")
+        section = {}
+    return SignInLimiter(per_minute=_setting(section, "attempts_per_minute", DEFAULT_PER_MINUTE),
+                         concurrent=_setting(section, "max_concurrent", DEFAULT_CONCURRENT))
 
 
 def client_address(request, trust_proxy: bool) -> str:

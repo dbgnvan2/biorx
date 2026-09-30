@@ -65,6 +65,11 @@ class Skip(Exception):
     Not a result: nothing was looked up (gate finding F3)."""
 
 
+# Finders whose 401/403 means one of our settings is wrong: Unpaywall
+# refuses a request without a real contact email (gate finding F2).
+SETTINGS_REFUSALS = frozenset({"Unpaywall"})
+
+
 class Refused(Exception):
     """The service answered but refused the request (401/403): a settings
     problem, not an outage — retrying later will not help (gate finding F2)."""
@@ -373,8 +378,17 @@ def find_full_text(paper: Dict[str, Any], download: Download, *,
             result.tried.append(f"{name}: skipped ({e})")
             continue
         except Refused as e:
-            result.tried.append(f"{name}: {e} — check its settings")
-            logger.warning("Full-text finder %s %s", name, e)
+            if name in SETTINGS_REFUSALS:
+                result.tried.append(f"{name}: {e} — check its settings")
+                logger.warning("Full-text finder %s %s", name, e)
+            else:
+                # OpenAlex / Semantic Scholar have no setting of ours to fix:
+                # their 401/403 is a quota or a block, so it reads as
+                # temporary (plan 2026-09-29 T1.3).
+                result.unreachable.append(name)
+                result.tried.append(f"{name}: {e} — it may be limiting requests; "
+                                    "try again later")
+                logger.info("Full-text finder %s %s", name, e)
             continue
         except (SourceUnavailableError, RateLimitedError, requests.RequestException) as e:
             result.unreachable.append(name)

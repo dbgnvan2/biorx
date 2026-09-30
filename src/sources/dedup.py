@@ -55,16 +55,16 @@ def _surname(author) -> str:
 
     Uses the separate surname when the source gave one; else "Surname, I."
     means the part before the comma; else the last word ("John Smith").
+    A surname of several words keys on its last word, in every branch:
+    Europe PMC's family "da Silva" and arXiv's "Ana da Silva" must agree
+    (plan 2026-09-29 T1.1; "dasilva" and "silva" never merged).
     """
     name = (getattr(author, "family", "") or "").strip()
     if not name:
         display = author.display_name.strip()
-        if "," in display:
-            name = display.split(",")[0]
-        else:
-            parts = display.split()
-            name = parts[-1] if parts else ""
-    return re.sub(r"[^\w]", "", name.lower())
+        name = display.split(",")[0] if "," in display else display
+    words = name.split()
+    return re.sub(r"[^\w]", "", words[-1].lower()) if words else ""
 
 
 def _title_key(record: CanonicalRecord) -> Optional[str]:

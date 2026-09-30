@@ -530,6 +530,7 @@ class Database:
                        "ON access_code_bindings(user_id)")
         self._delete_orphans(cursor)
         self._clean_stored_markup(cursor)
+        self._fix_stored_source_labels(cursor)
 
     def _clean_stored_markup(self, cursor) -> Dict[str, int]:
         """Turn source markup in stored titles, abstracts and abstract-only
@@ -568,6 +569,26 @@ class Database:
             logger.info("Cleaned source markup from %d papers and %d abstract-only summaries",
                         cleaned["papers"], cleaned["summaries"])
         return cleaned
+
+    def _fix_stored_source_labels(self, cursor) -> int:
+        """Purpose: Stored PubMed papers without a journal read " (PubMed)".
+        Spec:    docs/cycles/2026-09-29_browser-run.md (PubMed label; production
+                 had 6 summaries on such rows, 2026-09-29)
+        Tests:   tests/test_db_migrations.py::test_br14_stored_pubmed_label_fixed
+
+        New searches write "PubMed" (src/sources/pubmed.py). Rows saved before
+        that keep " (PubMed)", and leading/trailing spaces around any label
+        are trimmed. Idempotent; the count is logged.
+        """
+        fixed = cursor.execute(
+            "UPDATE papers SET journal_or_server = 'PubMed' "
+            "WHERE TRIM(journal_or_server) = '(PubMed)'").rowcount
+        fixed += cursor.execute(
+            "UPDATE papers SET journal_or_server = TRIM(journal_or_server) "
+            "WHERE journal_or_server != TRIM(journal_or_server)").rowcount
+        if fixed:
+            logger.info("Fixed the source label of %d stored papers", fixed)
+        return fixed
 
     # Rows whose parent list is gone. They were left behind while foreign keys
     # were off (review M30); with them on, the cascade removes them instead.

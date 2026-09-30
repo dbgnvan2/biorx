@@ -621,6 +621,24 @@ def test_ft1_find_by_title_reaches_the_finder(ctx, signed_in, monkeypatch):
     assert seen["by_title"] is False
 
 
+def test_t14_unknown_find_by_title_leaves_it_to_the_config(ctx, signed_in, monkeypatch):
+    """Plan 2026-09-29 T1.4: a page that could not read /api/config sends
+    null; the server then applies full_text.find_by_title itself."""
+    seen = {}
+
+    def fake(ctx_, paper, outcome=None, by_title="unset"):
+        seen["by_title"] = by_title
+        return ""
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    with patch("web.routes_summaries._extract_text", side_effect=fake), \
+         patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
+        job_id = signed_in.post("/api/summaries",
+                                json={"paper": PAPER, "find_by_title": None}).json()["job_id"]
+        _await(signed_in, job_id)
+    assert seen["by_title"] is None                # _extract_text reads the config
+
+
 # ── A1: a paper's content never comes from the request ───────────────────────
 # Spec: docs/implementation_plan_2026-09-28_review_fixes.md#A1
 # Summaries are shared by every user. Before the fix, any signed-in user could

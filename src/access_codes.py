@@ -661,22 +661,28 @@ def reset_pin(db, store: CodeStore, for_name: str) -> ResetResult:
     if len(users) > 1:
         raise LookupError(f"{for_name!r} has codes for more than one account; edit by hand.")
     user_id = users.pop()
-    # Also end open sessions: a reset usually means someone else may know the PIN.
-    from .accounts import end_sessions, merged_family
-    # Also clear the PINs of every account merged into this one, at any depth:
-    # their old name + PIN would otherwise still reach it (csdp review 3, 4).
-    for uid in merged_family(db, user_id):
-        db.conn.execute("UPDATE users SET pin_hash = NULL, failed_logins = 0, "
-                        "locked_until = NULL WHERE user_id = ?", (uid,))
-    end_sessions(db, user_id)
-    from .accounts import hash_secret
+    from .accounts import end_sessions, hash_secret, merged_family
     from .user_store import clear_llm_key
     code = new_setup_code()
-    for uid in merged_family(db, user_id):
-        clear_llm_key(db, uid)
-    db.conn.execute("UPDATE users SET setup_code_hash = ? WHERE user_id = ?",
-                    (hash_secret(code), user_id))
-    db.conn.commit()
+    code_hash = hash_secret(code)
+    # One transaction (plan 2026-09-29 T1.5b): a failure part-way must not
+    # leave the PIN cleared with sessions still open, or the old key kept.
+    try:
+        # Also clear the PINs of every account merged into this one, at any
+        # depth: their old name + PIN would otherwise still reach it (csdp
+        # review 3, 4).
+        for uid in merged_family(db, user_id):
+            db.conn.execute("UPDATE users SET pin_hash = NULL, failed_logins = 0, "
+                            "locked_until = NULL WHERE user_id = ?", (uid,))
+            clear_llm_key(db, uid, commit=False)
+        # Also end open sessions: a reset usually means someone else may know the PIN.
+        end_sessions(db, user_id, commit=False)
+        db.conn.execute("UPDATE users SET setup_code_hash = ? WHERE user_id = ?",
+                        (code_hash, user_id))
+        db.conn.commit()
+    except Exception:
+        db.conn.rollback()
+        raise
     return ResetResult(user_id, code)
 
 
