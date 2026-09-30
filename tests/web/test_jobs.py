@@ -345,3 +345,52 @@ def test_a7_running_jobs_listed(signed_in, ctx):
             [("review", None, 7), ("summary", "10.1/x", None)]
     finally:
         gate.set()
+
+
+# ── T2.7: jobs one user may have waiting or running ──────────────────────────
+
+def test_t27_unfinished_jobs_per_user_are_capped():
+    """Plan 2026-09-29 T2.7: the spend cap bounds money, not memory; one
+    user could queue jobs without limit."""
+    from src.jobs import TooManyJobs
+    r = JobRegistry(lanes={"search": 1, "model": 1}, max_unfinished_per_owner=3)
+    gate = threading.Event()
+    held = [r.submit("summary", "alice", lambda j: gate.wait(5), key=("paper", i))
+            for i in range(3)]
+    with pytest.raises(TooManyJobs) as err:
+        r.submit("summary", "alice", lambda j: None, key=("paper", 99))
+    assert err.value.limit == 3
+    bob = r.submit("summary", "bob", lambda j: None)               # others unaffected
+    gate.set()
+    for j in held + [bob]:
+        _settled(j)
+    _settled(r.submit("summary", "alice", lambda j: None))         # room again
+
+
+def test_t27_limit_from_config(caplog):
+    from src.llm_config import DEFAULT_MAX_UNFINISHED_JOBS, job_max_unfinished, load_llm_config
+    assert job_max_unfinished({"jobs": {"max_unfinished_per_user": 4}}) == 4
+    assert job_max_unfinished({}) == DEFAULT_MAX_UNFINISHED_JOBS
+    assert job_max_unfinished({"jobs": {"max_unfinished_per_user": "lots"}}) == \
+        DEFAULT_MAX_UNFINISHED_JOBS and "max_unfinished_per_user" in caplog.text
+    assert job_max_unfinished(load_llm_config()) == 10
+
+
+def test_t27_route_answers_429_and_gives_the_slot_back(signed_in, ctx, monkeypatch):
+    """At the limit a summary is refused with 429, and the owner-key
+    allowance it reserved is released (not counted as spent)."""
+    from unittest.mock import patch
+    from src.jobs import TooManyJobs
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    ctx.llm_config = __import__("src.llm_config", fromlist=["x"]).load_llm_config()
+    released = []
+    with patch.object(ctx.jobs, "submit", side_effect=TooManyJobs(10)), \
+         patch("src.spend.release_unused", side_effect=lambda db, uid: released.append(uid)):
+        r = signed_in.post("/api/summaries", json={"paper": {
+            "doi": "10.1/t27", "canonical_id": "doi:10.1/t27", "title": "T"}})
+    assert r.status_code == 429 and "10 jobs waiting or running" in r.json()["detail"]
+    assert r.json()["reason"] == "too_many_jobs"      # the page tells it from the cap
+    assert len(released) == 1
+    with patch.object(ctx.jobs, "submit", side_effect=TooManyJobs(10)):
+        r = signed_in.post("/api/searches", json={"filter": {"text_groups": [{"both": "x"}]}})
+    assert r.status_code == 429

@@ -31,6 +31,13 @@ def default_pdf_dir() -> str:
     return DEFAULT_PDF_DIR
 
 
+def _user_agent() -> str:
+    """The contact-address User-Agent every other fetch sends (plan
+    2026-09-29 T2.3); the bare product name when no address is set."""
+    from .sources.config import load_sources_config, polite_user_agent
+    return polite_user_agent(load_sources_config())
+
+
 class PDFHandler:
     """Handle PDF download and text extraction."""
 
@@ -91,7 +98,7 @@ class PDFHandler:
 
             response = requests.get(
                 url, timeout=timeout, stream=True,
-                headers={"User-Agent": "biorx/1.0"},
+                headers={"User-Agent": _user_agent()},
             )
             response.raise_for_status()
 

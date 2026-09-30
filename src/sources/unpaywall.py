@@ -28,7 +28,10 @@ class UnpaywallAdapter:
         self.email   = email
         self.timeout = timeout
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "biorx/1.0"})
+        # Its polite pool wants the contact address in the User-Agent too
+        # (plan 2026-09-29 T2.3).
+        from .config import user_agent_with
+        self.session.headers.update({"User-Agent": user_agent_with(email)})
 
     def get_by_id(self, doi: str) -> Optional[Dict[str, Any]]:
         """

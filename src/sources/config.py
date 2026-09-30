@@ -126,7 +126,13 @@ def polite_user_agent(config: Dict[str, Any]) -> str:
     Spec:    docs/implementation_plan_2026-09-16_backlog.md#batch-h
     Tests:   tests/test_h_environment.py::test_h_user_agent_has_mailto_only_when_an_address_is_set
     """
-    email = get_contact_email(config)
+    return user_agent_with(get_contact_email(config))
+
+
+def user_agent_with(email: str) -> str:
+    """The User-Agent for a known contact address (or none): one format for
+    every caller (plan 2026-09-29 T2.3)."""
+    email = (email or "").strip()
     return f"{USER_AGENT_PRODUCT} (mailto:{email})" if email else USER_AGENT_PRODUCT
 
 

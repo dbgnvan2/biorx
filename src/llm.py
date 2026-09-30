@@ -11,29 +11,48 @@ from .tokens import UNCOUNTED, TokenUsage, from_ollama
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL = "http://localhost:11434"
-# Only for a bare OllamaClient(); every real path passes the model named in
-# llm_config.yaml. Was "qwen:7b", which was never installed here (2026-09-18).
-OLLAMA_MODEL = "qwen3.5:4b"
+def _ollama_settings() -> Dict[str, Any]:
+    """llm_config.yaml `providers.ollama`, for a value the caller left out.
+
+    No model name, address or timeout is written here (plan 2026-09-29 T2.2:
+    a literal "qwen:7b" once lingered after the configured model changed).
+    """
+    from .llm_config import load_llm_config, provider_config
+    pconf = provider_config(load_llm_config(), "ollama")
+    if pconf is None:
+        raise ValueError("llm_config.yaml has no providers.ollama section; pass "
+                         "base_url, model and timeout to OllamaClient")
+    return {"base_url": pconf.base_url, "model": pconf.model, "timeout": pconf.timeout,
+            "thinking": pconf.thinking}
 
 
 class OllamaClient:
     """Client for Ollama API."""
 
-    def __init__(self, base_url: str = OLLAMA_URL, model: str = OLLAMA_MODEL,
-                 timeout: int = 120, max_chars: int = 3000, thinking: str = ""):
+    def __init__(self, base_url: Optional[str] = None, model: Optional[str] = None,
+                 timeout: Optional[int] = None, max_chars: int = 3000,
+                 thinking: Optional[str] = None):
         """
         Initialize Ollama client.
 
+        Any of base_url, model, timeout and thinking left out comes from
+        llm_config.yaml `providers.ollama`.
+
         Args:
             base_url: Ollama API base URL
-            model: Model name, as `ollama list` shows it (e.g. 'qwen3.5:4b')
+            model: Model name, as `ollama list` shows it
             timeout: Seconds to wait for a generation (llm_config.yaml timeout)
             max_chars: Paper text sent per summary (llm_config.yaml max_text_chars)
             thinking: llm_config.yaml `thinking` for this provider: "disabled"
                 sends think=false, "enabled" think=true, "" sends nothing
                 (models without a thinking mode may refuse the flag).
         """
+        if None in (base_url, model, timeout, thinking):
+            conf = _ollama_settings()
+            base_url = conf["base_url"] if base_url is None else base_url
+            model = conf["model"] if model is None else model
+            timeout = conf["timeout"] if timeout is None else timeout
+            thinking = conf["thinking"] if thinking is None else thinking
         self.thinking = (thinking or "").strip().lower()
         self.base_url = base_url
         self.model = model

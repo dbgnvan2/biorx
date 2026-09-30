@@ -140,6 +140,10 @@ discover:
 jobs:
   search_workers: 2
   model_workers: 3
+  # Jobs (searches, summaries, reviews) one user may have waiting or running at
+  # once; more are refused until some finish. "Summarize checked" runs one at
+  # a time, so this does not limit it.
+  max_unfinished_per_user: 10
 
 # Sign-in limits (review M4). Each attempt runs a deliberately slow password
 # hash, so attempts are limited per client address, and only this many may be

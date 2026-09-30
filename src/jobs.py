@@ -50,6 +50,20 @@ DEFAULT_LANES = {SEARCH_LANE: 2, MODEL_LANE: 3}
 SEARCH_KINDS = ("search", "filter_test")
 
 
+class TooManyJobs(Exception):
+    """This owner already has `limit` jobs queued or running.
+
+    Purpose: Bound the memory one user's queued jobs can take (plan
+             2026-09-29 T2.7; the spend cap bounds money, not jobs).
+    Spec:    docs/implementation_plan_2026-09-29_next.md#T2.7
+    Tests:   tests/web/test_jobs.py::test_t27_unfinished_jobs_per_user_are_capped
+    """
+
+    def __init__(self, limit: int):
+        super().__init__(f"{limit} jobs already waiting or running")
+        self.limit = limit
+
+
 class JobAlreadyRunning(Exception):
     """A job with the same key is already queued or running for this owner.
 
@@ -170,9 +184,13 @@ class JobRegistry:
 
     def __init__(self, max_workers: Optional[int] = None,
                  ttl_seconds: int = DEFAULT_TTL_SECONDS,
-                 lanes: Optional[Dict[str, int]] = None):
+                 lanes: Optional[Dict[str, int]] = None,
+                 max_unfinished_per_owner: Optional[int] = None):
         """max_workers, when given, sizes every lane (tests use it); otherwise
-        `lanes` (from llm_config.yaml) or DEFAULT_LANES."""
+        `lanes` (from llm_config.yaml) or DEFAULT_LANES.
+        max_unfinished_per_owner: queued + running jobs one owner may have;
+        None means no limit."""
+        self.max_unfinished_per_owner = max_unfinished_per_owner
         self._jobs: Dict[str, Job] = {}
         self._keys: Dict[str, Any] = {}        # job id -> (owner, key)
         self._expired: "OrderedDict[str, str]" = OrderedDict()   # job id -> owner
@@ -207,6 +225,11 @@ class JobRegistry:
         self._expire_old()
         job = Job(id=uuid.uuid4().hex, kind=kind, owner=owner)
         with self._lock:
+            limit = self.max_unfinished_per_owner
+            if limit is not None and sum(
+                    1 for j in self._jobs.values()
+                    if j.owner == owner and j.status not in TERMINAL) >= limit:
+                raise TooManyJobs(limit)
             if key is not None:
                 for jid, (o, k) in self._keys.items():
                     other = self._jobs.get(jid)

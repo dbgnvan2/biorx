@@ -682,3 +682,30 @@ def test_ollama_answer_only_in_thinking_is_named_in_the_log(caplog):
          caplog.at_level(logging.WARNING, logger="src.llm"):
         text, _ = OllamaClient().generate("p", json_schema={"type": "object"})
     assert text == "" and "thinking: disabled" in caplog.text
+
+
+def test_t22_no_model_address_or_timeout_written_in_llm_py():
+    """Plan 2026-09-29 T2.2: a bare OllamaClient() takes llm_config.yaml's
+    providers.ollama; no stale model id or timeout sits in the source."""
+    import ast
+    import inspect
+    import re
+    from pathlib import Path
+    from src.llm import OllamaClient
+    from src.llm_config import load_llm_config, provider_config
+    tree = ast.parse(Path(__file__).resolve().parent.parent.joinpath("src", "llm.py").read_text())
+    docstrings = {id(n.body[0].value) for n in ast.walk(tree)
+                  if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef))
+                  and n.body and isinstance(n.body[0], ast.Expr)}
+    strings = [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant)
+               and isinstance(n.value, str) and id(n) not in docstrings]
+    assert not [v for v in strings if re.search(r"^\w[\w.-]*:\d|localhost|127\.0\.0\.1", v)]
+    defaults = inspect.signature(OllamaClient.__init__).parameters
+    assert all(defaults[k].default is None for k in ("base_url", "model", "timeout", "thinking"))
+    conf = provider_config(load_llm_config(), "ollama")
+    c = OllamaClient()
+    assert (c.base_url, c.model, c.timeout, c.thinking) == (
+        conf.base_url, conf.model, conf.timeout, conf.thinking.lower())
+    # What the caller passes still wins.
+    c2 = OllamaClient(base_url="http://h:1", model="m", timeout=5, thinking="")
+    assert (c2.base_url, c2.model, c2.timeout, c2.thinking) == ("http://h:1", "m", 5, "")

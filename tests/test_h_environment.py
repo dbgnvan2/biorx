@@ -36,12 +36,16 @@ def _python_files():
 
 
 def _root_md_files():
-    """Root-level Markdown files only.
+    """Root-level Markdown files, and docs/ except docs/cycles/.
 
     docs/cycles/ holds historical gate files that quote personal addresses for
-    audit purposes — those are excluded by not recursing into subdirectories.
+    audit purposes, so it is left out on purpose. The rest of docs/ (plans,
+    specs) is scanned too (plan 2026-09-29 T3.5: only the root was).
     """
     yield from ROOT.glob("*.md")
+    for path in sorted((ROOT / "docs").rglob("*.md")):
+        if "cycles" not in path.relative_to(ROOT / "docs").parts:
+            yield path
 
 
 def _string_constants(path: Path):
@@ -108,8 +112,9 @@ def test_h_the_address_scan_would_catch_one(tmp_path):
 
 def test_h_no_personal_address_in_root_markdown():
     """
-    Root-level .md files (README, TODO, specs) must not contain a personal
-    address. docs/cycles/ is excluded — gate files quote addresses for audit.
+    Root-level .md files (README, TODO, specs) and docs/ must not contain a
+    personal address. docs/cycles/ is excluded — gate files quote addresses
+    for audit.
     Scans raw text (no AST) because Markdown has no comment syntax.
     """
     found = []
@@ -587,3 +592,28 @@ def test_h_runs_on_the_supported_python():
     if not os.environ.get("CI"):
         pytest.skip("platform-version check runs in CI where Python 3.12 is installed")
     assert sys.version_info[:2] >= (3, 12)
+
+
+def test_t23_unpaywall_and_pdf_download_carry_the_contact_address(monkeypatch, tmp_path):
+    """Plan 2026-09-29 T2.3: these two sent a bare "biorx/1.0"."""
+    from unittest.mock import MagicMock, patch
+    from src.sources.unpaywall import UnpaywallAdapter
+    from src import pdf_handler
+    assert UnpaywallAdapter(email="me@example.org").session.headers["User-Agent"] == \
+        "biorx/1.0 (mailto:me@example.org)"
+    assert UnpaywallAdapter(email="").session.headers["User-Agent"] == "biorx/1.0"
+    monkeypatch.setenv("BIORX_CONTACT_EMAIL", "env@example.org")
+    resp = MagicMock(status_code=200)
+    resp.iter_content.return_value = [b"%PDF-1.7 x"]
+    with patch("src.pdf_handler.requests.get", return_value=resp) as get:
+        pdf_handler.PDFHandler(output_dir=str(tmp_path)).download_pdf(
+            "https://pub.example/x.pdf", "A title", "10.1/x")
+    assert get.call_args.kwargs["headers"]["User-Agent"] == "biorx/1.0 (mailto:env@example.org)"
+
+
+
+def test_t35_docs_outside_cycles_are_scanned():
+    files = [p.relative_to(ROOT).as_posix() for p in _root_md_files()]
+    assert "README.md" in files
+    assert any(f.startswith("docs/") and not f.startswith("docs/cycles/") for f in files)
+    assert not any(f.startswith("docs/cycles/") for f in files)

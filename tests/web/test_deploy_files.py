@@ -220,15 +220,89 @@ def test_railway_config_points_at_the_dockerfile_and_a_healthcheck():
 
 # ── .env.example ──────────────────────────────────────────────────────────────
 
+# Reads whose name the scan below cannot see, each with where the name comes
+# from. A new indirect read fails until it is resolved or listed here.
+_KNOWN_INDIRECT_READS = {
+    ("src/db.py", "env_key"),              # resolve_data_path: a wrapper, callers scanned
+    ("src/accounts.py", "name"),           # _env_int: a wrapper, callers scanned
+    ("src/llm_config.py", "var"),          # loops over DEFAULT/LEGACY_PROVIDER_ENV
+    ("src/llm_config.py", "self.api_key_env"),   # llm_config.yaml providers.*.api_key_env
+    ("src/llm_config.py", "model_env"),          # llm_config.yaml providers.*.model_env
+}
+
+
+def _env_read_arg(node):
+    """The name argument of os.environ.get / os.getenv / os.environ[...]."""
+    import ast
+    if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load) \
+            and isinstance(node.value, ast.Attribute) and node.value.attr == "environ":
+        return node.slice
+    if isinstance(node, ast.Call) and node.args and isinstance(node.func, ast.Attribute) and (
+            node.func.attr == "getenv" or (node.func.attr == "get" and isinstance(
+                node.func.value, ast.Attribute) and node.func.value.attr == "environ")):
+        return node.args[0]
+    return None
+
+
 def _env_vars_read_by_the_code():
-    """Every environment variable src/ and web/ actually read."""
-    names = set()
-    for path in list((ROOT / "src").rglob("*.py")) + list((ROOT / "web").rglob("*.py")):
-        source = path.read_text()
-        names |= set(re.findall(r'os\.environ\.get\(\s*"([A-Z0-9_]+)"', source))
-        names |= set(re.findall(r'os\.environ\[\s*"([A-Z0-9_]+)"\s*\]', source))
-        names |= set(re.findall(r'os\.getenv\(\s*"([A-Z0-9_]+)"', source))
+    """Every environment variable src/ and web/ actually read.
+
+    Read with ast, not a regex (plan 2026-09-29 T3.3: the regex saw only a
+    literal name, so BIORX_PDF_FONT, read through a constant, went
+    undocumented). Resolves module constants (a string or a tuple of them),
+    functions that pass their first parameter to a read (resolve_data_path,
+    _env_int: their callers' literal names), and the provider variables named
+    in llm_config.yaml.
+    """
+    import ast
+    import yaml
+    trees = {p: ast.parse(p.read_text())
+             for p in list((ROOT / "src").rglob("*.py")) + list((ROOT / "web").rglob("*.py"))}
+    consts = {}
+    for path, tree in trees.items():
+        for n in tree.body:
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 \
+                    and isinstance(n.targets[0], ast.Name):
+                v = n.value
+                items = v.elts if isinstance(v, (ast.Tuple, ast.List)) else [v]
+                if all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in items):
+                    consts[(path, n.targets[0].id)] = [e.value for e in items]
+    wrappers = set()
+    for tree in trees.values():
+        for fn in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+            first = fn.args.args[0].arg if fn.args.args else None
+            if any(isinstance(a, ast.Name) and a.id == first
+                   for a in map(_env_read_arg, ast.walk(fn)) if a is not None):
+                wrappers.add(fn.name)
+    names, unresolved = set(), set()
+    for path, tree in trees.items():
+        for node in ast.walk(tree):
+            arg = _env_read_arg(node)
+            if arg is None and isinstance(node, ast.Call) and node.args \
+                    and isinstance(node.func, ast.Name) and node.func.id in wrappers:
+                arg = node.args[0]
+            if arg is None:
+                continue
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                names.add(arg.value)
+            elif isinstance(arg, ast.Name) and (path, arg.id) in consts:
+                names.update(consts[(path, arg.id)])
+            else:
+                unresolved.add((str(path.relative_to(ROOT)), ast.unparse(arg)))
+    assert unresolved <= _KNOWN_INDIRECT_READS, \
+        f"env reads whose name is not known: {sorted(unresolved - _KNOWN_INDIRECT_READS)}"
+    config = yaml.safe_load((ROOT / "llm_config.yaml").read_text())
+    for provider in (config.get("providers") or {}).values():
+        names.update(provider[k] for k in ("api_key_env", "model_env") if provider.get(k))
     return names
+
+
+def test_t33_indirect_env_reads_are_seen():
+    """The names only an indirect read reveals are in the scan's result."""
+    names = _env_vars_read_by_the_code()
+    for name in ("BIORX_PDF_FONT", "BIORX_CONTACT_EMAIL", "ACCESS_CODES_FILE",
+                 "LOGIN_MAX_FAILURES", "DEFAULT_LLM_PROVIDER", "DEEPSEEK_API_KEY"):
+        assert name in names, name
 
 
 def test_env_example_documents_every_variable_the_code_reads():
@@ -251,6 +325,14 @@ def test_env_example_holds_no_real_secret():
         _, _, value = line.partition("=")
         value = value.strip()
         assert not value.startswith("sk-"), f"a real-looking key in .env.example: {line}"
+
+
+def test_t38_local_claude_config_and_reports_are_gitignored():
+    """Plan 2026-09-29 T3.8: .claude/launch.json holds local test secrets."""
+    import subprocess
+    for path in (".claude/launch.json", ".claude/settings.local.json", ".test-qa-report.md"):
+        r = subprocess.run(["git", "check-ignore", "-q", path], cwd=ROOT)
+        assert r.returncode == 0, f"{path} is not ignored"
 
 
 def test_dotenv_is_gitignored_so_a_filled_in_copy_is_never_committed():
@@ -316,6 +398,10 @@ def test_the_entrypoint_refuses_to_start_on_an_unwritable_volume(tmp_path):
         assert "started" not in result.stdout
         assert "not writable" in result.stderr
         assert str(unwritable) in result.stderr
+        # Plan 2026-09-29 T3.2: name the uid that runs, not APP_USER, which
+        # never runs when the platform forces a uid.
+        assert f"mount the volume writable by uid {os.getuid()}." in result.stderr
+        assert "writable by biorx" not in result.stderr
     finally:
         unwritable.chmod(0o700)
 

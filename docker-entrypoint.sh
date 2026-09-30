@@ -18,9 +18,11 @@ set -e
 DATA_DIR="${DATA_DIR:-/data}"
 APP_USER="${APP_USER:-biorx}"
 
+# $2, when given, is who must be able to write: the uid the platform forced,
+# not APP_USER, which never runs then (plan 2026-09-29 T3.2).
 fatal() {
     echo "entrypoint: FATAL $1" >&2
-    echo "entrypoint: mount the volume writable by $APP_USER." >&2
+    echo "entrypoint: mount the volume writable by ${2:-$APP_USER}." >&2
     exit 1
 }
 
@@ -37,7 +39,7 @@ main() {
     if [ "$(id -u)" != "0" ]; then
         # The platform enforces a uid; nothing can be chowned from here. Fail
         # early and clearly rather than at the first database write.
-        [ -w "$DATA_DIR" ] || fatal "$DATA_DIR is not writable by uid $(id -u)."
+        [ -w "$DATA_DIR" ] || fatal "$DATA_DIR is not writable by uid $(id -u)." "uid $(id -u)"
         exec "$@"
     fi
 

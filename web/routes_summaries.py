@@ -115,10 +115,17 @@ def submit_billed(ctx: AppContext, kind: str, user_id: str, work, usage_id,
     here (review A14).
     """
     from fastapi.responses import JSONResponse
-    from src.jobs import JobAlreadyRunning
+    from src.jobs import JobAlreadyRunning, TooManyJobs
     try:
         return ctx.jobs.submit(kind, user_id, work, key=key,
                                on_never_ran=lambda _j: spend.release_unused(ctx.db, usage_id))
+    except TooManyJobs as e:
+        spend.release_unused(ctx.db, usage_id)
+        return JSONResponse(status_code=status.HTTP_429_TOO_MANY_REQUESTS, content={
+            "detail": f"You already have {e.limit} jobs waiting or running — "
+                      "wait for some to finish, then try again.",
+            # Not the daily allowance: the page reads a bare 429 as that.
+            "reason": "too_many_jobs"})
     except JobAlreadyRunning as e:
         spend.release_unused(ctx.db, usage_id)
         return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={

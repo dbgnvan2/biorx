@@ -31,7 +31,7 @@
 - M4 behind Railway's proxy: **checked 2026-09-29.** `TRUST_PROXY=1` is set;
   the limit is per client address and a made-up X-Forwarded-For does not get
   around it (details in `docs/spec_coverage_review_fixes.md`).
-- Low-severity notes, not fixed: the rate limiter spends a token before the
+- **Fixed 2026-09-30 (plan T1.5): slot before token, one-transaction reset, guarded settings.** Low-severity notes, not fixed: the rate limiter spends a token before the
   PIN-check slot is taken; `reset_pin` is not one transaction; `from_config`
   does not guard `int()` on the `sign_in:` values.
 
@@ -88,7 +88,7 @@
 - LOW / P19 — two source-label maps: `config.SOURCE_LABELS` ("bioRxiv / medRxiv")
   and `orchestrator._SOURCE_LABELS` ("bioRxiv/medRxiv") now both feed messages.
   S2 (batch 3) makes one public `source_label()`.
-- LOW / M22 residual — a multi-word surname ("da Silva") is "dasilva" from
+- **Fixed 2026-09-30 (plan T1.1): every branch keys on the surname's last word.** LOW / M22 residual — a multi-word surname ("da Silva") is "dasilva" from
   Europe PMC's lastName but "silva" from arXiv's last word, so those two copies
   still do not merge by title.
 - Known GUI effect (retiring app, not fixed): the desktop app's institution
@@ -196,10 +196,10 @@ deferred deliberately:
 
 ## From the full-text gates (2026-09-19) — APPROVED, deferred
 
-- G1 (LOW) — `src/fulltext.default_get_json` reports any 401/403 as a settings
+- **Fixed 2026-09-30 (plan T1.3): only Unpaywall's 401/403 reads as a settings problem.** G1 (LOW) — `src/fulltext.default_get_json` reports any 401/403 as a settings
   problem; only Unpaywall's is. An OpenAlex/Semantic Scholar 403 (quota) should
   read as temporary.
-- G2 (LOW) — if `/healthz` fails at page load, the page falls back to title
+- **Fixed 2026-09-30 (plan T1.4): the page sends null and the server's config decides.** G2 (LOW) — if `/healthz` fails at page load, the page falls back to title
   search on and overrides an operator's `find_by_title: false`.
 - G3 (LOW) — the Settings checkbox re-sync after `/healthz` loads has no test.
 - F6 (INFO, deliberate) — a real PDF whose title appears after the first 10,000
@@ -273,7 +273,7 @@ Also open from this batch:
 - **`/healthz` is unauthenticated** and returns `db_path` and `startup_warnings`.
 - **Static assets have no cache-busting**: after a deploy, browsers keep the old
   `app.js`/`styles.css` until a hard reload (seen during the live check).
-- **`OllamaClient.generate` has a hardcoded 120 s timeout** (`src/llm.py`) and
+- **Fixed 2026-09-30 (plan T2.2): values left out come from llm_config.yaml.** **`OllamaClient.generate` has a hardcoded 120 s timeout** (`src/llm.py`) and
   ignores the provider's `timeout` in `llm_config.yaml`; a slow local model
   (qwen3.5:4b on this Mac) times out on Discover Terms. Also P4.
 - **Discover shares the summary cap.** An owner-billed discover run takes a
@@ -281,7 +281,7 @@ Also open from this batch:
   add a kind and a cap.
 - **"Use date range" checkbox** in the Search tab has the stacked layout the
   source pickers had.
-- **Summaries no longer use the PDF cache on the web path.** The fix for cache
+- **Not needed (plan T2.6, 2026-09-30): a full-text summary is stored and reused, so its PDF is not fetched again; a re-download happens only after no PDF was found.** **Summaries no longer use the PDF cache on the web path.** The fix for cache
   poisoning fetches each PDF into a temp file; a repeat summary re-downloads.
   A cache keyed by a hash of the server-validated URL would restore reuse.
 - **Institution as a list** from the earlier web build is joined with ", "
@@ -290,7 +290,7 @@ Also open from this batch:
 
 ## From batch-H gates (2026-09-16) — deferred, in-loop fix threshold not met
 
-- **paper_meta recovery paths emit no warning (P5/MEDIUM)** — `openalex_user_agent()`,
+- **Fixed 2026-09-30 (plan T3.4): openalex_user_agent() warns once without an address.** **paper_meta recovery paths emit no warning (P5/MEDIUM)** — `openalex_user_agent()`,
   `_europepmc()`, and `_crossref_abstract()` load sources_config but never warn when
   no contact email is found. The orchestrator's startup warning covers the GUI/web
   paths; this gap is only when these functions are called standalone (e.g. CLI
@@ -298,7 +298,7 @@ Also open from this batch:
   because the primary orchestrator warning already fires, and per-call warnings
   would be noisy in batch runs.
 
-- **`_root_md_files` scans root-level `.md` only** — `docs/` is intentionally
+- **Fixed 2026-09-30 (plan T3.5): docs/ is scanned too, except docs/cycles/.** **`_root_md_files` scans root-level `.md` only** — `docs/` is intentionally
   excluded because `docs/cycles/` gate files quote personal addresses for audit.
   The latent risk is that a non-cycles file added to `docs/` could contain a
   real address and escape the scan. Gate F4 — low risk given the exclusion is
@@ -311,9 +311,9 @@ Also open from this batch:
   or from a library with its own resolver (dnspython, aiohttp). None of those is
   reachable in this repo today — its only network path is requests/urllib3 — but
   say so in the guard's docstring so nobody over-trusts it.
-- **`_OUR_BUGS` is broader than its name**: `ImportError` can also mean an
+- **Fixed 2026-09-30 (plan T3.1): the comment says what the tuple really covers.** **`_OUR_BUGS` is broader than its name**: `ImportError` can also mean an
   optional dependency is missing rather than a defect in this code.
-- **Adjacent to N2**: `pdf_url()` falls back to `best_oa_url`, which for PMC is
+- **Fixed 2026-09-30 (plan T1.6): a summary skips a best_oa_url that is not a PDF path.** **Adjacent to N2**: `pdf_url()` falls back to `best_oa_url`, which for PMC is
   an HTML page, so a summary job first downloads a web page as though it were a
   PDF before recovery runs. Wasted work, not a wrong result.
 
@@ -372,15 +372,15 @@ Rejected three times before approval — every rejection a real defect in
 `docker-entrypoint.sh`, and every one invisible to the suite until the tests
 were rewritten to run the script instead of grepping it. Carried findings:
 
-- **F8 (low)** — `fatal()`'s second line always says "mount the volume writable
+- **Fixed 2026-09-30 (plan T3.2): names the uid that runs.** **F8 (low)** — `fatal()`'s second line always says "mount the volume writable
   by biorx", but the non-root branch fails under whatever uid the platform
   enforced. The first line names the real uid, so the hint merely misleads.
-- **F6 (low)** — the "derive env vars from the code" test misses variables read
+- **Fixed 2026-09-30 (plan T3.3): read with ast; found BIORX_PDF_FONT undocumented.** **F6 (low)** — the "derive env vars from the code" test misses variables read
   through indirection (`KEY_ENC_SECRET`, the provider keys, the model names), so
   its guarantee rests partly on a hand-kept list.
 - **No Content-Security-Policy header.** The client sets text rather than
   markup and checks URL schemes, but a CSP would be defence in depth.
-- **Unbounded job creation**: any signed-in user can queue jobs without limit.
+- **Fixed 2026-09-30 (plan T2.7): jobs.max_unfinished_per_user (10), answered 429.** **Unbounded job creation**: any signed-in user can queue jobs without limit.
   (User creation is now bounded: one account per personal access code.) The spend cap bounds money, not memory.
 
 ## From the chunk-4 QA gate (`docs/cycles/2026-09-15_chunk4-qa-gate.md`)
@@ -432,12 +432,12 @@ Consequences worth deciding on:
   exactly like a quiet fortnight.
 - **Wildcards are not handled for arXiv.** `build_psyarxiv_query` strips trailing
   `*`; `_group_to_arxiv` does not, and arXiv has no `*` operator.
-- **`filters.json` names are not unique** (two entries are currently called
+- **Checked 2026-09-30 (plan T2.4): load_filters keeps a list and --all runs both; now tested.** **`filters.json` names are not unique** (two entries are currently called
   "New Filter"), and `monitor.load_filters()` keys by name, so `--all` silently
   drops one.
 - **`dict | None` in `agents/monitor.py`** breaks the Python 3.9 floor that
   `CLAUDE.md` and the arXiv spec claim to support.
-- **`all:` is broader than Europe PMC's bare term** — it also matches authors,
+- **Fixed 2026-09-30 (plan T3.6): extra hits are filtered out on title/abstract; the note says their only cost.** **`all:` is broader than Europe PMC's bare term** — it also matches authors,
   comments and journal-ref. Defensible, but currently undocumented.
 
 ## Pre-existing, found while reading
@@ -446,7 +446,7 @@ Consequences worth deciding on:
   to the model.~~ Fixed 2026-09-18 (220e724).
 - ~~`src/llm.py` — silent 3000-character truncation.~~ Fixed 2026-09-18: the
   budget is `max_text_chars` from `llm_config.yaml`; the agent logs what it drops.
-- `src/llm.py` — `OLLAMA_MODEL` is still a model id in source, now `qwen3.5:4b`
+- **Fixed 2026-09-30 (plan T2.2): the constants are gone.** `src/llm.py` — `OLLAMA_MODEL` is still a model id in source, now `qwen3.5:4b`
   and used only by a bare `OllamaClient()`; every real path passes the config
   model. Remove when nothing constructs a bare client.
 - ~~`/opt/homebrew/bin/pytest` skipped every GUI test.~~ Fixed 2026-09-18

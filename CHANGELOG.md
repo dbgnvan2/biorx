@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-09-30 — the next-steps plan (tiers 1–3)
+
+From `docs/implementation_plan_2026-09-29_next.md`; status of every item is at
+the top of that file.
+
+### Fixed
+- Papers stored as " (PubMed)" (a PubMed paper without a journal, saved
+  before the label fix) now read "PubMed"; stray spaces around stored labels
+  are trimmed when the app starts.
+- The same paper from Europe PMC ("da Silva") and arXiv ("Ana da Silva") is
+  now recognised as one.
+- An OpenAlex or Semantic Scholar refusal reads as temporary; only
+  Unpaywall's means a setting is wrong.
+- If the page cannot read the server's settings, title search follows the
+  server's own setting instead of switching on.
+- Sign-in: a "server busy" answer no longer uses up one of your attempts; a
+  PIN reset is all-or-nothing; a typo in `sign_in:` settings no longer stops
+  the server starting.
+- A summary no longer downloads a paper's web page as if it were its PDF.
+- One user can have at most 10 jobs waiting or running
+  (`llm_config.yaml` `jobs.max_unfinished_per_user`); more are refused with
+  a message that is not mistaken for the daily allowance.
+- Unpaywall lookups and PDF downloads send the contact address like every
+  other request; abstract lookups warn once when none is set.
+- `BIORX_PDF_FONT` is now in `.env.example`; the check that lists
+  environment variables reads the code properly and found it.
+- The container's start-up error names the user that must be able to write
+  the volume.
+- `.claude/launch.json`, `.claude/settings.local.json` and
+  `.test-qa-report.md` are ignored by git (the launch file holds local test
+  secrets).
+
 ## 2026-09-29 — checked on production
 
 ### Fixed

@@ -3083,3 +3083,28 @@ def test_br11_every_table_scrolls_inside_its_card():
     css = CSS.read_text()
     rule = re.search(r"\.table-scroll\s*\{([^}]*)\}", css)
     assert rule and "overflow-x: auto" in rule.group(1)
+
+
+@pytest.mark.parametrize("payload,expected", [
+    ({"reason": "too_many_jobs", "detail": "You already have 10 jobs waiting"},
+     {"error": "You already have 10 jobs waiting"}),
+    ({"detail": "Daily allowance used"}, {"cap": True}),
+])
+def test_t27_too_many_jobs_is_not_the_daily_cap(payload, expected):
+    """Plan 2026-09-29 T2.7: the page read every 429 as the daily allowance
+    running out, which stops a batch with the wrong message."""
+    import json, shutil, subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    script = "\n".join([
+        "const state = { me: { provider: 'deepseek' } };",
+        "function localSettings() { return {}; } function findByTitle() { return true; }",
+        f"async function api() {{ const e = new Error({json.dumps(payload['detail'])});"
+        f" e.status = 429; e.payload = {json.dumps(payload)}; throw e; }}",
+        "async function pollJobUntilSettled() { throw new Error('not reached'); }",
+        _js_block(r"async function summarizeOnePaper\(paper\) \{.*?\n\}"),
+        "summarizeOnePaper({doi: '10.1/x'}).then(r => console.log(JSON.stringify(r)));",
+    ])
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == expected

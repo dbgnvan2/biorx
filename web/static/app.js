@@ -2786,7 +2786,10 @@ async function summarizeOnePaper(paper) {
   let job;
   try { job = await api("POST", "/api/summaries", body); }
   catch (e) {
-    if (e.status === 429) return { cap: true };
+    // T2.7: too many jobs waiting is not the daily allowance running out.
+    if (e.status === 429 && !(e.payload && e.payload.reason === "too_many_jobs")) {
+      return { cap: true };
+    }
     // A7: already running (another tab, or a row click): follow that run.
     if (e.status === 409 && e.payload && e.payload.job_id) job = { job_id: e.payload.job_id };
     else return { error: e.message };

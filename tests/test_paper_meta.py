@@ -354,3 +354,23 @@ def test_t16_landing_page_is_not_tried_as_the_pdf():
     bx = {"doi": "10.1101/1", "source": "biorxiv_medrxiv", "version": "2",
           "best_oa_url": "https://www.biorxiv.org/content/10.1101/1v2"}
     assert summary_pdf_link(bx) == "https://www.biorxiv.org/content/10.1101/1v2.full.pdf"
+
+
+def test_t34_missing_contact_address_is_said_once(monkeypatch, caplog):
+    """Plan 2026-09-29 T3.4: abstract recovery went to OpenAlex without a
+    contact address and nothing said so."""
+    import logging
+    from src import paper_meta
+    monkeypatch.delenv("BIORX_CONTACT_EMAIL", raising=False)
+    monkeypatch.setattr("src.sources.config.load_sources_config", lambda *a, **k: {})
+    monkeypatch.setattr(paper_meta, "_warned_no_contact", False)
+    with caplog.at_level(logging.WARNING, logger="src.paper_meta"):
+        assert paper_meta.openalex_user_agent() == "biorx/1.0"
+        paper_meta.openalex_user_agent()
+    assert caplog.text.count("No contact address set") == 1
+    caplog.clear()
+    monkeypatch.setattr(paper_meta, "_warned_no_contact", False)
+    monkeypatch.setenv("BIORX_CONTACT_EMAIL", "me@example.org")
+    with caplog.at_level(logging.WARNING, logger="src.paper_meta"):
+        assert paper_meta.openalex_user_agent() == "biorx/1.0 (mailto:me@example.org)"
+    assert "No contact address set" not in caplog.text

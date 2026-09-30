@@ -205,9 +205,15 @@ def submit_search(ctx: AppContext, kind: str, user_id: str, work):
     Tests:   tests/web/test_jobs.py::test_a14_one_search_per_user
     """
     from fastapi.responses import JSONResponse
-    from src.jobs import JobAlreadyRunning
+    from src.jobs import JobAlreadyRunning, TooManyJobs
     try:
         job = ctx.jobs.submit(kind, user_id, work, key=SEARCH_KEY)
+    except TooManyJobs as e:
+        return JSONResponse(status_code=status.HTTP_429_TOO_MANY_REQUESTS, content={
+            "detail": f"You already have {e.limit} jobs waiting or running — "
+                      "wait for some to finish, then try again.",
+            # Not the daily allowance: the page reads a bare 429 as that.
+            "reason": "too_many_jobs"})
     except JobAlreadyRunning as e:
         return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={
             "detail": "A search is already running — wait for it to finish or stop it first.",

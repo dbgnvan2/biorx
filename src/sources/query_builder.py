@@ -293,7 +293,10 @@ def _group_to_arxiv(group: Dict[str, str]) -> str:
 
     Note: arXiv's `all:` field is broader than Europe PMC's bare term — it also
     matches authors, journal-ref, and comments, not just title and abstract.
-    This is defensible but currently undocumented to users (see TODO.md).
+    Users never see those extra hits: every result is filtered again on title
+    and abstract (filter_papers, in routes_searches and monitor.py). Their
+    only cost is that they count against arXiv's Max results before they are
+    dropped (plan 2026-09-29 T3.6).
     """
     title_terms    = [_strip_arxiv_wildcard(t) for t in _split_terms(group.get("title",    ""))]
     abstract_terms = [_strip_arxiv_wildcard(t) for t in _split_terms(group.get("abstract", ""))]

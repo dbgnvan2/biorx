@@ -240,3 +240,20 @@ def test_m24_download_is_guarded_and_saved(tmp_path, monkeypatch):
     assert asked == ["https://pub.example/x.pdf"]          # upgraded to https
     assert (tmp_path / "doi_10.1_x.pdf").read_bytes() == b"%PDF-1.7 body"
     assert not list(tmp_path.glob("*.part"))
+
+
+def test_t24_two_filters_with_one_name_both_run(tmp_path, caplog):
+    """Plan 2026-09-29 T2.4: filters keyed by name would drop one of two
+    "New Filter"s under --all. load_filters keeps a list and says so."""
+    import json
+    import logging
+    path = tmp_path / "filters.json"
+    path.write_text(json.dumps({"filters": [
+        {"name": "New Filter", "enabled": True, "text_groups": [{"both": "sleep"}]},
+        {"name": "New Filter", "enabled": True, "text_groups": [{"both": "apnea"}]},
+        {"name": "Off", "enabled": False, "text_groups": [{"both": "x"}]}]}))
+    with caplog.at_level(logging.WARNING):
+        filters = monitor.load_filters(str(path))
+    enabled = monitor.get_enabled_filters(filters)
+    assert [f["text_groups"][0]["both"] for f in enabled] == ["sleep", "apnea"]
+    assert "Duplicate filter name 'New Filter'" in caplog.text

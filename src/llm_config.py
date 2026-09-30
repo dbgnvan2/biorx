@@ -249,3 +249,21 @@ def job_lanes(config: Dict[str, Any]) -> Dict[str, int]:
         if isinstance(value, int) and value > 0:
             out[lane] = value
     return out
+
+
+DEFAULT_MAX_UNFINISHED_JOBS = 10
+
+
+def job_max_unfinished(config: Dict[str, Any]) -> int:
+    """Purpose: Jobs one user may have queued or running, from llm_config.yaml
+             `jobs: max_unfinished_per_user`.
+    Spec:    docs/implementation_plan_2026-09-29_next.md#T2.7
+    Tests:   tests/web/test_jobs.py::test_t27_limit_from_config
+    """
+    value = ((config or {}).get("jobs") or {}).get("max_unfinished_per_user")
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    if value is not None:
+        logger.warning("llm_config.yaml jobs.max_unfinished_per_user must be a whole "
+                       "number above 0 (%r); using %d", value, DEFAULT_MAX_UNFINISHED_JOBS)
+    return DEFAULT_MAX_UNFINISHED_JOBS

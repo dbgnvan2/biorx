@@ -35,12 +35,23 @@ def openalex_user_agent() -> str:
     One source for every polite-pool header (src/sources/config.py): env
     BIORX_CONTACT_EMAIL wins; falls back to contact_email in sources_config.yaml.
     """
-    from src.sources.config import load_sources_config, polite_user_agent
+    from src.sources.config import get_contact_email, load_sources_config, polite_user_agent
+    global _warned_no_contact
     try:
         cfg = load_sources_config()
     except Exception:
         cfg = {}
+    if not get_contact_email(cfg) and not _warned_no_contact:
+        # Said once per process, as the search path does (plan 2026-09-29
+        # T3.4): without an address OpenAlex serves these lookups from its
+        # slower common pool, and nothing said why.
+        _warned_no_contact = True
+        logger.warning("No contact address set (BIORX_CONTACT_EMAIL or contact_email in "
+                       "sources_config.yaml): abstract lookups go to OpenAlex without one")
     return polite_user_agent(cfg)
+
+
+_warned_no_contact = False
 
 _BROWSER_HEADERS = {
     "User-Agent": (
@@ -370,7 +381,11 @@ def fetch_openalex_abstract(doi: str) -> str:
 
 # ── Recovering a missing abstract ─────────────────────────────────────────────
 
-# Exceptions that mean a bug in this code rather than a failing service.
+# Exceptions logged as an error with a traceback instead of "the source had
+# nothing". Mostly bugs in this code; ImportError can also be a missing
+# optional package (a deployment problem, not a code defect) — either way it
+# is something the owner must fix, never a service outage to retry
+# (plan 2026-09-29 T3.1: the old comment said "a bug in this code" only).
 _OUR_BUGS = (NameError, TypeError, AttributeError, ImportError, SyntaxError)
 
 _PMCID_IN_URL = re.compile(r"\b(PMC\d+)\b", re.IGNORECASE)
