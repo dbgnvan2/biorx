@@ -100,12 +100,14 @@ def build_summaries_pdf(list_name: str, items: List[Dict[str, Any]],
     # Lay the document out as blocks first: the first page reports how many
     # characters could not be shown, which is only known once all text is seen.
     # A block is (text, size, bold, gap_after), or None for a page break.
+    from .reference_export import source_label   # here: that module imports this one
+
     def meta_of(p):
         return " · ".join(x for x in (
             (p.get("authors") or "").strip(),
             str(p.get("pub_date") or "").strip(),
             f"DOI {p['doi']}" if p.get("doi") else "",
-            (p.get("source") or p.get("server") or "").strip(),
+            source_label(p),
         ) if x)
 
     # Summarized papers one per page, in list order; the rest together at the

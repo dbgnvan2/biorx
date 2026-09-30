@@ -50,13 +50,21 @@ def safe_filename(name: str) -> str:
     return cleaned.strip() or "references"
 
 
+def source_label(paper: Dict[str, Any]) -> str:
+    """Where a paper came from, as the page shows it (app.js paperSourceText):
+    the journal or server name, else the stored source. `source` alone is the
+    internal id, e.g. "biorxiv_medrxiv" (production PDF, 2026-09-30)."""
+    return (paper.get("journal_or_server") or paper.get("source")
+            or paper.get("server") or "").strip()
+
+
 def _row(item: Dict[str, Any], pdf_url_of) -> List[str]:
     paper = item.get("paper", item)
     return [safe_cell(paper.get("title")),
             safe_cell(paper.get("authors")),
             safe_cell(paper.get("pub_date")),
             safe_cell(paper.get("doi")),
-            safe_cell(paper.get("source") or paper.get("server")),
+            safe_cell(source_label(paper)),
             safe_cell(pdf_url_of(paper) or "")]
 
 

@@ -325,3 +325,27 @@ def test_ft1_4_list_summaries_carry_the_source(signed_in, ctx):
     ctx.db.insert_summary(a, summary_text="The abstract.", source_text="abstract")
     s = signed_in.get(f"/api/references/{list_id}/summaries").json()["summaries"][0]
     assert (s["source_text"], s["abstract_only"]) == ("abstract", "The abstract.")
+
+
+# ── The source is shown the way the page shows it ─────────────────────────────
+
+MEDRXIV_PAPER = {"title": "Exposome factors predict sleep-related depression",
+                 "authors": "Liu, W.", "pub_date": "2026-09-17",
+                 "doi": "10.64898/2026.06.26.26356679",
+                 "canonical_id": "doi:10.64898/2026.06.26.26356679",
+                 "source": "biorxiv_medrxiv", "server": "medrxiv",
+                 "journal_or_server": "medRxiv"}
+
+
+def test_sl1_summaries_pdf_names_the_server_not_the_internal_id(signed_in, ctx):
+    """Production 2026-09-30: the PDF read "biorxiv_medrxiv" where the page
+    showed "medRxiv" (app.js paperSourceText uses journal_or_server first)."""
+    list_id = signed_in.post("/api/references", json={"name": "Sleep"}).json()["id"]
+    pid = ctx.db.insert_paper(MEDRXIV_PAPER) or ctx.db.find_paper(MEDRXIV_PAPER)["id"]
+    user_store.add_reference_item(ctx.db, list_id, pid)
+    ctx.db.insert_summary(pid, summary_text="", key_findings=["A finding."],
+                          methodology="A method.", conclusions="A conclusion.",
+                          model_version="deepseek-flash")
+    text = _text(signed_in.get(f"/api/references/{list_id}/summaries.pdf").content)
+    assert "biorxiv_medrxiv" not in text
+    assert "· medRxiv" in text

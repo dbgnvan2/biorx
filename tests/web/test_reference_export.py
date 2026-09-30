@@ -260,3 +260,24 @@ def test_m6a2_the_tricky_escapes_survive_a_real_reader():
     assert result.returncode == 0, result.stderr
     assert "语" in result.stdout, "a negative-range \\uN did not survive"
     assert "\U0001F600" in result.stdout, "an astral surrogate pair did not survive"
+
+
+# ── The source is shown the way the page shows it ─────────────────────────────
+
+@pytest.mark.parametrize("paper,expected", [
+    ({"source": "biorxiv_medrxiv", "server": "medrxiv", "journal_or_server": "medRxiv"}, "medRxiv"),
+    ({"source": "europepmc", "journal_or_server": "Lancet (PubMed)"}, "Lancet (PubMed)"),
+    ({"source": "Europe PMC", "journal_or_server": ""}, "Europe PMC"),   # older rows
+    ({"server": "biorxiv"}, "biorxiv"),
+    ({}, ""),
+])
+def test_sl1_source_label_matches_the_page(paper, expected):
+    assert reference_export.source_label(paper) == expected
+
+
+def test_sl1_every_list_format_uses_the_label():
+    item = [{"item_id": 1, "paper": {"title": "T", "authors": "A", "pub_date": "2026",
+             "doi": "10.1/x", "source": "biorxiv_medrxiv", "journal_or_server": "medRxiv"}}]
+    assert '"medRxiv"' in reference_export.to_csv(item, lambda p: "")
+    rtf = reference_export.to_rtf(item, lambda p: "", "L")
+    assert "Source: medRxiv" in rtf and "biorxiv_medrxiv" not in rtf
