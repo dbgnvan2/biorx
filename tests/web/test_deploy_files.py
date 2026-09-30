@@ -561,7 +561,7 @@ def test_s4_legacy_agent_removed():
     assert not (ROOT / "agents" / "search_agent.py").exists()
     assert not (ROOT / "key_terms.json").exists()
     for path in list((ROOT / "src").rglob("*.py")) + list((ROOT / "web").rglob("*.py")) \
-            + list((ROOT / "agents").glob("*.py")) + [ROOT / "gui.py", ROOT / "run.sh"]:
+            + list((ROOT / "agents").glob("*.py")) + [ROOT / "run.sh"]:
         text = path.read_text()
         assert "search_agent" not in text and "key_terms" not in text, path
 
@@ -616,7 +616,7 @@ def _unimported_modules(root):
 
 
 def test_m34_no_dead_modules(tmp_path):
-    """Review M34. src/selection.py stays while gui.py (retiring) imports it."""
+    """Review M34: no module in src/ is left that nothing imports."""
     assert _unimported_modules(ROOT) == []
     assert not (ROOT / "src/sources/cache.py").exists()
     from src.db import Database
@@ -633,3 +633,19 @@ def test_m34_no_dead_modules(tmp_path):
     # run.sh with no command prints usage; it does not launch the GUI.
     run_sh = (ROOT / "run.sh").read_text()
     assert re.search(r'^\s*""\|help\)\s+usage ;;', run_sh, re.MULTILINE)
+
+
+
+def test_d1_desktop_app_is_retired():
+    """Decision D1 (2026-09-30): gui.py is retired, with its launcher, its
+    tests, and what only it used; PyQt6 is no longer a dependency."""
+    for gone in ("gui.py", "run_gui.sh", "src/selection.py",
+                 "tests/test_gui_filters.py", "tests/test_source_picker.py"):
+        assert not (ROOT / gone).exists(), gone
+    for req in ("requirements.txt", "requirements-web.txt"):
+        assert not re.search(r"^\s*pyqt", (ROOT / req).read_text(), re.I | re.M), req
+    assert "gui" not in (ROOT / "run.sh").read_text()
+    from src.db import Database
+    for method in ("add_to_reference_list", "get_reference_lists",
+                   "get_reference_list_items", "remove_from_reference_list"):
+        assert not hasattr(Database, method), method

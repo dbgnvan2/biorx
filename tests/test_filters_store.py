@@ -65,17 +65,6 @@ def test_filter_has_text(f, expected):
     assert filter_has_text(f) is expected
 
 
-def test_gui_uses_the_shared_store():
-    pytest.importorskip("PyQt6.QtWidgets")
-    import os
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    import gui
-    assert gui.load_filters is load_filters_file
-    assert gui.save_filters is save_filters_file
-    assert gui.filter_is_enabled is filter_is_enabled
-    assert gui._filter_has_text is filter_has_text
-
-
 def test_fr1_4_legacy_keywords_group_has_criteria():
     """FR1.4: an earlier web build saved groups as {"keywords": ...}. That looks
     empty to a check that reads only title/abstract/both, but it has a term."""

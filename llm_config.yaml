@@ -16,7 +16,7 @@
 # To switch provider: change default_provider to anthropic, deepseek, or ollama.
 
 # DeepSeek: works on this Mac and on the Railway deploy, where there is no
-# Ollama. Needs DEEPSEEK_API_KEY: in .env (read by the desktop app and CLI
+# Ollama. Needs DEEPSEEK_API_KEY: in .env (read by the local web app and CLI
 # agents at start-up) or the host's environment (web deploy).
 default_provider: deepseek        # or anthropic, or ollama (local only)
 
@@ -124,7 +124,7 @@ not_summarizable_title_prefixes:
   - "publisher correction"
   - "author correction"
 
-# Discover Terms (desktop and web): search broadly with the user's description,
+# Discover Terms: search broadly with the user's description,
 # then ask the model for search terms. The stop words are removed from the
 # description before it is searched — editorial content, so it lives here.
 discover:

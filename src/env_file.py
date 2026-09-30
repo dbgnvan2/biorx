@@ -1,5 +1,5 @@
 """
-Purpose: Load the project's .env into the environment for desktop and CLI runs.
+Purpose: Load the project's .env into the environment for local and CLI runs.
 Spec:    docs/implementation_plan_2026-09-18_filter_run.md#R3 (review finding 3)
 Tests:   tests/test_env_file.py
 

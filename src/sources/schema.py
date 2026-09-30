@@ -65,7 +65,7 @@ class CanonicalRecord:
     # ── Serialization ─────────────────────────────────────────────────────────
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to a plain dict compatible with the GUI's _filter_papers()."""
+        """Convert to a plain dict compatible with src.filtering.filter_papers()."""
         authors_str = "; ".join(a.display_name for a in self.authors)
         return {
             # Fields expected by _filter_papers()

@@ -20,14 +20,12 @@ usage() {
     echo "  ./run.sh search      Run every enabled saved filter (agents/monitor.py --all)"
     echo "  ./run.sh summarize   Summarize stored papers that have no summary yet"
     echo "  ./run.sh test        Run the test suite"
-    echo "  ./run.sh gui         Launch the desktop app (legacy, retiring)"
 }
 
 case "$1" in
     search)    shift; exec "$PY" agents/monitor.py --all "$@" ;;
     summarize) shift; exec "$PY" agents/summarization_agent.py "$@" ;;
     test)      shift; exec "$PY" -m pytest tests/ "$@" ;;
-    gui)       exec "$PY" gui.py ;;
     ""|help)   usage ;;
     *)         echo "Unknown command: $1"; usage; exit 1 ;;
 esac

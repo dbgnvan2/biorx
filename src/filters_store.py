@@ -3,9 +3,9 @@ Purpose: Read and write saved filters, and answer pure questions about one.
 Spec:    docs/implementation_plan_2026-09-15.md#2.1
 Tests:   tests/test_filters_store.py
 
-The desktop app keeps filters in filters.json; the web app will keep them per
-user in SQLite (added in a later phase). Both read them through this module so
-a saved filter means the same thing on every surface.
+The CLI keeps filters in filters.json; the web app keeps them per user in
+SQLite. Both read them through this module so a saved filter means the same
+thing on every surface.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def filter_has_text(f: Dict[str, Any]) -> bool:
 
     True when the filter has a non-blank text term, author or institution.
     Without one, every source returns its whole date window unfiltered, so
-    every entry point (GUI, web routes, monitor) refuses to run it. Read after
+    every entry point (web routes, monitor) refuses to run it. Read after
     normalise_filter so a legacy web-saved {"keywords": ...} group counts, as
     does a top-level "keywords" field — but only when text_groups is empty,
     the one case where filter_papers and the query builders read it.

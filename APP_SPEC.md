@@ -1,3 +1,6 @@
+> **Historical.** This describes the PyQt6 desktop app, retired on 2026-09-30.
+> The current product is the web app: see README.md and GETTING_STARTED.md.
+
 # BioRxiv Research Tool - App Specification
 
 > **Historical document (2026-04).** It describes the first desktop build: the

@@ -12,7 +12,6 @@ __pycache__/
 .pytest_cache/
 tests/
 docs/
-gui.py
 requirements.txt
 *.xlsx
 preprints/

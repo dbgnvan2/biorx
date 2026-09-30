@@ -658,24 +658,6 @@ def test_ui4_nothing_ticked_saves_all():
     assert "state.checkedPapers.size ? Array.from(state.checkedPapers) : null" in body
 
 
-def test_rn1_labels_match_the_desktop():
-    """The web tabs use the desktop app's names, read from gui.py itself."""
-    gui = (Path(__file__).parent.parent.parent / "gui.py").read_text()
-    # The main window's tabs are added from self.<name>_tab attributes.
-    desktop_tabs = re.findall(r'tabs\.addTab\(self\.\w+_tab,\s*"([^"]+)"\)', gui)
-    assert desktop_tabs, "could not read the desktop tab names"
-    html = INDEX.read_text().replace("&amp;", "&")
-    web_tabs = re.findall(r'<button id="tab-\w+" class="tab[^"]*">([^<]+)</button>', html)
-    assert [t.strip() for t in web_tabs] == [t.strip() for t in desktop_tabs]
-    # E2: the Search panel picks a saved filter from a Select Filter dropdown;
-    # the Filters tab is still where the saved filters are managed.
-    assert "<h2>Select Filter</h2>" in html
-    assert '<select id="search-filter-select">' in html
-    assert "<strong>Saved Filters</strong>" in html
-    assert "<h2>Saved Filters</h2>" not in html
-    assert "Saved searches" not in html
-
-
 @pytest.mark.parametrize("usage,expected", [
     # Nothing spent yet: the meter shows nothing rather than a bare "0".
     ({"total": 0, "counted_calls": 0, "uncounted_calls": 0}, ""),

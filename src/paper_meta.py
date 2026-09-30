@@ -472,7 +472,7 @@ def recover_abstract(paper: Dict[str, Any], fetch_html=None) -> AbstractRecovery
       4. OpenAlex by DOI         — reconstructed from its inverted index
       5. The paper's own pages   — open-access link, landing page, DOI resolver
 
-    Moved from gui.py's AbstractFetchWorker so the desktop app and the web app
+    Moved from the retired desktop app's AbstractFetchWorker so the web app and the CLI
     use one implementation. Two defects fixed in the move: step 2 ran only when
     the paper had a DOI, so a PMCID-only paper never reached PMC; and the open-
     access link was never scraped.

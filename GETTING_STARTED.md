@@ -1,6 +1,6 @@
 # Getting Started with BioRx
 
-BioRx searches nine publication sources (Europe PMC, PubMed, PsyArXiv, SocArXiv, arXiv, bioRxiv/medRxiv, and more), deduplicates and enriches the results, and can summarize papers using an LLM. You can use it as a **hosted web app** (no install), run it **locally as a web server**, or run the **desktop app**.
+BioRx searches nine publication sources (Europe PMC, PubMed, PsyArXiv, SocArXiv, arXiv, bioRxiv/medRxiv, and more), deduplicates and enriches the results, and can summarize papers using an LLM. You can use it as a **hosted web app** (no install), run it **locally as a web server**, or run its **command-line tools**. (The desktop app was retired on 2026-09-30.)
 
 ---
 
@@ -90,46 +90,23 @@ Share the Railway URL and your `ACCESS_CODE` with colleagues.
 
 ---
 
-## Option D — Desktop app (local, with Ollama)
+## Option D — Command line (local)
 
-The desktop app runs entirely offline after setup. It requires [Ollama](https://ollama.com/) for summarization.
-
-### Prerequisites
-
-- Python 3.11+
-- [Ollama](https://ollama.com/) installed and running
-
-### Steps
+The command-line tools run saved filters and summarize stored papers without the
+web app. Summaries use DeepSeek by default (`llm_config.yaml`); put the key in
+`.env` (never in `llm_config.yaml` — it is committed). For fully offline summaries,
+set `default_provider: ollama` and `ollama pull qwen3.5:4b`.
 
 ```bash
 git clone https://github.com/dbgnvan2/biorx.git
 cd biorx
-pip install -r requirements.txt
-```
-
-Summaries use DeepSeek by default (`llm_config.yaml`). Put the key in `.env`,
-which the app reads at start-up (never in `llm_config.yaml` — it is committed):
-
-```bash
-echo 'DEEPSEEK_API_KEY=your-key' >> .env
-```
-
-For fully offline summaries instead, set `default_provider: ollama` and pull the
-model it names:
-
-```bash
-ollama pull qwen3.5:4b
-```
-
-Start the app:
-
-```bash
-python gui.py
+python3 -m venv venv && venv/bin/pip install -r requirements-web.txt -r requirements.txt
+cp filters.seed.json filters.json      # your saved filters for the command line
 ```
 
 ### Headless / cron mode
 
-`agents/monitor.py` runs saved filters without the GUI, suitable for scheduling:
+`agents/monitor.py` runs saved filters, suitable for scheduling:
 
 ```bash
 python agents/monitor.py --all
@@ -149,12 +126,6 @@ Exit code 0 = clean run, 2 = one or more sources failed or a PDF download failed
 2. Enter a topic (e.g. `CRISPR epigenetic inheritance`), set a date range, and choose which sources to include.
 3. Click **Run**. Results appear as they arrive from each source — a multi-source search takes 30–90 seconds.
 4. Click a paper to read its abstract or request a summary.
-
-**In the desktop app:**
-
-1. Open the **Search & Browse** tab.
-2. Select a saved cluster or use the manual search form.
-3. Click **Run Selected**.
 
 ---
 
@@ -206,7 +177,7 @@ In the web app, each user can paste their own Anthropic or DeepSeek key under **
 - Run `GET /healthz` and confirm `owner_key_set: true` and the expected provider is shown.
 - Check that the API key is valid and has credit.
 
-**Ollama not found (desktop app)**
+**Ollama not found (local summaries)**
 - Run `ollama serve` in a terminal, then restart the app.
 - Confirm the model is downloaded: `ollama list` should show `qwen3.5:4b`
   (the model named in `llm_config.yaml`).

@@ -200,17 +200,6 @@ def test_no_personal_email_is_hardcoded_in_this_module():
 
 # ── The GUI must use these, not a private copy ────────────────────────────────
 
-def test_gui_uses_the_shared_helpers():
-    pytest.importorskip("PyQt6.QtWidgets")
-    import os
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    import gui
-    assert gui._pdf_url is pdf_url
-    assert gui._paper_link is paper_link
-    assert gui._scrape_abstract_from_url is scrape_abstract_from_url
-    assert gui._fetch_openalex_abstract is fetch_openalex_abstract
-
-
 # ── M21: an outage is reported as an outage, not as "nothing found" ──────────
 # Spec: docs/implementation_plan_2026-09-28_review_fixes.md#M21
 # The Europe PMC, PMC full-text and OpenAlex helpers caught every exception and

@@ -1,5 +1,5 @@
 """
-Convert a filter_dict (from the GUI) into source-specific query strings.
+Convert a filter_dict (a saved or ad hoc filter) into source-specific query strings.
 
 filter_dict text_groups structure:
     [{"title": "stress,cortisol", "abstract": "", "both": "adolescen*"}, ...]

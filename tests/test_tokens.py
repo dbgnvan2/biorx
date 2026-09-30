@@ -241,7 +241,6 @@ _CALLERS = [
     ("web/routes_discover.py", r"\.generate\("),
     # The route and the CLI share src/summarize.py since review S1.
     ("src/summarize.py", r"\.summarize_paper\("),
-    ("gui.py", r"\.generate\("),
 ]
 
 

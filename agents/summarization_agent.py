@@ -1,7 +1,7 @@
 """
 Summarization agent: Find unsummarized papers, extract text, generate summaries
 with the provider llm_config.yaml names as default (default_provider).
-Callable from GUI or CLI (python agents/summarization_agent.py).
+Run from the command line (python agents/summarization_agent.py).
 """
 
 import sys
@@ -53,8 +53,8 @@ class SummarizationAgent:
         self.db = Database(db_path)
         self.pdf_handler = PDFHandler()
         self.use_mock = use_mock
-        # Resolved on first use, not here: the GUI builds this agent at start-up
-        # and a missing API key must not stop the app from opening.
+        # Resolved on first use, not here: a missing API key must not stop the
+        # agent from starting (it may have nothing to summarize).
         self.llm = MockOllamaClient() if use_mock else None
         self.model = "mock" if use_mock else ""
         self.provider = "mock" if use_mock else ""

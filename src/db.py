@@ -1151,90 +1151,9 @@ class Database:
             return result
         return None
 
-    # ── Reference lists ───────────────────────────────────────────────────────
-
-    def create_reference_list(self, name: str, description: str = "") -> Optional[int]:
-        """Create a named reference list and return its id."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                "INSERT INTO reference_lists (name, description) VALUES (?, ?)",
-                (name, description),
-            )
-            self.conn.commit()
-            return cursor.lastrowid
-        except sqlite3.Error as e:
-            self._rollback_quietly()
-            logger.error(f"Error creating reference list: {e}")
-            return None
-
-    def add_to_reference_list(self, list_id: int, paper: Dict[str, Any]) -> bool:
-        """Add a paper (full dict) to a reference list. Silently skips duplicates."""
-        doi = paper.get("doi") or None
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                "INSERT OR IGNORE INTO reference_list_items (list_id, doi, paper_data) VALUES (?, ?, ?)",
-                (list_id, doi, json.dumps(paper)),
-            )
-            self.conn.commit()
-            return cursor.rowcount > 0
-        except sqlite3.Error as e:
-            self._rollback_quietly()
-            logger.error(f"Error adding to reference list: {e}")
-            return False
-
-    def get_reference_lists(self) -> List[Dict[str, Any]]:
-        """Return all reference lists with item counts."""
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            SELECT rl.id, rl.name, rl.description, rl.created_at,
-                   COUNT(rli.id) AS item_count
-            FROM reference_lists rl
-            LEFT JOIN reference_list_items rli ON rl.id = rli.list_id
-            GROUP BY rl.id
-            ORDER BY rl.created_at DESC
-        """)
-        return [dict(r) for r in cursor.fetchall()]
-
-    def get_reference_list_items(self, list_id: int) -> List[Dict[str, Any]]:
-        """Return papers in a reference list, each with a parsed 'paper' key."""
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT * FROM reference_list_items WHERE list_id = ? ORDER BY added_at",
-            (list_id,),
-        )
-        result = []
-        for row in cursor.fetchall():
-            d = dict(row)
-            d["paper"] = json.loads(d["paper_data"])
-            result.append(d)
-        return result
-
-    def delete_reference_list(self, list_id: int) -> bool:
-        """Delete a reference list and all its items."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("DELETE FROM reference_list_items WHERE list_id = ?", (list_id,))
-            cursor.execute("DELETE FROM reference_lists WHERE id = ?", (list_id,))
-            self.conn.commit()
-            return True
-        except sqlite3.Error as e:
-            self._rollback_quietly()
-            logger.error(f"Error deleting reference list: {e}")
-            return False
-
-    def remove_from_reference_list(self, item_id: int) -> bool:
-        """Remove a single paper from a reference list by its row id."""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("DELETE FROM reference_list_items WHERE id = ?", (item_id,))
-            self.conn.commit()
-            return True
-        except sqlite3.Error as e:
-            self._rollback_quietly()
-            logger.error(f"Error removing item from reference list: {e}")
-            return False
+    # The desktop app's reference_lists / reference_list_items tables are left
+    # in place (no data is dropped), but nothing reads them since gui.py was
+    # retired (2026-09-30); the web app's lists are user_reference_lists.
 
     def close(self):
         """Close every connection this Database has handed out."""

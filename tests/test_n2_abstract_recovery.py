@@ -163,37 +163,6 @@ def test_n2_a_paper_with_nothing_to_look_up_makes_no_calls(no_network):
 
 # ── Both front ends use it (P25) ──────────────────────────────────────────────
 
-def test_n2_gui_worker_and_web_route_use_the_same_recovery():
-    pytest.importorskip("PyQt6.QtWidgets")
-    import os
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    import gui
-
-    received = []
-    worker = gui.AbstractFetchWorker(FLAMING_PAPER)
-    worker.finished.connect(received.append)
-    with patch("gui.recover_abstract",
-               return_value=AbstractRecovery("Recovered.", "pmc_fulltext", ["pmc_fulltext"])) as rec:
-        worker.run()
-    rec.assert_called_once()
-    assert rec.call_args.args[0]["pmcid"] == "PMC13572605"
-    assert received == ["Recovered."]
-
-
-def test_n2_gui_worker_shows_a_message_not_an_abstract_on_failure():
-    pytest.importorskip("PyQt6.QtWidgets")
-    import os
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    import gui
-
-    received = []
-    worker = gui.AbstractFetchWorker({"doi": "10.1/x"})
-    worker.finished.connect(received.append)
-    with patch("gui.recover_abstract", return_value=AbstractRecovery("", None, ["europepmc"])):
-        worker.run()
-    assert received and received[0].startswith("(") and "not available" in received[0]
-
-
 # ── The notice list is configuration, not code ────────────────────────────────
 
 @pytest.mark.parametrize("title,expected", [
@@ -216,52 +185,10 @@ def test_n2_the_notice_list_is_read_from_config_not_hardcoded():
     assert non_article_kind(custom, "Correction to: x") == ""
 
 
-# ── The desktop dialog asks for recovery whenever there is something to look up ─
-
-@pytest.mark.parametrize("paper,should_fetch", [
-    ({"title": "t", "abstract": "", "pmcid": "PMC13572605"}, True),
-    ({"title": "t", "abstract": "", "best_oa_url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1/"}, True),
-    ({"title": "t", "abstract": "", "source_url": "https://pub.example/a"}, True),
-    ({"title": "t", "abstract": "", "doi": "10.1/x"}, True),
-    ({"title": "t", "abstract": "Already here."}, False),
-    ({"title": "t", "abstract": ""}, False),
-])
-def test_n2_detail_dialog_fetches_whenever_there_is_something_to_look_up(paper, should_fetch):
-    """
-    The dialog used to ask only when a paper had a DOI or a PMCID, so a paper
-    with just an open-access or landing-page link never got a recovery attempt.
-    """
-    pytest.importorskip("PyQt6.QtWidgets")
-    import os
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication
-    import gui
-
-    app = QApplication.instance() or QApplication(sys.argv[:1])
-    with patch.object(gui.PaperDetailDialog, "_fetch_abstract") as fetch:
-        dialog = gui.PaperDetailDialog(paper)
-    assert fetch.called is should_fetch
-    dialog.deleteLater()
-
-
 # ── From the N2 gate ──────────────────────────────────────────────────────────
 
-def test_n2_both_front_ends_import_the_one_recovery_function():
-    """
-    Identity, not equivalence (gate F2): a copy in either front end would drift,
-    exactly as the filter logic did before it was shared.
-    """
-    pytest.importorskip("PyQt6.QtWidgets")
-    import os
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    import gui
-    from web import routes_summaries
-    assert gui.recover_abstract is paper_meta.recover_abstract
-    assert routes_summaries.recover_abstract is paper_meta.recover_abstract
-
-
 def test_n2_the_web_route_imports_the_one_recovery_function():
-    """The same identity check where PyQt6 is not installed."""
+    """The web route uses the one recovery function."""
     from web import routes_summaries
     assert routes_summaries.recover_abstract is paper_meta.recover_abstract
 

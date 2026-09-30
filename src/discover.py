@@ -1,5 +1,5 @@
 """
-Discover Terms: shared logic for the desktop worker and the web route.
+Discover Terms: the logic behind the web route.
 
 Purpose: Turn a natural-language description into search keywords, and parse
          the LLM's suggested terms, the same way in both front ends.

@@ -1,28 +1,28 @@
 # BioRxiv Research Tool
 
-**Purpose:** Desktop GUI app + headless agents that search nine publication sources,
-deduplicate and enrich the results, download papers, and summarize them with an LLM
-— DeepSeek by default, or Anthropic, or a local Ollama model (see `llm_config.yaml`).
+**Purpose:** A small private web app, plus command-line tools, that search nine
+publication sources, deduplicate and enrich the results, save reference lists, and
+summarize papers with an LLM — DeepSeek by default, or Anthropic, or a local Ollama
+model (see `llm_config.yaml`).
 
-## Quick Start for Claude Code
+The PyQt6 desktop app (`gui.py`) was retired on 2026-09-30; the web app is the one
+front end. Its old `reference_lists` tables are left in the database, unread.
 
-1. **Read:** `APP_SPEC.md` for full specification
-2. **Key files to create:**
-   - `gui.py` - PyQt6 desktop application
-   - `agents/monitor.py` - Headless runs of saved filters
-   - `agents/summarization_agent.py` - Summarization logic
-   - `src/biorxiv_api.py` - API wrapper
-   - `src/db.py` - SQLite utilities
-   - `src/pdf_handler.py` - PDF text extraction
-   - `src/llm.py` - Ollama/Qwen interface
-   - `filters.seed.json` - Example filters new web accounts start with
-   - `filters.json` - Your own saved filters for `agents/monitor.py` (local, not in git;
-     start from `cp filters.seed.json filters.json`)
-   - `requirements.txt` - Dependencies
+## Layout
+- `web/` — the FastAPI app and its page (`web/static/`)
+- `src/` — shared code: sources and search (`src/sources/`), filtering, database,
+  summaries, full-text lookup, accounts and access codes
+- `agents/monitor.py` — runs saved filters from the command line (cron-friendly)
+- `agents/summarization_agent.py` — summarizes stored papers from the command line
+- `filters.seed.json` — example filters new web accounts start with
+- `filters.json` — your own saved filters for `agents/monitor.py` (local, not in git;
+  start from `cp filters.seed.json filters.json`)
+- `requirements-web.txt` — the web app's dependencies (the Docker image uses its
+  hashed lock); `requirements.txt` — extra packages for the command-line tools
 
 ## Tech Stack
 - **Language:** Python 3.12
-- **GUI:** PyQt6
+- **Web:** FastAPI, plain JavaScript page
 - **Database:** SQLite3
 - **LLM:** DeepSeek `deepseek-flash` by default; Anthropic or local Ollama (`qwen3.5:4b`) via `llm_config.yaml`
 
@@ -44,13 +44,13 @@ first author + year), enriched via Crossref/Unpaywall, and ranked by source trus
 
 Configure in `sources_config.yaml`. Filter options (paper type, licence, species,
 category, …) and what each one matches are in `filter_vocabulary.yaml`. Saved
-searches live in `filters.json`.
+filters are per user in the web app, and in `filters.json` for the command line.
 
 ## Headless CLI
 
-`agents/monitor.py` runs saved filters without PyQt6, so cron can drive it. It
-applies the same client-side filtering the GUI applies (`src/filtering.py`), so a
-filter means the same thing on both surfaces.
+`agents/monitor.py` runs saved filters from the command line, so cron can drive it.
+It applies the same client-side filtering the web app applies (`src/filtering.py`),
+so a filter means the same thing on both surfaces.
 
 ```bash
 python agents/monitor.py --filter "Agent Simulation" --dry-run --max 50
@@ -59,37 +59,20 @@ python agents/monitor.py --all --json out/results.json
 
 Records are emitted as one JSON object per line on stdout; progress goes to stderr.
 
-## MVP Scope
-- GUI with Search & Browse + Configure tabs
-- Saved filters (`filters.json`, per-user in the web app)
-- Run searches ad-hoc or on schedule
-- Download PDFs to `/preprints/`
-- Summarize papers with the configured LLM (DeepSeek by default)
-- View/manage summaries in SQLite
-- CLI headless modes for openclaw automation
-
-## Key Design Decisions
-- ✅ **Saved filters:** OR-groups of title/abstract terms plus facets (see `filter_vocabulary.yaml`)
-- ✅ **LLM choice in config:** DeepSeek by default (needs `DEEPSEEK_API_KEY` in `.env`); Ollama for fully offline use
-- ✅ **Single papers:** Summarize one at a time, not in batches
-- ✅ **Background threads:** Keep UI responsive during summarization
-- ✅ **Idempotent agents:** Safe to run multiple times without duplicates
-- ✅ **Dual mode:** Interactive GUI or headless CLI (for openclaw scheduling)
-
 ## Data Storage
 ```
-~/preprints/
+~/preprints/            (or DATA_DIR)
 ├── PDFs/               (Downloaded papers)
 ├── summaries/          (Text backups)
-└── biorxiv.db          (SQLite: papers, summaries, bookmarks)
+└── biorxiv.db          (SQLite: papers, summaries, accounts, lists)
 ```
 
 ## Web app
 
 A small private FastAPI app so a few colleagues can run their own searches and
 summaries from a browser, without installing anything. It wraps the same
-retrieval pipeline the desktop app uses — the orchestrator, dedup, query builder
-and adapters are unchanged.
+retrieval pipeline the command-line tools use — the orchestrator, dedup, query
+builder and adapters.
 
 ### Run it locally
 
@@ -178,7 +161,7 @@ Three backends, configured in `llm_config.yaml`: local **Ollama** for
 development, **DeepSeek** over its OpenAI-compatible API, and **Anthropic** over
 the Messages API. `default_provider` in `llm_config.yaml` is **deepseek**;
 `DEFAULT_LLM_PROVIDER` overrides it (old name `LLM_PROVIDER`; the start-up log
-says which setting chose the provider). Keys go in `.env` (the desktop app and CLI agents
+says which setting chose the provider). Keys go in `.env` (the web app and CLI agents
 read it at start-up) or the host environment — never in `llm_config.yaml`,
 which is committed to git.
 
@@ -210,8 +193,8 @@ for a quiet week.
 ### Deploy to Railway
 
 The repository has a `Dockerfile` and `railway.json`. The image installs
-`requirements-web.txt` only — never `requirements.txt`, which would pull the
-desktop GUI into a headless container.
+`requirements-web.txt` only (its hashed lock), not the command-line extras in
+`requirements.txt`.
 
 1. Create a Railway project from this repository; it picks up `railway.json`.
 2. **Attach a volume mounted at `/data`.** Without it the database and any
@@ -255,8 +238,7 @@ date and model — that is the only thing that exercises the real API.
 
 No SSO or per-user permissions beyond each person's own account (access code +
 PIN). No editing `sources_config.yaml` from
-the browser. No scheduled searches — `agents/monitor.py` still owns that. The
-web app offers what the desktop app offers, and nothing more.
+the browser. No scheduled searches — `agents/monitor.py` still owns that.
 
 ---
 

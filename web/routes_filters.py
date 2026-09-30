@@ -3,8 +3,7 @@ Purpose: A user's saved filters.
 Spec:    docs/implementation_plan_2026-09-15.md#2.2, W6
 Tests:   tests/web/test_filters_routes.py
 
-Filters are per user in SQLite rather than in the shared filters.json the
-desktop app edits: a single mutable file in a container is last-write-wins
+Filters are per user in SQLite rather than in a shared filters.json: a single mutable file in a container is last-write-wins
 between colleagues.
 """
 

@@ -277,7 +277,7 @@ def semantic_scholar_urls(paper: Dict[str, Any], by_title: bool,
     return urls
 
 
-# ── Downloading (shared by the web route and the desktop/CLI agent) ─────────
+# ── Downloading (shared by the web route and the CLI agent) ─────────────────
 
 def download_pdf_text(url: str) -> str:
     """Fetch one PDF through the SSRF guard and extract its text.

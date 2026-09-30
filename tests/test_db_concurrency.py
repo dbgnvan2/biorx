@@ -135,48 +135,6 @@ def test_connections_of_finished_threads_are_released(db):
     assert still_open == [], f"{len(still_open)} connections left open"
 
 
-def test_connection_is_released_when_a_QTHREAD_finishes(tmp_path):
-    """
-    The regression test for the real production thread type.
-
-    The GUI runs every worker on a QThread. threading.current_thread() there
-    returns a _DummyThread whose is_alive() stays True forever, so any release
-    keyed on thread-object liveness collects nothing in the application that
-    churns threads hardest — while a threading.Thread test passes happily.
-    Release is therefore keyed on the lifetime of the thread-local holder, and
-    this asserts it with an actual QThread.
-    """
-    pytest.importorskip("PyQt6.QtCore")
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtCore import QCoreApplication, QObject, QThread
-
-    app = QCoreApplication.instance() or QCoreApplication(sys.argv[:1])
-    database = Database(str(tmp_path / "qt.db"))
-    grabbed = {}
-
-    class Worker(QObject):
-        def run(self):
-            grabbed["conn"] = database.conn
-            grabbed["thread_type"] = type(threading.current_thread()).__name__
-
-    qthread = QThread()
-    worker = Worker()
-    worker.moveToThread(qthread)
-    qthread.started.connect(worker.run)
-    qthread.start()
-    qthread.wait(5000)
-    qthread.quit()
-    qthread.wait(5000)
-    gc.collect()
-
-    assert grabbed["thread_type"] == "_DummyThread", (
-        "PyQt no longer yields a _DummyThread; the hazard this guards may have "
-        "changed shape — re-check before relaxing this test"
-    )
-    assert _is_closed(grabbed["conn"]), "QThread's connection was never closed"
-    database.close()
-
-
 def test_release_closes_this_threads_connection(db):
     conn = db.conn
     assert conn in db._conns.values()
@@ -328,48 +286,6 @@ def test_add_column_if_missing_raises_on_a_real_failure(db):
 
 
 # ── The GUI actually calls release (P21/P25: a method with no caller is dead) ──
-
-def test_search_worker_releases_its_connection_when_it_finishes():
-    """
-    SearchWorker runs on its own QThread and takes a connection on it. Asserting
-    the call arrives at the boundary, not that the code contains a line.
-    """
-    pytest.importorskip("PyQt6.QtWidgets")
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    import gui
-    from unittest.mock import MagicMock
-
-    orchestrator = MagicMock()
-    orchestrator.search.return_value = []
-    database = MagicMock()
-
-    worker = gui.SearchWorker(
-        orchestrator, {"text_groups": [], "authors": []},
-        save_to_db=False, db=database,
-    )
-    worker.run()
-
-    database.release.assert_called_once()
-
-
-def test_search_worker_releases_its_connection_even_when_the_search_raises():
-    pytest.importorskip("PyQt6.QtWidgets")
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    import gui
-    from unittest.mock import MagicMock
-
-    orchestrator = MagicMock()
-    orchestrator.search.side_effect = RuntimeError("source exploded")
-    database = MagicMock()
-
-    worker = gui.SearchWorker(
-        orchestrator, {"text_groups": [], "authors": []},
-        save_to_db=False, db=database,
-    )
-    worker.run()        # error is emitted on a signal, not raised
-
-    database.release.assert_called_once()
-
 
 # ── A failed write must not hold the lock (found by the cold review) ──────────
 

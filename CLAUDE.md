@@ -11,27 +11,37 @@ Read the relevant file from `~/.claude/standards/` before starting work:
 | `llm-integration.md` | Any Ollama/Qwen integration — output validation, token budgets, model config |
 | `security.md` | SQLite parameterised queries (already used — keep it), no secrets in source |
 | `file-maintainability.md` | Any new module or significant refactor |
-| `ui-regression.md` | Any change to PyQt6 screens or controls |
+| `ui-regression.md` | Any change to the web page (`web/static/`) |
 
 
 
 ## Project Overview
-Desktop GUI application (PyQt6) + CLI agents for searching bioRxiv preprints, downloading papers, and summarizing them with the LLM named in `llm_config.yaml` (DeepSeek by default; Anthropic or local Ollama `qwen3.5:4b` optional).
+A small private web app (FastAPI + a plain JavaScript page) and command-line agents for
+searching nine publication sources, saving reference lists, and summarizing papers with
+the LLM named in `llm_config.yaml` (DeepSeek by default; Anthropic or local Ollama
+`qwen3.5:4b` optional). Deployed on Railway.
 
-**Data storage:** `/preprints/` directory with SQLite database, PDFs, and summaries.
+The PyQt6 desktop app (`gui.py`) was retired on 2026-09-30 (decision D1 in
+`docs/implementation_plan_2026-09-29_next.md`). Do not bring it back or add
+desktop-only code; its old `reference_lists` tables are left in the database, unread.
+
+**Data storage:** `DATA_DIR` (default `~/preprints/`): SQLite database, PDFs, summaries.
 
 ---
 
 ## Architecture & Scope
 
-### Components (in build order)
-1. **Core utilities** (`src/`) - API wrapper, database, PDF handler, LLM interface
-2. **Agents** (`agents/`) - Search and summarization (callable from GUI or CLI)
-3. **GUI** (`gui.py`) - PyQt6 desktop app with Search & Configure tabs
+### Components
+1. **Shared code** (`src/`) - sources and search (`src/sources/`), filtering, database,
+   summaries, full-text lookup, accounts and access codes
+2. **Web app** (`web/`) - FastAPI routes, background jobs, the page in `web/static/`
+3. **Agents** (`agents/`) - `monitor.py` runs saved filters (cron); `summarization_agent.py`
+   summarizes stored papers
 
 ### Key Design Decisions
-- **Single papers at a time:** Summarize one paper per user action (not batches)
-- **Background threading:** Keep UI responsive during long operations
+- **Sign-in:** personal access code + PIN only (`access_codes.yaml`); the old shared
+  `ACCESS_CODE` + name sign-in is gone
+- **Background jobs:** `src/jobs.py`; searches and model calls in separate lanes
 - **Idempotent agents:** Safe to run multiple times; check SQLite before inserting
 - **Saved filters:** per user in the web app, seeded from `filters.seed.json`; `filters.json` is local state for `monitor.py` (not in git); facet options in `filter_vocabulary.yaml`
 - **LLM:** DeepSeek by default (`DEEPSEEK_API_KEY` in `.env`); Ollama (localhost:11434, `qwen3.5:4b`) for offline use — set in `llm_config.yaml`
@@ -49,74 +59,19 @@ Desktop GUI application (PyQt6) + CLI agents for searching bioRxiv preprints, do
 - Use built-in modules (sqlite3, json, os, pathlib) before third-party
 
 ### Database
-- SQLite3 (biorxiv.db in ~/preprints/)
+- SQLite3 (`biorxiv.db` in `DATA_DIR`)
 - UNIQUE constraints on DOI and paper_id (prevent duplicates)
 - Use parameterized queries (? placeholders) for safety
 - Keep schema minimal; avoid over-normalization
 
-### Threading
-- Use `threading.Thread` for background tasks (summarization)
-- Update UI via signals/slots or post callbacks to main thread
-- No blocking operations in GUI thread
+### Web page
+- Never `innerHTML` with data (a test checks); build with createElement/textContent
+- Buttons that start background work are disabled before the request leaves
 
 ### API Calls
-- Wrap bioRxiv requests with error handling
-- Log errors but don't crash app
-- Respect rate limits (typically generous; check bioRxiv docs)
-
-### File Organization
-```
-biorx/
-├── gui.py                    (Main PyQt6 app)
-├── agents/
-│   ├── monitor.py            (Headless runs of saved filters)
-│   └── summarization_agent.py (Summarization logic)
-├── src/
-│   ├── biorxiv_api.py        (bioRxiv API wrapper)
-│   ├── db.py                 (SQLite helpers)
-│   ├── pdf_handler.py        (PDF text extraction)
-│   ├── llm.py                (Ollama/Qwen interface)
-│   └── __init__.py           (empty, makes src a package)
-├── filters.seed.json         (Example filters for new web accounts)
-├── filters.json              (Local saved filters for monitor.py; gitignored)
-├── requirements.txt
-├── CLAUDE.md                 (this file)
-├── README.md
-├── APP_SPEC.md              (full specification)
-└── /preprints/              (data directory, created at runtime)
-```
-
----
-
-## MVP Features (Must Have)
-
-### GUI - Search & Browse Tab
-- [ ] Load saved filters (filters.json)
-- [ ] Display enabled/disabled clusters as checkboxes
-- [ ] "Run Selected" button - execute checked searches
-- [ ] "Run All Enabled" button - run all enabled clusters
-- [ ] Manual search form (date range, category)
-- [ ] Results list with pagination
-- [ ] Per-paper buttons: Download, Summarize, Bookmark
-- [ ] Status updates (searching..., downloading..., summarizing...)
-
-### GUI - Configure Tab
-- [ ] Tree/list view of clusters and profiles
-- [ ] Add/edit/delete cluster
-- [ ] Add/edit/delete profile within cluster
-- [ ] Toggle cluster/profile enabled/disabled
-- [ ] Save button to write filters.json
-
-### Agents
-- [x] monitor.py: run saved filters headless (replaced search_agent.py, review S4)
-- [ ] summarization_agent.py: Find unsummarized papers, run the configured LLM, store results
-- [ ] Both callable from GUI or CLI (python gui.py --run-search, --run-summarize)
-
-### Core Utilities
-- [ ] biorxiv_api.py: Search by date range, category, keywords
-- [ ] db.py: Papers table, summaries table, bookmarks, search history
-- [ ] pdf_handler.py: Download PDF, extract text
-- [ ] llm.py: Query Ollama (localhost:11434), parse Qwen responses
+- Wrap source requests with timeout + retry + backoff
+- Log errors but don't crash the app
+- Respect rate limits
 
 ---
 
@@ -140,13 +95,11 @@ When the user reports unexpected behaviour, read the log tail **first** as part 
 
 ## Testing & Iteration
 
-Run the test suite with the project venv, which has PyQt6:
+Run the test suite with the project venv:
 ```bash
 venv/bin/python -m pytest tests/ -v
 ```
-Another Python without PyQt6 (e.g. `/opt/homebrew/bin/pytest`) skips every desktop
-GUI test; the run's summary then says how many were skipped and why. CI runs
-without PyQt6 on purpose (`requirements-web.txt`), so GUI tests run only here.
+CI runs the same suite on a blank machine (`requirements-web.txt` + `requirements-test.txt`).
 
 Test files and what they cover:
 - `tests/test_query_builder.py` — Lucene query generation, species clauses, date ranges
@@ -154,7 +107,7 @@ Test files and what they cover:
 - `tests/test_adapters.py` — EuropePMC / PsyArXiv / Crossref adapter normalisation
 - `tests/test_unpaywall.py` — Unpaywall HTTP status handling and enrich() behaviour
 - `tests/test_orchestrator.py` — source routing, dedup across sources, enrichment calls
-- `tests/test_source_picker.py` — source picker model logic
+- `tests/web/` — the web app: routes, sign-in, jobs, and the page (node-run checks)
 
 **Run tests after every non-trivial code change.** If a test fails, fix it before moving on.
 
@@ -162,7 +115,7 @@ Test files and what they cover:
 
 ## Git & Commits
 
-- Commit as you complete logical units (e.g., "Add biorxiv_api wrapper", "Add PyQt6 GUI skeleton")
+- Commit as you complete logical units (e.g., "Add biorxiv_api wrapper")
 - Include what and why in commit messages
 - No need to push; this is local development
 
@@ -170,22 +123,6 @@ Test files and what they cover:
 
 ## Dependencies
 
-See `requirements.txt`. Key ones:
-- **PyQt6** - GUI
-- **requests** - HTTP
-- **pdfplumber** - PDF extraction
-- **ollama** - Ollama API client
-- **click** - CLI parsing (optional, can use sys.argv instead)
-
----
-
-## Next Steps
-
-1. Create directory structure
-2. Implement core utilities (src/)
-3. Implement agents
-4. Implement PyQt6 GUI
-5. Test end-to-end
-
-Start with `src/biorxiv_api.py` (simplest, no external dependencies besides requests).
-
+`requirements-web.txt` (the web app; the Docker image installs its hashed lock) and
+`requirements.txt` (extras for the command-line tools). Key ones: **FastAPI**,
+**requests**, **pdfplumber**, **PyYAML**.

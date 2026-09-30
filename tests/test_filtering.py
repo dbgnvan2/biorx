@@ -110,19 +110,6 @@ def test_every_saved_filter_in_filters_json_is_readable_by_the_filter():
         normalize_authors(f.get("authors"))
 
 
-def test_gui_uses_the_shared_implementation():
-    """
-    The GUI must not keep a private copy — two implementations of one predicate
-    drift. Skipped where PyQt6 is unavailable.
-    """
-    pytest.importorskip("PyQt6.QtWidgets")
-    import os
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    import gui
-    assert gui._filter_papers is filter_papers
-    assert gui._text_group_matches is text_group_matches
-
-
 # ── B4: a wildcard is a word prefix, not a text prefix ───────────────────────
 # Spec: docs/implementation_plan_2026-09-28_review_fixes.md#B4
 # match_term used text.startswith(prefix), so "adolescen*" matched only titles

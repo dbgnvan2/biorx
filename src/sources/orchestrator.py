@@ -162,7 +162,7 @@ class SourceOrchestrator:
         Execute a multi-source search and return deduplicated CanonicalRecords.
 
         Args:
-            filter_dict:      GUI filter dict (text_groups, days_back, etc.)
+            filter_dict:      filter dict (text_groups, days_back, etc.)
             source_selection: {"all": bool, "selected": list[str]}
             on_batch:         Callback called with each batch of new records.
             on_progress:      Callback called with (fetched_so_far, total_estimate).
@@ -461,7 +461,7 @@ class SourceOrchestrator:
                         # Duplicate of an already-seen record (e.g. the heavy
                         # EuropePMC/PubMed overlap). It was merged into the
                         # existing record — don't re-stream or re-count it, so
-                        # the GUI's result count matches the unique set that is
+                        # the page's result count matches the unique set that is
                         # actually saved. Counted, so "N read" adds up.
                         duplicates += 1
                         continue
@@ -560,7 +560,7 @@ class SourceOrchestrator:
     ) -> None:
         """Run Crossref and Unpaywall enrichment on records that have DOIs.
 
-        Emits status/progress so the GUI is not silent during this phase, which
+        Emits status/progress so the page is not silent during this phase, which
         makes up to two synchronous HTTP calls per DOI (spec E2.3).
 
         Spec:  docs/implementation_plan_2026-09-18_filter_run.md#C2

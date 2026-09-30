@@ -2,7 +2,7 @@
 Client-side filter semantics for a filter_dict.
 
 Purpose: one implementation of "what does this saved filter match?", shared by
-         every front end (PyQt6 GUI, headless CLI) so they cannot drift apart.
+         every front end (web app, headless CLI) so they cannot drift apart.
 Spec:    ARXIV_ADAPTER_TASK.md (review finding 4 — CLI must reproduce GUI filtering)
 Tests:   tests/test_filtering.py
 
@@ -114,7 +114,7 @@ def normalize_authors(value: Any) -> List[str]:
     """
     Read a filter_dict's `authors` field into a flat list of author terms.
 
-    The GUI stores this as a list of strings; hand-written filters and the
+    The saved form is a list of strings; hand-written filters and the
     arXiv query builder's original contract used a single comma-separated
     string. Both shapes are accepted here so that every consumer agrees on
     what the field means — iterating a string character-by-character, or

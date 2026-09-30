@@ -1,14 +1,12 @@
 # BioRxiv Research Tool (BioRx) - Gemini Context
 
-This project is a multi-source research tool designed to search, download, and summarize scientific preprints and papers. It features a PyQt6 GUI for interactive use and CLI agents for automated workflows, utilizing a local LLM (Qwen 7B via Ollama) for summarization.
+This project is a multi-source research tool designed to search, save, and summarize scientific preprints and papers. It is a small private web app (FastAPI + a plain JavaScript page, deployed on Railway) with CLI agents for automated workflows. Summaries use the LLM named in `llm_config.yaml` (DeepSeek by default; Anthropic or local Ollama optional). The PyQt6 desktop app (`gui.py`) was retired on 2026-09-30.
 
 ## 🏗️ Architecture & Core Components
 
-### 1. **PyQt6 GUI (`gui.py`)**
-- **Search & Browse Tab:** Interactive search with multi-source selection, pagination, and direct actions (Download, Summarize, Bookmark).
-- **Configure Tab:** Manage saved filters stored in `filters.json`.
-- **Reference Lists:** Manage collections of papers in named lists.
-- **Headless Mode:** Support for `--run-search`, `--run-summarize`, and `--run-full-cycle` for automation (e.g., via openclaw).
+### 1. **Web app (`web/`)**
+- FastAPI routes for searches, filters, reference lists, summaries, reviews and sign-in (personal access code + PIN).
+- Background jobs (`src/jobs.py`); the page is `web/static/`.
 
 ### 2. **Search Orchestrator (`src/sources/orchestrator.py`)**
 - Coordinates searches across multiple adapters:
@@ -36,9 +34,9 @@ This project is a multi-source research tool designed to search, download, and s
 
 ## 🛠️ Engineering Standards
 
-### Python & GUI
-- **Python 3.9+** with type hints.
-- **PyQt6** for GUI; use background threads (`threading.Thread`) for long-running operations (API, LLM) to keep UI responsive.
+### Python & web
+- **Python 3.12** with type hints.
+- Long-running work (searches, LLM calls) runs as background jobs so requests return at once.
 - **Error Handling:** Graceful handling of API failures, rate limits, and PDF extraction errors.
 
 ### Database

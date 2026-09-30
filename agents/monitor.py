@@ -93,7 +93,7 @@ def run_search(
 
     A source query is only an approximation of a saved filter — each API has its
     own field syntax, and facets like paper_type/version/published/license have
-    no equivalent on a preprint server. The GUI therefore re-applies the whole
+    no equivalent on a preprint server. The web app therefore re-applies the whole
     filter to what comes back, and so must this CLI, or the same saved filter
     yields a different set depending on which front end ran it.
 
