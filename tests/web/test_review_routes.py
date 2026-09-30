@@ -160,8 +160,8 @@ def test_m4a3_an_unreviewed_list_says_so(signed_in, ctx):
 
 def test_m4a3_reviews_are_per_user(app, signed_in, other_client, ctx):
     """Another account's review must be invisible, not merely unrendered."""
-    from tests.web.conftest import ACCESS_CODE, account_body
-    other_client.post("/api/session", json=account_body(ACCESS_CODE))
+    from tests.web.conftest import account_body
+    other_client.post("/api/session", json=account_body())
     list_id, _ = _list_with(signed_in, ctx, PAPER)
     _run(signed_in, ctx, list_id)
 

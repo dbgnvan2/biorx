@@ -22,7 +22,7 @@
   folding matches each comparison — login names as SQLite's lower(), filter
   names with casefold).
 - The browser run is done (`docs/cycles/2026-09-29_browser-run.md`).
-- `gui.py` still imports modules whose interfaces changed in this review; it
+- **Moot 2026-09-30: gui.py retired (decision D1).** `gui.py` still imports modules whose interfaces changed in this review; it
   is not updated (retiring).
 
 ## From the review batch-7 gates (`docs/cycles/2026-09-28_review-batch7-*qa-gate.md`) — APPROVED
@@ -75,7 +75,7 @@
 
 ## From the review batch-2 gates (`docs/cycles/2026-09-28_review-batch2-*qa-gate.md`) — APPROVED, deferred
 
-- Known GUI effect (retiring app, not fixed): `gui.py` `DiscoverTermsWorker`
+- **Moot 2026-09-30: gui.py retired (D1).** Known GUI effect (retiring app, not fixed): `gui.py` `DiscoverTermsWorker`
   calls `client.generate()` unguarded. Ollama now raises on failure, as the
   hosted providers always did, so a failed call there ends the worker without
   a message. Gate finding 2.
@@ -91,7 +91,7 @@
 - **Fixed 2026-09-30 (plan T1.1): a display name keeps the lower-case particles before its last word, so "Ana da Silva" matches family "da Silva" and "Ana Silva" does not.** LOW / M22 residual — a multi-word surname ("da Silva") is "dasilva" from
   Europe PMC's lastName but "silva" from arXiv's last word, so those two copies
   still do not merge by title.
-- Known GUI effect (retiring app, not fixed): the desktop app's institution
+- **Moot 2026-09-30: gui.py retired (D1).** Known GUI effect (retiring app, not fixed): the desktop app's institution
   field is now ignored by the shared filter code.
 
 ## From the UI-enhancements gate (`docs/cycles/2026-09-19_ui-enhancements-qa-gate.md`) — APPROVED, deferred
@@ -225,7 +225,7 @@ would ship code the gate never read).
 Also open from this batch:
 - Railway: if the service sets `LLM_PROVIDER=anthropic`, it still wins over the
   yaml default — set `DEFAULT_LLM_PROVIDER=deepseek` there (start-up log shows which won).
-- The desktop GUI was not driven live in this batch; its changes are covered by
+- **Moot 2026-09-30: gui.py retired (D1).** The desktop GUI was not driven live in this batch; its changes are covered by
   unit tests under the venv only (CI has no PyQt6).
 
 ## From personal access codes (2026-09-18) — adjacent issues found, not fixed
@@ -233,7 +233,7 @@ Also open from this batch:
 - **No per-IP rate limit** on `POST /api/session` or `POST /api/session/lookup`.
   PIN lockout is per account; codes are 60 bits, so guessing a code is not
   practical, but a limit is still defence in depth.
-- **End of the switch-over:** once `ACCESS_CODE` is removed everywhere, delete
+- **Done 2026-09-30 (decision D2): the name sign-in, the recover route, the recovery dialog and those functions are removed.** **End of the switch-over:** once `ACCESS_CODE` is removed everywhere, delete
   the old name sign-in, `POST /api/session/recover`, the recovery-code dialog,
   and `accounts.sign_in`/`create_account`/`recover` if nothing else uses them.
 - Per-user spend is not visible in the web app (usage plan, not yet approved).

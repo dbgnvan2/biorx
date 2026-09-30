@@ -1,6 +1,7 @@
 """
-Purpose: Sign in with a personal access code + PIN (or, during the switch-over,
-         the shared access code + name + PIN); read and edit your own profile.
+Purpose: Sign in with a personal access code + PIN; read and edit your own
+         profile. (The shared access code + name + PIN sign-in and its
+         recovery codes were removed on 2026-09-30, decision D2.)
 Spec:    docs/implementation_plan_2026-09-15.md#2.2, W3.b, W3.c, W4;
          docs/implementation_plan_2026-09-18_invite_codes.md#PC3-PC9, PC14
 Tests:   tests/web/test_auth.py, tests/web/test_llm_key_routes.py
@@ -21,7 +22,7 @@ from src import access_codes, accounts, crypto, user_store
 from src.filters_store import load_filters_file
 from src.llm_config import default_provider, provider_config, summary_daily_cap
 
-from .auth import check_access_code, clear_session, current_user, get_context, issue_session
+from .auth import clear_session, current_user, get_context, issue_session
 from .deps import AppContext
 
 logger = logging.getLogger(__name__)
@@ -29,26 +30,15 @@ router = APIRouter()
 
 
 class SessionRequest(BaseModel):
-    """Personal code + PIN (PC3/PC4), or — while the shared ACCESS_CODE is set —
-    access_code + name + PIN for accounts from before codes (PC8)."""
+    """Personal code + PIN (PC3/PC4)."""
     code: str = Field(default="", max_length=100)
-    access_code: str = Field(default="", max_length=200)
-    name: str = Field(default="", max_length=100)
     pin: str = Field(default="", max_length=200)
-    create: bool = False
     # After an owner PIN reset: the one-time code they handed over (review M5).
     setup_code: str = Field(default="", max_length=20)
 
 
 class LookupRequest(BaseModel):
     code: str = Field(min_length=1, max_length=100)
-
-
-class RecoverRequest(BaseModel):
-    access_code: str = Field(min_length=1, max_length=200)
-    name: str = Field(min_length=1, max_length=100)
-    recovery_code: str = Field(min_length=1, max_length=100)
-    new_pin: str = Field(min_length=1, max_length=200)
 
 
 class DisplayNameRequest(BaseModel):
@@ -117,13 +107,6 @@ def _me(ctx: AppContext, user_id: str) -> dict:
     }
 
 
-def _gate(ctx: AppContext, access_code: str) -> None:
-    if not check_access_code(access_code, ctx.access_code):
-        logger.info("Rejected a session request with a wrong access code")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="That access code is not right.")
-
-
 # Refusals caused by the server's codes file, not by the person: 503 everywhere.
 _SERVER_PROBLEMS = (access_codes.UNAVAILABLE_MESSAGE, access_codes.ENTRY_PROBLEM_MESSAGE)
 
@@ -136,8 +119,6 @@ def _account_error(e: accounts.AccountError) -> HTTPException:
                 if str(e) in _SERVER_PROBLEMS else status.HTTP_403_FORBIDDEN)
     elif isinstance(e, accounts.BadCredentials):
         code = status.HTTP_401_UNAUTHORIZED
-    elif isinstance(e, accounts.NameTaken):
-        code = status.HTTP_409_CONFLICT
     else:
         code = status.HTTP_400_BAD_REQUEST
     return HTTPException(status_code=code, detail=str(e))
@@ -256,7 +237,7 @@ def _refuse_if_cut_off(ctx: AppContext, user_id: str) -> None:
     current_user would refuse (PC5, PC8)."""
     if ctx.codes is None:
         return
-    reason = access_codes.session_refusal(ctx.db, ctx.codes, user_id, bool(ctx.access_code))
+    reason = access_codes.session_refusal(ctx.db, ctx.codes, user_id)
     if reason:
         raise HTTPException(status_code=(status.HTTP_503_SERVICE_UNAVAILABLE
                                          if reason in _SERVER_PROBLEMS
@@ -268,50 +249,24 @@ def create_session(body: SessionRequest, response: Response,
                    ctx: AppContext = Depends(get_context),
                    _guard: None = Depends(sign_in_guard)):
     """Sign in with a personal code + PIN; a new code creates its account.
+    Identity in the cookie is the opaque server id.
 
-    The old way — shared access code + name + PIN — still signs in accounts
-    made before codes while ACCESS_CODE is set, but no longer creates any
-    (PC8). Identity in the cookie is the opaque server id either way.
+    Purpose: The one way to sign in (decision D2, 2026-09-30: the shared
+             access code + name + PIN is gone).
+    Spec:    docs/implementation_plan_2026-09-29_next.md#T2.1
+    Tests:   tests/web/test_auth.py::test_d2_old_name_sign_in_is_gone
     """
-    new_account = False
+    if not body.code.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Enter your access code.")
     try:
-        if body.code.strip():
-            user_id, new_account = _code_sign_in(ctx, body)
-        else:
-            _gate(ctx, body.access_code)
-            if body.create:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                                    detail="New accounts need a personal access code. "
-                                           "Ask the owner for one.")
-            if not body.name.strip() or not body.pin:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                                    detail="Enter your name and PIN.")
-            user_id = accounts.sign_in(ctx.db, body.name, body.pin)
+        user_id, new_account = _code_sign_in(ctx, body)
     except accounts.AccountError as e:
         raise _account_error(e) from e
     _refuse_if_cut_off(ctx, user_id)
     issue_session(response, ctx, user_id, secure=ctx.cookie_secure)
     out = _me(ctx, user_id)
     out["new_account"] = new_account
-    return out
-
-
-@router.post("/api/session/recover")
-def recover_session(body: RecoverRequest, response: Response,
-                    ctx: AppContext = Depends(get_context),
-                    _guard: None = Depends(sign_in_guard)):
-    """Forgot PIN: name + recovery code + new PIN. Returns a new recovery code."""
-    _gate(ctx, body.access_code)
-    try:
-        user_id, code = accounts.recover(
-            ctx.db, body.name, body.recovery_code, body.new_pin,
-            refusal=lambda uid: (access_codes.session_refusal(
-                ctx.db, ctx.codes, uid, bool(ctx.access_code)) if ctx.codes else None))
-    except accounts.AccountError as e:
-        raise _account_error(e) from e
-    issue_session(response, ctx, user_id, secure=ctx.cookie_secure)
-    out = _me(ctx, user_id)
-    out["recovery_code"] = code
     return out
 
 

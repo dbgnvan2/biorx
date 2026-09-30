@@ -14,7 +14,7 @@ reconciliation of `TODO.md`'s deferred tail against current code.
 | T1.4 | done | `tests/web/test_frontend_wiring.py::test_f1_find_by_title_falls_back_to_the_server_default`, `tests/web/test_summaries_routes.py::test_t14_*` |
 | T1.5 a/b/c | done | `tests/web/test_auth.py::test_t15a_*`, `::test_t15c_*`, `tests/web/test_access_codes.py::test_t15b_*` |
 | T1.6 | done | `tests/test_paper_meta.py::test_t16_landing_page_is_not_tried_as_the_pdf` |
-| T2.1 | blocked on D2 | — |
+| T2.1 | done (D2 decided 2026-09-30: remove) | `tests/web/test_auth.py::test_d2_old_name_sign_in_is_gone`, `tests/web/test_frontend_wiring.py::test_pc13_sign_in_page_is_code_then_pin` |
 | T2.2 | done | `tests/test_tokens.py::test_t22_*` |
 | T2.3 | done | `tests/test_h_environment.py::test_t23_*` |
 | T2.4 | already fixed (list, both run, warned); now tested | `tests/test_monitor.py::test_t24_*` |
@@ -29,7 +29,9 @@ reconciliation of `TODO.md`'s deferred tail against current code.
 | T3.6 | done (note corrected: extra hits are filtered out) | `src/sources/query_builder.py` `_group_to_arxiv` |
 | T3.7 | blocked on D3 | — |
 | T3.8 | done (ignored, not deleted) | `tests/web/test_deploy_files.py::test_t38_*` |
-| D0–D3 | open — the owner's decisions | — |
+| D1 | decided 2026-09-30: retire `gui.py` — done | `tests/web/test_deploy_files.py::test_d1_desktop_app_is_retired` |
+| D2 | decided 2026-09-30: remove the old name sign-in — done (T2.1) | as T2.1 |
+| D0, D3 | open — the owner's decisions | — |
 
 Original status: PLAN — no code written.
 **Surface:** web app, shared `src/`, `agents/monitor.py`. `gui.py` is still not changed

@@ -173,7 +173,6 @@ function rememberCode(code) {
 function showGateStep(step) {
   $("code-step").classList.toggle("hidden", step !== "code-step");
   $("pin-step").classList.toggle("hidden", step !== "pin-step");
-  $("legacy-step").classList.toggle("hidden", step !== "legacy-step");
 }
 
 const SS_GATE_MESSAGE = "biorx_gate_message";
@@ -196,8 +195,6 @@ async function showGate(message) {
   gateError(message && message !== SIGN_IN_MESSAGE ? message : "");
   try {
     const health = await api("GET", "/api/gate");
-    // The old name sign-in only while the shared access code is still set (PC8).
-    $("show-legacy").classList.toggle("hidden", !health.access_code_set);
     if (health.pin_min_length) gatePinMin = health.pin_min_length;
   } catch (e) { /* the sign-in form still works */ }
   const code = rememberedCode();
@@ -265,47 +262,6 @@ function useOtherCode() {
   gateError("");
   showGateStep("code-step");
   $("my-code").focus();
-}
-
-/* The old way: shared access code + name + PIN, for accounts made before
-   personal codes (PC8). It no longer creates accounts. */
-async function signIn() {
-  gateError("");
-  try {
-    state.me = await api("POST", "/api/session", {
-      access_code: $("access-code").value,
-      name: $("login-name").value,
-      pin: $("login-pin").value,
-    });
-  } catch (e) { gateError(e.message); return; }
-  $("login-pin").value = "";
-  showApp();
-}
-
-async function recoverAccount() {
-  gateError("");
-  try {
-    state.me = await api("POST", "/api/session/recover", {
-      access_code: $("access-code").value,
-      name: $("login-name").value,
-      recovery_code: $("recovery-code").value,
-      new_pin: $("new-pin").value,
-    });
-  } catch (e) { gateError(e.message); return; }
-  $("recovery-code").value = ""; $("new-pin").value = "";
-  showRecoverForm(false);
-  showApp();
-  showRecoveryCode(state.me.recovery_code);
-}
-
-function showRecoverForm(on) {
-  $("pin-wrap").classList.toggle("hidden", on);
-  $("recover-wrap").classList.toggle("hidden", !on);
-}
-
-function showRecoveryCode(code) {
-  $("recovery-code-text").textContent = code;
-  $("recovery-modal").classList.remove("hidden");
 }
 
 async function signOut() {
@@ -3077,17 +3033,6 @@ function wire() {
   $("my-pin").addEventListener("keydown", (e) => { if (e.key === "Enter") pinSignIn(); });
   $("my-pin-confirm").addEventListener("keydown", (e) => { if (e.key === "Enter") pinSignIn(); });
   $("use-other-code").addEventListener("click", useOtherCode);
-  $("show-legacy").addEventListener("click", () => { gateError(""); showGateStep("legacy-step"); });
-  $("hide-legacy").addEventListener("click", () => { gateError(""); showGateStep("code-step"); });
-  $("sign-in").addEventListener("click", signIn);
-  $("login-pin").addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(); });
-  $("show-recover").addEventListener("click", () => showRecoverForm(true));
-  $("hide-recover").addEventListener("click", () => showRecoverForm(false));
-  $("recover").addEventListener("click", recoverAccount);
-  $("recovery-done").addEventListener("click", () => {
-    $("recovery-modal").classList.add("hidden");
-    $("recovery-code-text").textContent = "";
-  });
   $("help-deepseek-toggle").addEventListener("click", () =>
     $("help-deepseek").classList.toggle("hidden"));
   $("sign-out").addEventListener("click", signOut);

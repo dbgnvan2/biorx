@@ -38,15 +38,6 @@ def _serializer(secret: str) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(secret, salt=SALT)
 
 
-def check_access_code(supplied: str, expected: str) -> bool:
-    """Constant-time comparison, so the code cannot be recovered by timing."""
-    if not expected:
-        return False
-    # Bytes, not str: compare_digest raises TypeError on non-ASCII strings,
-    # which turned a typed "é" into a 500 (csdp security review).
-    return hmac.compare_digest(supplied.strip().encode(), expected.strip().encode())
-
-
 def issue_session(response: Response, ctx: AppContext, user_id: str,
                   secure: bool = True) -> None:
     """Sign the user id, and the account's session nonce, into the cookie. A
@@ -174,7 +165,7 @@ def current_user(
         # A code that has expired, been turned off or deleted ends the session
         # on the next request, not when the 30-day cookie runs out (PC5).
         from src.access_codes import session_refusal
-        reason = session_refusal(ctx.db, ctx.codes, user_id, bool(ctx.access_code))
+        reason = session_refusal(ctx.db, ctx.codes, user_id)
         if reason:
             from src.access_codes import ENTRY_PROBLEM_MESSAGE, UNAVAILABLE_MESSAGE
             code = (status.HTTP_503_SERVICE_UNAVAILABLE

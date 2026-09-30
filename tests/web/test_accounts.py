@@ -1,5 +1,6 @@
 """
-Web accounts: name + PIN, recovery code, lockout, claim, merge.
+Web accounts: code + PIN, lockout, merge (the name sign-in and recovery codes
+were removed on 2026-09-30, decision D2).
 
 Spec: docs/implementation_plan_2026-09-18_accounts.md#AC1-AC9
 """
@@ -13,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src import accounts, user_store
-from tests.web.conftest import ACCESS_CODE, account_body
+from tests.web.conftest import account_body, legacy_account
 
 
 def _client(app):
@@ -21,29 +22,29 @@ def _client(app):
 
 
 def _create(app, name="Dave", pin="dave-pin-1"):
-    """An account from before personal codes (name + PIN), signed in the old
-    way. The web page no longer creates these (invite_codes plan PC8)."""
-    ctx = app.state.ctx
-    _, code = accounts.create_account(ctx.db, name, pin, user_store.new_user_id)
-    c, r = _sign_in(app, name, pin)
+    """An account made by a personal code's first use, signed in. The name +
+    PIN sign-in is gone (decision D2, 2026-09-30); me["code"] is the code."""
+    body = account_body(name=name, pin=pin)
+    c = _client(app)
+    r = c.post("/api/session", json=body)
     assert r.status_code == 200, r.text
     me = r.json()
-    me["recovery_code"] = code
+    me["code"] = body["code"]
     return c, me
 
 
-def _sign_in(app, name, pin):
+def _sign_in(app, code, pin):
     c = _client(app)
-    return c, c.post("/api/session", json=account_body(name=name, pin=pin, create=False))
+    return c, c.post("/api/session", json={"code": code, "pin": pin})
 
 
 # ── AC1 ───────────────────────────────────────────────────────────────────────
 
-def test_ac1_same_name_and_pin_return_the_same_user_and_data(app):
+def test_ac1_same_code_and_pin_return_the_same_user_and_data(app):
     c1, me = _create(app)
     fid = c1.post("/api/filters", json={"name": "Mine", "filter": {"text_groups": []}}).json()["id"]
     c1.delete("/api/session")
-    c2, r = _sign_in(app, "  dave ", "dave-pin-1")        # case and spaces ignored
+    c2, r = _sign_in(app, " " + me["code"].lower() + " ", "dave-pin-1")   # case and spaces ignored
     assert r.status_code == 200
     assert r.json()["user_id"] == me["user_id"]
     assert any(f["id"] == fid for f in c2.get("/api/filters").json()["filters"])
@@ -51,34 +52,20 @@ def test_ac1_same_name_and_pin_return_the_same_user_and_data(app):
 
 # ── AC2 ───────────────────────────────────────────────────────────────────────
 
-def test_ac2_wrong_pin_and_unknown_name_look_the_same(app):
-    _create(app)
-    _, wrong = _sign_in(app, "Dave", "nope-nope-1")
-    _, unknown = _sign_in(app, "Nobody", "nope-nope-1")
+def test_ac2_wrong_pin_and_unknown_code_look_the_same(app):
+    _, me = _create(app)
+    _, wrong = _sign_in(app, me["code"], "nope-nope-1")
+    _, unknown = _sign_in(app, "ZZZZ-ZZZZ-ZZZZ", "nope-nope-1")
     assert wrong.status_code == unknown.status_code == 401
     assert wrong.json()["detail"] == unknown.json()["detail"]
 
 
-def test_ac2_taken_name_is_refused(ctx):
-    accounts.create_account(ctx.db, "Dave", "dave-pin-1", user_store.new_user_id)
-    with pytest.raises(accounts.NameTaken):
-        accounts.create_account(ctx.db, "DAVE", "other-pin-1", user_store.new_user_id)
-
-
-def test_ac2_short_pin_and_bad_name_are_refused(ctx, app):
+def test_ac2_short_pin_is_refused(ctx, app):
     with pytest.raises(accounts.AccountError):
-        accounts.create_account(ctx.db, "Ok name", "123", user_store.new_user_id)
-    with pytest.raises(accounts.AccountError):
-        accounts.create_account(ctx.db, "x", "long-enough", user_store.new_user_id)
+        accounts.create_code_account(ctx.db, "Ok name", "123", "KEYKEYKEYKEY",
+                                     user_store.new_user_id)
     c = _client(app)
-    assert c.post("/api/session", json={"access_code": ACCESS_CODE}).status_code == 400
-
-
-def test_ac2_access_code_still_required(app):
-    _create(app, name="Sneaky", pin="sneaky-pin")
-    body = account_body(name="Sneaky", pin="sneaky-pin", create=False)
-    body["access_code"] = "wrong"
-    assert _client(app).post("/api/session", json=body).status_code == 401
+    assert c.post("/api/session", json={}).status_code == 400
 
 
 # ── AC3 ───────────────────────────────────────────────────────────────────────
@@ -89,9 +76,7 @@ def test_ac3_secrets_are_hashed(ctx, app):
                                    (me["user_id"],)).fetchone())
     blob = " ".join(str(v) for v in row.values())
     assert "plain-pin-42" not in blob
-    code = me["recovery_code"]
-    assert code not in blob and code.replace("-", "") not in blob
-    assert row["pin_hash"].startswith("scrypt$") and row["recovery_hash"].startswith("scrypt$")
+    assert row["pin_hash"].startswith("scrypt$")
 
 
 def test_ac3_verify_secret_rejects_malformed_hashes():
@@ -106,77 +91,41 @@ def test_ac3_verify_secret_rejects_malformed_hashes():
 def test_ac4_lockout_after_repeated_failures(ctx, monkeypatch):
     monkeypatch.setenv("LOGIN_MAX_FAILURES", "3")
     monkeypatch.setenv("LOGIN_LOCK_MINUTES", "15")
-    accounts.create_account(ctx.db, "Locky", "right-pin-1", user_store.new_user_id)
+    uid, _ = legacy_account(ctx.db, "Locky", "right-pin-1")
     t0 = datetime(2026, 9, 18, 12, 0, tzinfo=timezone.utc)
     for _ in range(3):
         with pytest.raises(accounts.BadCredentials):
-            accounts.sign_in(ctx.db, "Locky", "wrong-pin", now=t0)
+            accounts.sign_in_user(ctx.db, uid, "wrong-pin", now=t0)
     with pytest.raises(accounts.AccountLocked):       # even the right PIN
-        accounts.sign_in(ctx.db, "Locky", "right-pin-1", now=t0 + timedelta(minutes=5))
-    assert accounts.sign_in(ctx.db, "Locky", "right-pin-1", now=t0 + timedelta(minutes=16))
+        accounts.sign_in_user(ctx.db, uid, "right-pin-1", now=t0 + timedelta(minutes=5))
+    assert accounts.sign_in_user(ctx.db, uid, "right-pin-1", now=t0 + timedelta(minutes=16))
 
 
 def test_ac4_success_resets_the_count(ctx, monkeypatch):
     monkeypatch.setenv("LOGIN_MAX_FAILURES", "3")
-    accounts.create_account(ctx.db, "Resetty", "right-pin-1", user_store.new_user_id)
+    uid, _ = legacy_account(ctx.db, "Resetty", "right-pin-1")
     for _ in range(2):
         with pytest.raises(accounts.BadCredentials):
-            accounts.sign_in(ctx.db, "Resetty", "wrong-pin")
-    accounts.sign_in(ctx.db, "Resetty", "right-pin-1")
+            accounts.sign_in_user(ctx.db, uid, "wrong-pin")
+    accounts.sign_in_user(ctx.db, uid, "right-pin-1")
     for _ in range(2):                                  # would lock if not reset
         with pytest.raises(accounts.BadCredentials):
-            accounts.sign_in(ctx.db, "Resetty", "wrong-pin")
-    assert accounts.sign_in(ctx.db, "Resetty", "right-pin-1")
+            accounts.sign_in_user(ctx.db, uid, "wrong-pin")
+    assert accounts.sign_in_user(ctx.db, uid, "right-pin-1")
 
 
 def test_ac4_locked_route_is_429(app, monkeypatch):
     monkeypatch.setenv("LOGIN_MAX_FAILURES", "2")
-    _create(app, name="Rate", pin="rate-pin-1")
+    _, me = _create(app, name="Rate", pin="rate-pin-1")
     for _ in range(2):
-        _sign_in(app, "Rate", "bad-pin-00")
-    _, r = _sign_in(app, "Rate", "rate-pin-1")
+        _sign_in(app, me["code"], "bad-pin-00")
+    _, r = _sign_in(app, me["code"], "rate-pin-1")
     assert r.status_code == 429
     assert "Try again in" in r.json()["detail"]
 
 
-# ── AC5 ───────────────────────────────────────────────────────────────────────
-
-def test_ac5_recovery_sets_a_new_pin_and_rotates_the_code(app):
-    _, me = _create(app, name="Forgetful", pin="old-pin-11")
-    old_code = me["recovery_code"]
-    c = _client(app)
-    r = c.post("/api/session/recover", json={"access_code": ACCESS_CODE, "name": "forgetful",
-                                            "recovery_code": old_code.lower().replace("-", " "),
-                                            "new_pin": "new-pin-22"})
-    assert r.status_code == 200, r.text
-    assert r.json()["user_id"] == me["user_id"]
-    new_code = r.json()["recovery_code"]
-    assert new_code != old_code
-    assert _sign_in(app, "Forgetful", "new-pin-22")[1].status_code == 200
-    assert _sign_in(app, "Forgetful", "old-pin-11")[1].status_code == 401
-    again = _client(app).post("/api/session/recover", json={
-        "access_code": ACCESS_CODE, "name": "Forgetful", "recovery_code": old_code,
-        "new_pin": "another-33"})
-    assert again.status_code == 401                     # the old code is spent
-
-
-def test_ac5_wrong_recovery_codes_count_toward_lockout(ctx, monkeypatch):
-    monkeypatch.setenv("LOGIN_MAX_FAILURES", "2")
-    accounts.create_account(ctx.db, "Guessy", "right-pin-1", user_store.new_user_id)
-    for _ in range(2):
-        with pytest.raises(accounts.BadCredentials):
-            accounts.recover(ctx.db, "Guessy", "AAAA-BBBB-CCCC-DDDD", "new-pin-99")
-    with pytest.raises(accounts.AccountLocked):
-        accounts.sign_in(ctx.db, "Guessy", "right-pin-1")
-
-
-def test_ac5_recover_needs_the_access_code(app):
-    _, me = _create(app, name="Gated", pin="gated-pin-1")
-    r = _client(app).post("/api/session/recover", json={
-        "access_code": "wrong", "name": "Gated", "recovery_code": me["recovery_code"],
-        "new_pin": "new-pin-22"})
-    assert r.status_code == 401
-
+# AC5 (recovery codes) was removed with the name sign-in (decision D2,
+# 2026-09-30): a forgotten PIN is reset by the owner (access_codes reset-pin).
 
 # AC6 (claim a name for a cookie-only user) was removed with personal access
 # codes: a code now makes the account (invite_codes plan PC3).
@@ -187,8 +136,14 @@ def test_ac5_recover_needs_the_access_code(app):
 def test_ac7_merge_moves_everything_and_the_old_cookie_follows(ctx, app):
     from web.auth import issue_session
     from fastapi import Response
+    from src.access_codes import code_key
+    from tests.web.conftest import add_code
     src = user_store.create_user(ctx.db, "dave")
     dst = user_store.create_user(ctx.db, "dave")
+    # The target has a code, as every account that can sign in does (D2).
+    ctx.db.conn.execute("INSERT INTO access_code_bindings (code_key, user_id) VALUES (?, ?)",
+                        (code_key(add_code("dave")), dst))
+    ctx.db.conn.commit()
     user_store.insert_filter(ctx.db, src, "Shared", {"text_groups": []})
     user_store.insert_filter(ctx.db, dst, "Shared", {"text_groups": [{"both": "x"}]})
     user_store.insert_filter(ctx.db, src, "Only src", {"text_groups": []})
@@ -237,23 +192,19 @@ def test_ac9_thresholds_come_from_env_and_are_documented(monkeypatch):
 
 # ── csdp security review 2026-09-18 ───────────────────────────────────────────
 
-@pytest.mark.parametrize("path", ["name", "code"])
-def test_ac4_parallel_wrong_pins_are_all_counted(ctx, monkeypatch, caplog, path):
+def test_ac4_parallel_wrong_pins_are_all_counted(ctx, monkeypatch, caplog):
     """200 wrong PINs sent at once were all checked (187 before the first lock)
     because each read the count before any wrote it. At most
     LOGIN_MAX_FAILURES may be checked per lock window."""
     import threading
     monkeypatch.setenv("LOGIN_MAX_FAILURES", "5")
-    uid, _ = accounts.create_account(ctx.db, "Target", "right-pin-1", user_store.new_user_id)
+    uid, _ = legacy_account(ctx.db, "Target", "right-pin-1")
     outcomes, barrier = [], threading.Barrier(30)
 
     def guess(i):
         barrier.wait()
         try:
-            if path == "name":
-                accounts.sign_in(ctx.db, "Target", f"wrong-pin-{i:03d}")
-            else:
-                accounts.sign_in_user(ctx.db, uid, f"wrong-pin-{i:03d}")
+            accounts.sign_in_user(ctx.db, uid, f"wrong-pin-{i:03d}")
             outcomes.append("in")
         except accounts.AccountLocked:
             outcomes.append("locked")
@@ -269,18 +220,7 @@ def test_ac4_parallel_wrong_pins_are_all_counted(ctx, monkeypatch, caplog, path)
     locked_logs = [r for r in caplog.records if "Account locked" in r.getMessage()]
     assert len(locked_logs) == 1, len(locked_logs)          # logged once, not per request
     with pytest.raises(accounts.AccountLocked):
-        accounts.sign_in(ctx.db, "Target", "right-pin-1")
-
-
-def test_ac5_recovering_a_pin_ends_other_sessions(app):
-    c_old, me = _create(app, name="Stolen", pin="old-pin-11")
-    assert c_old.get("/api/me").status_code == 200
-    r = _client(app).post("/api/session/recover", json={
-        "access_code": ACCESS_CODE, "name": "Stolen", "recovery_code": me["recovery_code"],
-        "new_pin": "new-pin-22"})
-    assert r.status_code == 200
-    stale = c_old.get("/api/me")
-    assert stale.status_code == 401 and "PIN was changed" in stale.json()["detail"]
+        accounts.sign_in_user(ctx.db, uid, "right-pin-1")
 
 
 def test_ac7_merge_refuses_a_target_that_is_already_merged(ctx):
@@ -295,23 +235,6 @@ def test_ac7_merge_refuses_a_target_that_is_already_merged(ctx):
     assert accounts.merge_users(ctx.db, a, c)["filters"] == 0
 
 
-def test_ac5_recovery_into_a_broken_merge_chain_changes_nothing(ctx):
-    """csdp review round 6: recover changed the PIN and recovery code, then
-    failed, so the new code was never shown and the old one was spent."""
-    a, code = accounts.create_account(ctx.db, "loopy", "loop-pin-11", user_store.new_user_id)
-    b = user_store.create_user(ctx.db, "b")
-    ctx.db.conn.execute("UPDATE users SET merged_into = ? WHERE user_id = ?", (b, a))
-    ctx.db.conn.execute("UPDATE users SET merged_into = ? WHERE user_id = ?", (a, b))
-    ctx.db.conn.commit()
-    before = ctx.db.conn.execute("SELECT pin_hash, recovery_hash FROM users WHERE user_id = ?",
-                                 (a,)).fetchone()
-    with pytest.raises(accounts.BadCredentials):
-        accounts.recover(ctx.db, "loopy", code, "new-pin-999")
-    after = ctx.db.conn.execute("SELECT pin_hash, recovery_hash FROM users WHERE user_id = ?",
-                                (a,)).fetchone()
-    assert tuple(before) == tuple(after)
-
-
 # ── M32: new accounts are seeded from filters.seed.json ──────────────────────
 
 def test_m32_seed_from_seed_file(ctx, app, monkeypatch, tmp_path):
@@ -321,7 +244,7 @@ def test_m32_seed_from_seed_file(ctx, app, monkeypatch, tmp_path):
     seed.write_text(json.dumps({"filters": [{"name": "Only in the seed", "days_back": 3}]}))
     monkeypatch.setattr(routes_session, "SEED_FILTERS", seed)
     c = TestClient(app)
-    c.post("/api/session", json=account_body(ACCESS_CODE))
+    c.post("/api/session", json=account_body())
     assert [f["name"] for f in c.get("/api/filters").json()["filters"]] == ["Only in the seed"]
 
 

@@ -136,14 +136,12 @@ def create_app(ctx: AppContext = None) -> FastAPI:
     @application.get("/api/gate")
     def gate_config():
         """What the sign-in page needs before anyone is signed in (review M7):
-        whether the old name sign-in is offered, the PIN length, and the
-        server's startup warnings — a broken codes file stops everyone signing
+        the PIN length and the server's startup warnings — a broken codes file stops everyone signing
         in, so its warning cannot be behind a sign-in."""
         c: AppContext = application.state.ctx
         from src.accounts import pin_min_length as accounts_pin_min_length
         c.get_orchestrator()        # built lazily; it records its startup warnings
-        return {"access_code_set": bool(c.access_code),
-                "pin_min_length": accounts_pin_min_length(),
+        return {"pin_min_length": accounts_pin_min_length(),
                 "codes_in_use": bool(c.codes and c.codes.entries()),
                 "startup_warnings": list(c.startup_warnings) + _codes_file_warning(c)}
 

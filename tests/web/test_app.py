@@ -32,7 +32,6 @@ def test_uvicorn_can_still_read_the_app_attribute(monkeypatch, tmp_path):
     import importlib
 
     monkeypatch.setenv("BIORX_DB_PATH", str(tmp_path / "lazy.db"))
-    monkeypatch.setenv("ACCESS_CODE", "x")
     import web.app as web_app
     importlib.reload(web_app)
     try:
@@ -53,8 +52,7 @@ def test_m7_healthz_minimal(client):
 
 def test_m7_gate_shows_only_what_sign_in_needs(client):
     body = client.get("/api/gate").json()
-    assert set(body) == {"access_code_set", "pin_min_length", "codes_in_use",
-                         "startup_warnings"}
+    assert set(body) == {"pin_min_length", "codes_in_use", "startup_warnings"}
 
 
 def test_config_reports_configuration_but_never_a_secret(signed_in, monkeypatch):

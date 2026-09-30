@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-30 — one front end, one way to sign in
+
+### Removed
+- **The PyQt6 desktop app** (`gui.py`, `run_gui.sh`, and `src/selection.py`,
+  which only it used), with its tests and the PyQt6 dependency. The web app
+  and the command-line tools (`agents/monitor.py`,
+  `agents/summarization_agent.py`) are what remain. The desktop app's saved
+  reference lists stay in the database, unread.
+- **The old sign-in** with the shared `ACCESS_CODE` + name + PIN, its "Forgot
+  PIN?" recovery codes, `POST /api/session/recover`, and the "Sign in with
+  name (old way)" link. Everyone signs in with a personal access code + PIN;
+  a forgotten PIN is reset by the owner (`python -m src.access_codes
+  reset-pin`). `ACCESS_CODE` is no longer read. On production all three
+  accounts already used codes.
+
 ## 2026-09-30 — the next-steps plan (tiers 1–3)
 
 From `docs/implementation_plan_2026-09-29_next.md`; status of every item is at

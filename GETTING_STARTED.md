@@ -9,7 +9,7 @@ BioRx searches nine publication sources (Europe PMC, PubMed, PsyArXiv, SocArXiv,
 If a colleague has deployed BioRx for you:
 
 1. Open the URL they gave you.
-2. Enter the shared access code.
+2. Enter the personal access code they gave you, then choose a PIN (the first time) or enter it.
 3. Go to **Searches → New search**, enter your terms and date range, and run it.
 
 That is all. Skip to [Your first search](#your-first-search) for tips on what to enter.
@@ -41,11 +41,16 @@ Open `.env` and set at minimum:
 
 | Variable | What to set |
 |---|---|
-| `ACCESS_CODE` | Any passphrase — this is what you type to sign in |
 | `SESSION_SECRET` | A random string: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `DEFAULT_LLM_PROVIDER` | `deepseek` (default), `anthropic`, or `ollama` — old name `LLM_PROVIDER` |
 | `ANTHROPIC_API_KEY` or `DEEPSEEK_API_KEY` | Your key for whichever provider you chose |
 | `BIORX_CONTACT_EMAIL` | Your email (sent in API request headers for polite-pool access) |
+
+Make yourself a personal access code (it is printed; you choose a PIN the first time you sign in):
+
+```bash
+python -m src.access_codes add --for "Your Name"
+```
 
 Start the server:
 
@@ -69,7 +74,6 @@ Railway hosts the app in a container with persistent storage. The free tier is e
 4. Set these environment variables in Railway's dashboard (do not commit them to the repo):
 
    ```
-   ACCESS_CODE=your-shared-passphrase
    SESSION_SECRET=<random string>
    KEY_ENC_SECRET=<random string — required for colleagues to save their own API keys>
    DEFAULT_LLM_PROVIDER=deepseek
@@ -80,13 +84,15 @@ Railway hosts the app in a container with persistent storage. The free tier is e
 
 5. Deploy. Then run through the post-deploy checklist:
 
-   - [ ] `GET /healthz` returns `access_code_set: true` and `owner_key_set: true`
-   - [ ] Wrong access code is refused; right one signs you in
+   - [ ] `GET /healthz` returns `{"ok": true}`; `GET /api/gate` shows `codes_in_use: true`
+   - [ ] Wrong access code is refused; your code + PIN signs you in
    - [ ] A search returns results and the Stop button works
    - [ ] One summary completes
    - [ ] Redeploy, then confirm your filters and summaries survived (proves the volume is mounted)
 
-Share the Railway URL and your `ACCESS_CODE` with colleagues.
+Make a personal access code for each colleague inside the running service
+(`railway ssh`, then `python -m src.access_codes add --for "Name"`) and send them
+the Railway URL and their code. Each chooses their own PIN.
 
 ---
 

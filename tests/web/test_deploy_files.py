@@ -343,7 +343,7 @@ def test_dotenv_is_gitignored_so_a_filled_in_copy_is_never_committed():
 def test_the_required_variables_are_all_present():
     """An exact list of what an operator must set (learnings P29)."""
     text = ENV_EXAMPLE.read_text()
-    for name in ("ACCESS_CODE", "SESSION_SECRET", "KEY_ENC_SECRET", "LLM_PROVIDER",
+    for name in ("SESSION_SECRET", "KEY_ENC_SECRET", "LLM_PROVIDER",
                  "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "DATA_DIR"):
         assert re.search(rf"^#?\s*{name}=", text, re.MULTILINE), f"{name} not documented"
 
@@ -363,7 +363,7 @@ def test_readme_documents_local_run_and_deploy():
 
 def test_readme_documents_every_required_variable():
     text = README.read_text()
-    for name in ("ACCESS_CODE", "SESSION_SECRET", "KEY_ENC_SECRET", "LLM_PROVIDER"):
+    for name in ("SESSION_SECRET", "KEY_ENC_SECRET", "LLM_PROVIDER"):
         assert name in text, f"README does not mention {name}"
 
 

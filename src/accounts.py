@@ -1,15 +1,17 @@
 """
-Web accounts: a name + PIN that always return the same user.
+Web accounts: a personal access code says who you are, the PIN proves it.
 
 Purpose: Let a user get back to their filters and Saved References from any
-         browser, without the shared access code letting anyone pose as them.
-Spec:    docs/implementation_plan_2026-09-18_accounts.md#AC1-AC9
-Tests:   tests/web/test_accounts.py
+         browser. PINs are stored as scrypt hashes, compared in constant time,
+         and repeated failures lock the account for a while.
+Spec:    docs/implementation_plan_2026-09-18_accounts.md#AC1-AC9,
+         docs/implementation_plan_2026-09-18_invite_codes.md#PC3-PC9
+Tests:   tests/web/test_accounts.py, tests/web/test_access_codes.py
 
-The shared access code opens the door; the name + PIN say who you are. PINs and
-recovery codes are stored as scrypt hashes, compared in constant time, and
-repeated failures lock the account for a while — the access code is shared, so
-without a lockout anyone holding it could guess PINs.
+The old sign-in — a shared access code + name + PIN, with recovery codes — was
+removed on 2026-09-30 (decision D2): every account has a personal code. The
+login_name and recovery_hash columns stay in the database, unread except that
+an access_codes.yaml `account:` entry can still name an old account.
 
 One-off merge:  python -m src.accounts merge --db PATH --from=USER_ID --into=USER_ID
 (write ids with "=": a random id can start with "-", which argparse would
@@ -24,15 +26,12 @@ import hmac
 import logging
 import os
 import secrets
-import sqlite3
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-NAME_MIN, NAME_MAX = 2, 40
 _SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1, "dklen": 32}
-_RECOVERY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"    # no 0/O/1/I
 
 
 class AccountError(Exception):
@@ -40,10 +39,6 @@ class AccountError(Exception):
 
 
 class BadCredentials(AccountError):
-    pass
-
-
-class NameTaken(AccountError):
     pass
 
 
@@ -103,36 +98,7 @@ def verify_secret(secret: str, stored: Optional[str]) -> bool:
         return False
 
 
-def new_recovery_code() -> str:
-    raw = "".join(secrets.choice(_RECOVERY_ALPHABET) for _ in range(16))
-    return "-".join(raw[i:i + 4] for i in range(0, 16, 4))
-
-
-def _normalise_code(code: str) -> str:
-    return "".join(ch for ch in (code or "").upper() if ch.isalnum())
-
-
-def normalise_name(name: str) -> str:
-    return " ".join((name or "").split())
-
-
-def _check_new(name: str, pin: str) -> str:
-    clean = normalise_name(name)
-    if not (NAME_MIN <= len(clean) <= NAME_MAX):
-        raise AccountError(f"Choose a name of {NAME_MIN}–{NAME_MAX} characters.")
-    if len(pin or "") < pin_min_length():
-        raise AccountError(f"Choose a PIN of at least {pin_min_length()} characters.")
-    return clean
-
-
 # ── Lookups ───────────────────────────────────────────────────────────────────
-
-def _by_name(db, name: str):
-    return db.conn.execute(
-        "SELECT * FROM users WHERE login_name IS NOT NULL AND lower(login_name) = lower(?)",
-        (normalise_name(name),),
-    ).fetchone()
-
 
 def resolve_user_id(db, user_id: str) -> Optional[str]:
     """Follow merged_into, so a cookie for a merged user reaches the target.
@@ -244,38 +210,6 @@ def _signed_in(db, row_user_id: str, nonce: str) -> "SignedIn":
 
 
 # ── Operations ────────────────────────────────────────────────────────────────
-
-def create_account(db, name: str, pin: str, new_user_id: Callable[[], str]) -> Tuple[str, str]:
-    """(user_id, recovery_code). Raises NameTaken or AccountError."""
-    clean = _check_new(name, pin)
-    code = new_recovery_code()
-    user_id = new_user_id()
-    try:
-        db.conn.execute(
-            "INSERT INTO users (user_id, display_name, login_name, pin_hash, recovery_hash) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (user_id, clean, clean, hash_secret(pin), hash_secret(_normalise_code(code))),
-        )
-        db.conn.commit()
-    except sqlite3.IntegrityError as e:
-        db.conn.rollback()
-        raise NameTaken("That name is already taken. Sign in, or choose another name.") from e
-    return user_id, code
-
-
-def sign_in(db, name: str, pin: str, now: Optional[datetime] = None) -> str:
-    now = now or _now()
-    row = _by_name(db, name)
-    if row is None:
-        verify_secret(pin, None)
-        raise BadCredentials("That name or PIN is not right.")
-    attempt = _claim_attempt(db, row, now)
-    if not verify_secret(pin, row["pin_hash"]):
-        _failed(db, row["user_id"], attempt, now)
-        raise BadCredentials("That name or PIN is not right.")
-    nonce = _record_success(db, row["user_id"], row["pin_hash"])
-    return _signed_in(db, row["user_id"], nonce)
-
 
 def _by_id(db, user_id: str):
     return db.conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
@@ -399,54 +333,6 @@ def end_sessions(db, user_id: str, commit: bool = True) -> None:
                         (secrets.token_urlsafe(16), uid))
     if commit:
         db.conn.commit()
-
-
-def recover(db, name: str, code: str, new_pin: str,
-            now: Optional[datetime] = None,
-            refusal: Optional[Callable[[str], Optional[str]]] = None) -> Tuple["SignedIn", str]:
-    """Set a new PIN with the recovery code. (SignedIn, new recovery code): the
-    account the data lives in, with a cookie naming the recovered row and the
-    nonce it was given in the same transaction.
-
-    refusal(user_id) -> reason is checked after the code is verified and before
-    anything changes, so a person whose access code was turned off cannot use
-    recovery to change their PIN (csdp review 2026-09-18)."""
-    now = now or _now()
-    if len(new_pin or "") < pin_min_length():
-        raise AccountError(f"Choose a PIN of at least {pin_min_length()} characters.")
-    row = _by_name(db, name)
-    if row is None:
-        verify_secret(code, None)
-        raise BadCredentials("That name or recovery code is not right.")
-    attempt = _claim_attempt(db, row, now)
-    if not verify_secret(_normalise_code(code), row["recovery_hash"]):
-        _failed(db, row["user_id"], attempt, now)
-        raise BadCredentials("That name or recovery code is not right.")
-    final = resolve_user_id(db, row["user_id"])
-    if final is None:
-        # A hand-made merged_into loop: refuse before changing anything, so the
-        # person keeps their old recovery code (csdp review round 6).
-        db.conn.execute("UPDATE users SET failed_logins = 0 WHERE user_id = ?", (row["user_id"],))
-        db.conn.commit()
-        raise BadCredentials("This account cannot be opened. Ask the owner.")
-    reason = refusal(final) if refusal else None
-    if reason:
-        # The code was right: give the attempt back, so refusals for a reason
-        # outside the person's control do not lock them out.
-        db.conn.execute("UPDATE users SET failed_logins = 0 WHERE user_id = ?", (row["user_id"],))
-        db.conn.commit()
-        raise AccountCutOff(reason)
-    fresh = new_recovery_code()
-    db.conn.execute(
-        "UPDATE users SET pin_hash = ?, recovery_hash = ?, failed_logins = 0, locked_until = NULL "
-        "WHERE user_id = ?",
-        (hash_secret(new_pin), hash_secret(_normalise_code(fresh)), row["user_id"]),
-    )
-    end_sessions(db, row["user_id"], commit=False)
-    nonce = db.conn.execute("SELECT session_nonce FROM users WHERE user_id = ?",
-                            (row["user_id"],)).fetchone()[0]
-    db.conn.commit()
-    return SignedIn(final, nonce, cookie_user=row["user_id"]), fresh
 
 
 def merge_users(db, source_id: str, target_id: str) -> dict:

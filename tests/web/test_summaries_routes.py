@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from src import user_store
 from src.tokens import UNCOUNTED
-from tests.web.conftest import ACCESS_CODE, account_body, settle_jobs
+from tests.web.conftest import account_body, settle_jobs
 
 PAPER = {
     "title": "Generative Agents", "abstract": "A study of interactive simulacra.",
@@ -267,11 +267,11 @@ def test_one_user_cannot_read_anothers_summary_job(ctx, app, monkeypatch, with_f
     bob = TestClient(app)
 
     with patch("src.llm_providers.build_client", return_value=_client_returning(SUMMARY)):
-        alice.post("/api/session", json=account_body(ACCESS_CODE))
+        alice.post("/api/session", json=account_body())
         job_id = alice.post("/api/summaries", json={"paper": PAPER}).json()["job_id"]
         _await(alice, job_id)
 
-        bob.post("/api/session", json=account_body(ACCESS_CODE))
+        bob.post("/api/session", json=account_body())
         assert bob.get(f"/api/summaries/{job_id}").status_code == 404
 
 

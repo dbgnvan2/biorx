@@ -143,7 +143,6 @@ def test_the_client_calls_the_endpoints_that_matter():
         "/api/gate",
         "/api/config",
         "/api/session",
-        "/api/session/recover",
         "/api/session/lookup",
         "/api/me",
         "/api/me/llm-key",
@@ -1570,11 +1569,18 @@ def test_s2_panel_is_above_the_results_and_refreshed_after_a_summary():
 def test_pc13_sign_in_page_is_code_then_pin():
     ids = _element_ids_in_html()
     for el in ("my-code", "remember-code", "code-next", "my-pin", "my-pin-confirm",
-               "pin-sign-in", "use-other-code", "welcome", "show-legacy"):
+               "pin-sign-in", "use-other-code", "welcome"):
         assert el in ids, el
-    # Gone: creating an account by name, and claiming a name (a code does both).
-    for el in ("create-account", "claim-name", "claim-pin", "claim-account"):
+    # Gone: creating an account by name, and claiming a name (a code does both);
+    # and the old name sign-in with its recovery codes (decision D2, 2026-09-30).
+    for el in ("create-account", "claim-name", "claim-pin", "claim-account",
+               "show-legacy", "legacy-step", "access-code", "login-name", "login-pin",
+               "recover", "recovery-code", "recovery-modal"):
         assert el not in ids, el
+    code = _js_without_comments()
+    for fn in ("function signIn(", "function recoverAccount(", "function showRecoveryCode(",
+               "access_code_set"):
+        assert fn not in code, fn
     html = INDEX.read_text()
     assert 'id="my-pin" type="password"' in html
     assert 'id="my-pin-confirm" type="password"' in html
@@ -1607,18 +1613,6 @@ def test_pc13_a_cut_off_session_returns_to_the_sign_in_page_with_the_reason():
     code = _js_without_comments()
     api = re.search(r"async function api\(.*?\n\}", code, re.DOTALL).group(0)
     assert "response.status === 401 && state.me" in api and "showGate(error.message)" in api
-
-
-def test_pc13_old_name_sign_in_only_while_the_shared_code_is_set():
-    code = _js_without_comments()
-    gate = re.search(r"async function showGate\(message\) \{.*?\n\}", code, re.DOTALL).group(0)
-    assert '$("show-legacy").classList.toggle("hidden", !health.access_code_set)' in gate
-    sign_in = re.search(r"async function signIn\(\) \{.*?\n\}", code, re.DOTALL).group(0)
-    assert "create" not in sign_in
-    recover = re.search(r"async function recoverAccount\(\) \{.*?\n\}", code, re.DOTALL).group(0)
-    assert "showRecoveryCode(" in recover
-    close = re.search(r'\$\("recovery-done"\)\.addEventListener.*?\}\);', code, re.DOTALL).group(0)
-    assert 'textContent = ""' in close          # the recovery code is cleared from the page
 
 
 def test_deepseek_help_button_toggles_the_guide():

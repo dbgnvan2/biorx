@@ -449,13 +449,13 @@ def bind(db, key: str, user_id: str) -> bool:
     return cur.rowcount == 1
 
 
-def session_refusal(db, store: CodeStore, user_id: str, shared_code_set: bool,
+def session_refusal(db, store: CodeStore, user_id: str,
                     today: Optional[date] = None) -> Optional[str]:
     """None if this user may keep using the app today, else why not (PC5, PC8).
 
-    A user with a code needs at least one of their codes to be in the file and
-    usable. A user with none (an account from before codes) is allowed only
-    while the shared ACCESS_CODE is still set.
+    A user needs at least one of their codes to be in the file and usable. An
+    account with none (from before codes) is refused: the shared ACCESS_CODE
+    that let it in was removed on 2026-09-30 (decision D2).
     """
     today = today or date.today()
     if store.down(db):
@@ -480,7 +480,7 @@ def session_refusal(db, store: CodeStore, user_id: str, shared_code_set: bool,
         if not any(e is not None and e.refusal(today) is None for e in mine):
             return ENTRY_PROBLEM_MESSAGE
     if not keys and not any(mine):
-        return None if shared_code_set else "Sign in with your personal access code."
+        return "Sign in with your personal access code."
     live = [e for e in mine if e is not None]
     if any(e.refusal(today) is None for e in live):
         return None

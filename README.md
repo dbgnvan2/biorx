@@ -123,14 +123,13 @@ forgets theirs, look it up and tell them. The file is git-ignored; see
   (default 5) an account is locked for `LOGIN_LOCK_MINUTES` (default 15), so
   someone who sees a code cannot guess the PIN.
 
-**Accounts made before personal codes** (name + PIN + the shared
-`ACCESS_CODE`): give each one a code tied to it with
+**Accounts made before personal codes** (they signed in with a name + PIN and
+the shared `ACCESS_CODE`, removed on 2026-09-30): give each one a code tied to it with
 `python -m src.access_codes add --for "Dave" --account dave` — it keeps its PIN
 and data. An account that never had a name (reached only by its browser
 cookie) is tied by id instead: find it with `python -m src.accounts list --db
-PATH`, then `add --for "Dave" --user-id=ID` (with the `=`: ids can start with `-`); they choose a PIN on first sign-in. While `ACCESS_CODE` is set, those accounts can still sign in the old
-way ("Sign in with name (old way)"), but it no longer creates accounts. Remove
-`ACCESS_CODE` from `.env` once everyone has a code.
+PATH`, then `add --for "Dave" --user-id=ID` (with the `=`: ids can start with `-`); they choose a PIN on first sign-in. Until it has a code, such an account
+cannot sign in; `ACCESS_CODE` in `.env` is no longer read.
 
 To combine two accounts: `python -m src.accounts list --db PATH`, then
 `python -m src.accounts merge --db PATH --from=ID --into=ID` (with the `=`:
@@ -204,7 +203,7 @@ The repository has a `Dockerfile` and `railway.json`. The image installs
    `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`; keep a copy
    of `KEY_ENC_SECRET`, changing it makes stored API keys unreadable),
    `DEFAULT_LLM_PROVIDER` (e.g. `deepseek`) and the matching provider key. Leave
-   `ACCESS_CODE` and `SESSION_COOKIE_INSECURE` unset. Set `TRUST_PROXY=1`, so the
+   `SESSION_COOKIE_INSECURE` unset. Set `TRUST_PROXY=1`, so the
    sign-in attempt limit (`llm_config.yaml` `sign_in:`) counts each person's
    address rather than Railway's proxy.
 4. Settings → Networking → **Generate Domain** for the public HTTPS address.

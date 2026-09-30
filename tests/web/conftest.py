@@ -78,15 +78,11 @@ def _full_text_finders_are_offline_by_default(monkeypatch):
     monkeypatch.setattr("web.routes_summaries._FINDER_GET_JSON", lambda url, params: None)
 
 
-ACCESS_CODE = "shared-code-for-tests"
-
-
 @pytest.fixture
 def ctx(tmp_path):
     from web.deps import build_context
     context = build_context(
         db_path=str(tmp_path / "app.db"),
-        access_code=ACCESS_CODE,
         session_secret="a-test-session-secret-long-enough",
         cookie_secure=False,          # the test client speaks plain HTTP
     )
@@ -135,17 +131,11 @@ def add_code(for_name: str = None, account: str = "") -> str:
                      for_name or f"user-{uuid.uuid4().hex[:10]}", account=account)
 
 
-def account_body(access_code: str = ACCESS_CODE, name: str = None, pin: str = TEST_PIN,
-                 create: bool = True) -> dict:
-    """A /api/session body.
-
-    create=True: a fresh personal access code for `name` + a PIN — its first
-    use creates the account (docs/implementation_plan_2026-09-18_invite_codes.md#PC3).
-    create=False: the old way, shared access code + name + PIN (PC8).
-    """
-    if create:
-        return {"code": add_code(name), "pin": pin}
-    return {"access_code": access_code, "name": name, "pin": pin}
+def account_body(name: str = None, pin: str = TEST_PIN) -> dict:
+    """A /api/session body: a fresh personal access code for `name` + a PIN —
+    its first use creates the account
+    (docs/implementation_plan_2026-09-18_invite_codes.md#PC3)."""
+    return {"code": add_code(name), "pin": pin}
 
 
 @pytest.fixture
@@ -219,3 +209,21 @@ def settle_jobs(ctx, timeout: float = 10.0) -> None:
             return
         time.sleep(0.01)
     raise AssertionError(f"{len(busy)} job(s) still running after {timeout}s")
+
+
+def legacy_account(db, name: str, pin: str = TEST_PIN, _new_user_id=None) -> tuple:
+    """An account made before personal codes: a login name + PIN, no code.
+
+    The name sign-in that made these was removed (decision D2, 2026-09-30),
+    but such rows still exist and an access_codes.yaml `account:` entry can
+    still name one, so tests set them up directly. Returns (user_id, "") so
+    it reads like the old create_account(...) it replaces.
+    """
+    from src import user_store
+    from src.accounts import hash_secret
+    user_id = (_new_user_id or user_store.new_user_id)()
+    clean = " ".join(name.split())
+    db.conn.execute("INSERT INTO users (user_id, display_name, login_name, pin_hash) "
+                    "VALUES (?, ?, ?, ?)", (user_id, clean, clean, hash_secret(pin)))
+    db.conn.commit()
+    return user_id, ""

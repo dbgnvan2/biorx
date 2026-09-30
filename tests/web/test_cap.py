@@ -124,20 +124,20 @@ def test_the_cap_counts_only_owner_key_usage(ctx, signed_in, owner_key, no_pdf):
 
 def test_one_users_spending_does_not_cap_another(ctx, app, owner_key, no_pdf):
     from fastapi.testclient import TestClient
-    from tests.web.conftest import ACCESS_CODE, account_body
+    from tests.web.conftest import account_body
 
     alice = TestClient(app)
     bob = TestClient(app)
 
     with patch("src.llm_providers.build_client", return_value=_ok_client()):
-        alice.post("/api/session", json=account_body(ACCESS_CODE))
+        alice.post("/api/session", json=account_body())
         for n in range(3):
             r = alice.post("/api/summaries", json={"paper": _paper(n)})
             _await(alice, r.json()["job_id"])
         assert alice.post("/api/summaries",
                           json={"paper": _paper(3)}).status_code == 429
 
-        bob.post("/api/session", json=account_body(ACCESS_CODE))
+        bob.post("/api/session", json=account_body())
         assert bob.post("/api/summaries", json={"paper": _paper(4)}).status_code == 202
         settle_jobs(ctx)
 
@@ -166,10 +166,10 @@ def test_the_cap_holds_against_simultaneous_requests(ctx, app, owner_key, no_pdf
     import threading
 
     from fastapi.testclient import TestClient
-    from tests.web.conftest import ACCESS_CODE, account_body
+    from tests.web.conftest import account_body
 
     client = TestClient(app)
-    client.post("/api/session", json=account_body(ACCESS_CODE))
+    client.post("/api/session", json=account_body())
 
     codes = []
     codes_lock = threading.Lock()

@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import pytest
 
-from tests.web.conftest import ACCESS_CODE, TEST_PIN, account_body
+from tests.web.conftest import TEST_PIN, account_body
 
 # Routes that must be reachable without a session, each with its reason. A
 # route added to this set is a deliberate decision, not an oversight.
@@ -18,7 +18,6 @@ PUBLIC = {
     ("/healthz", "get"),          # liveness, for the platform
     ("/api/gate", "get"),         # what the sign-in page needs (review M7)
     ("/api/session", "post"),     # the sign-in itself
-    ("/api/session/recover", "post"),  # forgot PIN: gated by the access code, not a session
     ("/api/session/lookup", "post"),   # "Welcome back, NAME" before sign-in (PC14/PC15)
     ("/api/session", "delete"),   # signing out must work from a stale session
     ("/", "get"),                 # the page shell, so a visitor sees the form
@@ -44,19 +43,40 @@ PROTECTED_ROUTE_COUNT = 42   # + GET /api/config (review M7): moved off /healthz
 
 
 def test_wrong_access_code_is_rejected(client):
-    r = client.post("/api/session", json={"access_code": "not-the-code"})
+    r = client.post("/api/session", json={"code": "ZZZZ-ZZZZ-ZZZZ", "pin": "whatever-1"})
     assert r.status_code == 401
     assert "biorx_session" not in client.cookies
 
 
 def test_an_empty_request_is_rejected(client):
-    assert client.post("/api/session", json={"access_code": ""}).status_code == 401
-    assert client.post("/api/session", json={}).status_code == 401
+    assert client.post("/api/session", json={"code": ""}).status_code == 400
+    assert client.post("/api/session", json={}).status_code == 400
     assert "biorx_session" not in client.cookies
 
 
+def test_d2_old_name_sign_in_is_gone(ctx, client):
+    """Decision D2 (2026-09-30): the shared access code + name + PIN sign-in
+    and its recovery route are removed. An old account with a login name and
+    a PIN cannot get in with them; the fields are ignored, not honoured."""
+    from tests.web.conftest import legacy_account
+    legacy_account(ctx.db, "Oldtimer", "old-pin-111")
+    r = client.post("/api/session", json={"access_code": "anything", "name": "Oldtimer",
+                                           "pin": "old-pin-111"})
+    assert r.status_code == 400 and "access code" in r.json()["detail"]
+    assert "biorx_session" not in client.cookies
+    r = client.post("/api/session/recover", json={"access_code": "x", "name": "Oldtimer",
+                                                   "recovery_code": "AAAA", "new_pin": "n-pin-111"})
+    assert r.status_code in (404, 405)
+    assert "access_code_set" not in client.get("/api/gate").json()
+    from src import accounts
+    for gone in ("sign_in", "create_account", "recover", "new_recovery_code"):
+        assert not hasattr(accounts, gone), gone
+    from web import deps
+    assert not hasattr(deps, "PLACEHOLDER_ACCESS_CODES")
+
+
 def test_the_right_access_code_issues_a_session(client):
-    r = client.post("/api/session", json=account_body(ACCESS_CODE, name="Dave"))
+    r = client.post("/api/session", json=account_body(name="Dave"))
     assert r.status_code == 200
     assert client.cookies.get("biorx_session")
     assert r.json()["display_name"] == "Dave"
@@ -126,7 +146,7 @@ def test_a_valid_cookie_for_a_deleted_user_is_refused(ctx, client, signed_in):
 
 
 def test_the_cookie_is_httponly_and_samesite(client):
-    r = client.post("/api/session", json=account_body(ACCESS_CODE))
+    r = client.post("/api/session", json=account_body())
     header = r.headers["set-cookie"].lower()
     assert "httponly" in header
     assert "samesite=lax" in header
@@ -139,11 +159,10 @@ def test_the_cookie_is_secure_when_configured(tmp_path):
     from web.deps import build_context
 
     secure_ctx = build_context(db_path=str(tmp_path / "s.db"),
-                               access_code=ACCESS_CODE,
                                session_secret="x" * 32)
     try:
         with TestClient(create_app(secure_ctx)) as c:
-            r = c.post("/api/session", json=account_body(ACCESS_CODE))
+            r = c.post("/api/session", json=account_body())
             assert "secure" in r.headers["set-cookie"].lower()
     finally:
         secure_ctx.jobs.shutdown(); secure_ctx.db.close()
@@ -169,8 +188,8 @@ def test_typing_another_users_name_or_code_without_the_pin_does_not_reach_their_
     """
     The attack the PIN exists to prevent. Alice's code is not secret (it sits in
     a readable file), so a second person may know it — without her PIN they get
-    neither her account nor her stored key. Typing her name the old way does
-    not work either, and cannot create an account.
+    neither her account nor her stored key. Typing her name does not work
+    either: there is no name sign-in (decision D2).
     """
     from fastapi.testclient import TestClient
 
@@ -184,28 +203,23 @@ def test_typing_another_users_name_or_code_without_the_pin_does_not_reach_their_
     impostor = TestClient(app)
     r = impostor.post("/api/session", json={"code": body["code"], "pin": "guess-123"})
     assert r.status_code == 401
-    r = impostor.post("/api/session", json=account_body(name="Alice", pin="guess-123", create=False)
-                      | {"create": True})
-    assert r.status_code == 403
-    r = impostor.post("/api/session", json=account_body(name="alice ", pin="guess-123", create=False))
-    assert r.status_code == 401
+    r = impostor.post("/api/session", json={"name": "Alice", "pin": "guess-123"})
+    assert r.status_code == 400
     assert impostor.get("/api/me").status_code == 401
     assert "biorx_session" not in impostor.cookies
 
 
-def test_no_shared_code_and_no_codes_file_refuses_everyone(tmp_path):
+def test_no_codes_file_refuses_everyone(tmp_path):
     from fastapi.testclient import TestClient
     from web.app import create_app
     from web.deps import build_context
 
-    empty = build_context(db_path=str(tmp_path / "e.db"), access_code="",
+    empty = build_context(db_path=str(tmp_path / "e.db"),
                           session_secret="y" * 32, cookie_secure=False,
                           access_codes_file=str(tmp_path / "none.yaml"))
     try:
         with TestClient(create_app(empty)) as c:
-            assert c.post("/api/session", json={"access_code": ""}).status_code == 401
-            assert c.post("/api/session", json={"access_code": "anything", "name": "x",
-                                                "pin": "whatever-1"}).status_code == 401
+            assert c.post("/api/session", json={"code": ""}).status_code == 400
             assert c.post("/api/session", json={"code": "ABCD-EFGH-JKLM",
                                                 "pin": "whatever-1"}).status_code == 401
     finally:
@@ -240,55 +254,7 @@ def test_an_expired_cookie_is_refused(ctx, monkeypatch):
     assert auth.read_session(ctx, token) is None
 
 
-def test_the_placeholder_access_code_is_not_a_live_credential(tmp_path, monkeypatch):
-    """
-    `.env.example` ships ACCESS_CODE=change-me. Someone who deploys without
-    editing it has not chosen a code — and that code is readable on GitHub.
-    Treat it as unset rather than as a credential.
-    """
-    from fastapi.testclient import TestClient
-    from web.app import create_app
-    from web.deps import PLACEHOLDER_ACCESS_CODES, build_context
-
-    for placeholder in sorted(PLACEHOLDER_ACCESS_CODES):
-        ctx_ = build_context(db_path=str(tmp_path / f"{placeholder}.db"),
-                             access_code=placeholder,
-                             session_secret="z" * 32, cookie_secure=False)
-        try:
-            from src import accounts, user_store
-            accounts.create_account(ctx_.db, "Old User", TEST_PIN, user_store.new_user_id)
-            client = TestClient(create_app(ctx_))
-            assert client.post("/api/session", json=account_body(
-                placeholder, name="Old User", create=False)).status_code == 401
-        finally:
-            ctx_.jobs.shutdown(); ctx_.db.close()
-
-
-def test_a_real_access_code_that_merely_resembles_one_still_works(tmp_path):
-    from fastapi.testclient import TestClient
-    from web.app import create_app
-    from web.deps import build_context
-
-    code = "change-me-for-real-2026"          # not the placeholder itself
-    ctx_ = build_context(db_path=str(tmp_path / "real.db"), access_code=code,
-                         session_secret="z" * 32, cookie_secure=False)
-    try:
-        from src import accounts, user_store
-        accounts.create_account(ctx_.db, "Old User", TEST_PIN, user_store.new_user_id)
-        client = TestClient(create_app(ctx_))
-        assert client.post("/api/session", json=account_body(
-            code, name="Old User", create=False)).status_code == 200
-    finally:
-        ctx_.jobs.shutdown(); ctx_.db.close()
-
-
 # ── csdp security review 2026-09-18 ───────────────────────────────────────────
-
-def test_a_non_ascii_access_code_is_a_401_not_a_500(client):
-    r = client.post("/api/session", json={"access_code": "café-code", "name": "x",
-                                           "pin": "whatever-1"})
-    assert r.status_code == 401
-
 
 def test_security_headers(client, signed_in):
     page = client.get("/")
@@ -319,7 +285,14 @@ def test_a_broken_merge_chain_is_refused_not_treated_as_the_old_account(ctx, cli
 def test_a_cookie_from_before_session_nonces_still_works(ctx, client):
     from itsdangerous import URLSafeTimedSerializer
     from src import user_store
+    from src.access_codes import code_key
+    from tests.web.conftest import add_code
     uid = user_store.create_user(ctx.db, "old cookie")
+    # Every account has a code now (decision D2); an account without one is
+    # refused whatever its cookie says.
+    ctx.db.conn.execute("INSERT INTO access_code_bindings (code_key, user_id) VALUES (?, ?)",
+                        (code_key(add_code("old cookie")), uid))
+    ctx.db.conn.commit()
     token = URLSafeTimedSerializer(ctx.session_secret, salt="biorx-session-v1").dumps(uid)
     client.cookies.set("biorx_session", token)
     assert client.get("/api/me").status_code == 200
@@ -422,7 +395,7 @@ def test_t15c_bad_sign_in_settings_fall_back(section, per_minute, concurrent, ca
 
 def test_m6_sign_out_invalidates_copies(app):
     from fastapi.testclient import TestClient
-    body = account_body(ACCESS_CODE)
+    body = account_body()
     a = TestClient(app)
     assert a.post("/api/session", json=body).status_code == 200
     copied = a.cookies.get("biorx_session")
@@ -437,7 +410,7 @@ def test_m6_an_ended_cookie_cannot_sign_the_user_out(app):
     """Adversarial: replaying an old, already-ended cookie to DELETE must not
     end the user's current session."""
     from fastapi.testclient import TestClient
-    body = account_body(ACCESS_CODE)
+    body = account_body()
     first = TestClient(app)
     first.post("/api/session", json=body)
     old = first.cookies.get("biorx_session")

@@ -25,10 +25,6 @@ logger = logging.getLogger(__name__)
 
 SESSION_COOKIE = "biorx_session"
 
-# Values shipped in .env.example. Someone who deploys without editing them has
-# not chosen a code; treat that as "no code set" rather than as a live
-# credential anyone can read off GitHub.
-PLACEHOLDER_ACCESS_CODES = {"change-me", "changeme", "your-access-code", "secret"}
 SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30      # 30 days
 
 
@@ -40,7 +36,6 @@ class AppContext:
     jobs: JobRegistry
     llm_config: Dict[str, Any]
     sources_config: Dict[str, Any]
-    access_code: str
     session_secret: str
     # Session cookies are Secure (HTTPS-only) by default. A local run over
     # http://localhost, and the test client, set this false explicitly rather
@@ -78,28 +73,17 @@ class AppContext:
 
 
 def build_context(db_path: Optional[str] = None,
-                  access_code: Optional[str] = None,
                   session_secret: Optional[str] = None,
                   cookie_secure: Optional[bool] = None,
                   access_codes_file: Optional[str] = None) -> AppContext:
     """Assemble the app context from the environment, with test overrides."""
     import secrets
 
-    code = access_code if access_code is not None else os.environ.get("ACCESS_CODE", "")
-    if code.strip().lower() in PLACEHOLDER_ACCESS_CODES:
-        logger.error(
-            "ACCESS_CODE is still the placeholder from .env.example — refusing "
-            "every request. Set it to a code of your own."
-        )
-        code = ""
     codes = CodeStore(access_codes_file or codes_file_path())
-    if not code and not codes.entries():
+    if not codes.entries():
         logger.warning(
-            "No ACCESS_CODE and no personal access codes in %s — nobody can sign "
-            "in. Add codes with: python -m src.access_codes add --for NAME", codes.path)
-    elif code:
-        logger.info("Shared ACCESS_CODE is set: accounts from before personal codes "
-                    "can still sign in by name. Remove it once everyone has a code.")
+            "No personal access codes in %s — nobody can sign in. Add codes "
+            "with: python -m src.access_codes add --for NAME", codes.path)
 
     secret = session_secret or os.environ.get("SESSION_SECRET", "")
     if not secret:
@@ -130,7 +114,6 @@ def build_context(db_path: Optional[str] = None,
                          max_unfinished_per_owner=job_max_unfinished(llm_config)),
         llm_config=llm_config,
         sources_config=load_sources_config(),
-        access_code=code,
         session_secret=secret,
         cookie_secure=cookie_secure,
         codes=codes,
