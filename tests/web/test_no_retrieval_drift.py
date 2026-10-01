@@ -113,8 +113,12 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from a9cfc35 → 2765a9f (decision D1, desktop app retired: comments in orchestrator.py,
 #   query_builder.py and schema.py no longer name the GUI as a front end; no code
 #   change — W1.a required)
+# Updated from 2765a9f → 667e3de (search progress, 2026-10-01: _search_source announces each
+#   page before requesting it, and the OSF adapter calls an optional on_activity hook per
+#   title-term request, so a slow PsyArXiv search does not look hung — status text only,
+#   no change to what is fetched or kept — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "2765a9f"
+BASELINE = "667e3de"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
