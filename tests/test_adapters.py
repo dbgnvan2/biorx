@@ -344,6 +344,16 @@ def test_b3_multiword_term_sent_whole():
     assert _sent_titles(adapter) == ["Maternal deprivation"]
 
 
+def test_prog1_osf_reports_each_term_request():
+    adapter = _osf_adapter()
+    seen = []
+    adapter.on_activity = seen.append
+    adapter.search("x", filter_dict={"days_back": 7, "text_groups": [
+        {"title": "stress"}, {"title": "cortisol"}]})
+    assert seen == ["page 1, searching title word 1 of 2…",
+                    "page 1, searching title word 2 of 2…"]
+
+
 def test_b3_group_without_title_term_fetches_by_date():
     """A group matching on abstract only could be lost by a title filter."""
     adapter = _osf_adapter()

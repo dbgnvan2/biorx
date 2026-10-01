@@ -63,6 +63,9 @@ class OsfPreprintAdapter:
         self.last_total = 0
         self._term_totals: Dict[str, int] = {}
         self._exhausted: set = set()
+        # Set by the orchestrator: called with a short message before each
+        # request, so a page of several term requests shows progress.
+        self.on_activity = None
 
     def for_search(self) -> "OsfPreprintAdapter":
         """A new instance with the same settings, for one search (review B6)."""
@@ -133,9 +136,10 @@ class OsfPreprintAdapter:
         out: List[RawRecord] = []
         seen_ids: set = set()
         returned = 0
-        for term in terms:
-            if term in self._exhausted:
-                continue
+        pending = [t for t in terms if t not in self._exhausted]
+        for n, term in enumerate(pending, 1):
+            if callable(self.on_activity):
+                self.on_activity(f"page {page}, searching title word {n} of {len(pending)}…")
             data = self._get({**base, "filter[title]": term})
             results = data.get("data", []) or []
             total = (data.get("meta") or {}).get("total")

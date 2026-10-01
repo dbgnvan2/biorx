@@ -398,6 +398,16 @@ class SourceOrchestrator:
                 limited = True
                 break
 
+            # Say which page is being asked for before the request goes out: a
+            # slow source (PsyArXiv, with one request per title term) used to
+            # leave "Searching…" unchanged for minutes, which looked hung.
+            if on_status and not local_filter:
+                of_total = f" of {src_total:,}" if src_total else ""
+                on_status(f"{source_label(source_name)}: reading page {page}"
+                          f"{' (' + format(fetched, ',') + of_total + ' so far)' if fetched else ''}…")
+            if on_status and hasattr(adapter, "on_activity"):
+                adapter.on_activity = lambda msg, _l=source_label(source_name): on_status(f"{_l}: {msg}")
+
             try:
                 # PsyArXiv, SocArXiv, bioRxiv and arXiv adapters accept filter_dict for date range
                 if source_name in ("psyarxiv", "socarxiv", "biorxiv_medrxiv", "arxiv"):

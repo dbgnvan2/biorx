@@ -791,6 +791,15 @@ function progressText(job) {
   return parts.join(" · ") + (step ? ` — ${step}` : "");
 }
 
+/* How long a job has been running, e.g. "(1m 05s)". It ticks on every poll
+   even when the server's line has not changed, so a slow source does not
+   look hung. Pure, for the node-run test. */
+function elapsedText(createdAt, nowSeconds) {
+  if (!createdAt) return "";
+  const s = Math.max(0, Math.floor(nowSeconds - createdAt));
+  return s < 60 ? `(${s}s)` : `(${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s)`;
+}
+
 /* What is wrong with an Ad Hoc Search before it is sent, or "" if nothing.
 
    An empty box used to go to the server, which refused it with the saved-
@@ -917,6 +926,7 @@ async function pollSearchFor(jobId) {
   state.pollFailures = 0;
 
   $("phase").textContent = progressText(job);
+  $("phase-elapsed").textContent = elapsedText(job.created_at, Date.now() / 1000);
   if (job.total > 0) {
     $("progress").max = job.total;
     $("progress").value = job.fetched;

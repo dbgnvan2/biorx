@@ -1693,6 +1693,21 @@ def test_fr3_3_progress_text(job, text):
     assert got == text
 
 
+@pytest.mark.parametrize("created,now,text", [
+    (1000, 1005.9, "(5s)"), (1000, 1065, "(1m 05s)"), (1000, 990, "(0s)"), (0, 1000, ""),
+])
+def test_prog1_elapsed_text(created, now, text):
+    got = _node_eval([_js_block(r"function elapsedText\(createdAt, nowSeconds\) \{.*?\n\}")],
+                     f"elapsedText({created}, {now})")
+    assert got == text
+
+
+def test_prog1_search_poll_shows_elapsed():
+    code = _js_without_comments()
+    search = re.search(r"async function pollSearchFor\(jobId\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert 'elapsedText(job.created_at, Date.now() / 1000)' in search
+
+
 def test_fr3_4_both_pollers_show_counts():
     code = _js_without_comments()
     search = re.search(r"async function pollSearchFor\(jobId\) \{.*?\n\}", code, re.DOTALL).group(0)
@@ -1802,6 +1817,7 @@ def _run_flow(body):
         _js_block(r"async function pollSearchFor\(jobId\) \{.*?\n\}"),
         _js_block(r"async function loadResults\(\) \{.*?\n\}"),
         _js_block(r"function progressText\(job\) \{.*?\n\}"),
+        _js_block(r"function elapsedText\(createdAt, nowSeconds\) \{.*?\n\}"),
         _js_block(r"function enrichProblemsText\(job\) \{.*?\n\}"),
         _js_block(r"function shouldStopPolling\(error, failuresInARow\) \{.*?\n\}"),
         "(async () => { const out = {};\n" + body + "\nconsole.log(JSON.stringify(out)); })();",
@@ -2035,6 +2051,7 @@ function failedSourcesText() { return ""; } function renderFilterTestResults() {
         harness,
         _js_block(r"function shouldStopPolling\(error, failuresInARow\) \{.*?\n\}"),
         _js_block(r"function progressText\(job\) \{.*?\n\}"),
+        _js_block(r"function elapsedText\(createdAt, nowSeconds\) \{.*?\n\}"),
         _js_block(r"function enrichProblemsText\(job\) \{.*?\n\}"),
         _js_block(r"async function pollFilterTest\(\) \{.*?\n\}"),
         _js_block(r"async function pollFilterTestFor\(jobId\) \{.*?\n\}"),
@@ -2584,7 +2601,7 @@ async function api(method, path) {
 function stopPolling() { calls.push("stopPolling"); }
 async function loadResults() { calls.push("loadResults"); }
 function searchFinished(s) { calls.push("finished:" + s); }
-function progressText() { return ""; } function failedSourcesText() { return ""; }
+function progressText() { return ""; } function elapsedText() { return ""; } function failedSourcesText() { return ""; }
 function enrichProblemsText() { return ""; } function notice() {}
 function shouldStopPolling() { return false; } function renderFilterTestResults() {}
 globalThis.clearInterval = () => calls.push("clearInterval");

@@ -596,6 +596,23 @@ def test_b1_truncated_source_is_reported():
     assert not any(s.startswith("PsyArXiv") and "truncated" in s for s in statuses)
 
 
+def test_prog1_each_page_is_announced_before_it_is_requested():
+    """A slow source must change the status line every page, not stay on
+    "Searching…" until it finishes."""
+    big = _PagedAdapter("psyarxiv", total=120)
+    statuses = []
+    orch = _orch_with({"psyarxiv": big})
+
+    orch.search({"days_back": 7, "text_groups": [{"both": "x"}]},
+                {"all": True, "selected": []}, max_results=500,
+                on_status=statuses.append)
+
+    pages = [s for s in statuses if s.startswith("PsyArXiv: reading page")]
+    assert len(pages) == big.calls, statuses
+    assert pages[0].startswith("PsyArXiv: reading page 1…"), pages
+    assert "so far" in pages[1], pages
+
+
 def test_b1_page_cap_truncation_is_reported():
     big = _PagedAdapter("europepmc", total=5000)
     statuses = []
