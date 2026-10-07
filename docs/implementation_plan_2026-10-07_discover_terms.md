@@ -2,7 +2,7 @@
 
 **Request:** "I've been running some queries based on suggested terms provided by
 the application and I'm not getting any results at all." → "write the plan for 1–3".
-**Status:** PLAN — awaiting owner approval. No code written.
+**Status:** APPROVED 2026-10-07; built. DT6–DT8 done (tests in `docs/spec_coverage_webapp.md`); DT-R4 browser check after deploy.
 **Spec extended:** `docs/web_parity_spec_2026-09-17.md#FP1-B` (Discover terms).
 New IDs continue the existing DT1–DT5 series in `tests/web/test_discover_routes.py`.
 

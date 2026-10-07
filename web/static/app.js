@@ -76,6 +76,7 @@ const state = {
   // Discover
   discoverJobId: null,
   discoverPolling: null,
+  discoverDays: null,     // the window the shown terms were sampled from
 };
 
 const $ = (id) => document.getElementById(id);
@@ -1998,7 +1999,10 @@ async function pollDiscover() {
         `No papers found for "${job.result.keywords}" in the date range, ` +
         `so there was nothing to suggest terms from.${failed}`;
     } else if (job.status === "done" && job.result) {
-      renderDiscoverChips(job.result.terms || []);
+      // An older result has no days_back: a filter made from a term then
+      // keeps the New filter default, and no window note is shown.
+      state.discoverDays = Number(job.result.days_back) || null;
+      renderDiscoverChips(job.result.terms || [], job.result);
       if (failed) notice(`Discover Terms: results may be incomplete.${failed}`, "warn");
     } else {
       $("discover-terms-chips").textContent = (job.error || `Discover ${job.status}.`) + failed;
@@ -2008,7 +2012,40 @@ async function pollDiscover() {
   }
 }
 
-function renderDiscoverChips(terms) {
+/* "Suggested from papers in the last 90 days." — or "" when the result does
+   not say. Pure, for the node-run test. */
+function discoverWindowText(days) {
+  return days ? `Suggested from papers in the last ${days} days. ` : "";
+}
+
+/* What a chip says about its term: how many sampled papers contain it.
+   null when the result has no counts (an older job). Pure. */
+function chipCount(term, info) {
+  const hits = info && info.term_hits;
+  if (!hits || !(term in hits)) return null;
+  const total = Number(info.papers_sampled ?? info.papers_found) || 0;
+  const n = Number(hits[term]) || 0;
+  return {
+    n, total,
+    text: `${n} of ${total}`,
+    title: n ? `${n} of the ${total} sampled papers contain this exact wording.`
+             : `None of the ${total} sampled papers contain this exact wording — ` +
+               `it may find nothing.`,
+  };
+}
+
+/* The note added when a term goes into an open filter that searches fewer
+   days than the terms came from. "" otherwise, and for a filter that uses a
+   date range (its window is not a day count). Pure, for the node-run test. */
+function windowNote(filterDays, usesRange, discoverDays) {
+  if (usesRange || !discoverDays) return "";
+  const days = Number(filterDays) || 0;
+  if (!days || days >= discoverDays) return "";
+  return ` This filter searches the last ${days} days; these terms came from ` +
+         `the last ${discoverDays}.`;
+}
+
+function renderDiscoverChips(terms, info) {
   const container = $("discover-terms-chips");
   container.textContent = "";
   if (!terms.length) { container.textContent = "No terms suggested."; return; }
@@ -2016,12 +2053,14 @@ function renderDiscoverChips(terms) {
   const hint = document.createElement("p");
   hint.className = "muted small";
   hint.style.margin = "0 0 4px";
-  hint.textContent = "Click a term to add it as a new group in the filter " +
+  hint.textContent = discoverWindowText(info && info.days_back) +
+                     "Click a term to add it as a new group in the filter " +
                      "you have open; the term is added to the filter's name. " +
                      "With no filter open, the first click starts one. " +
                      "Right-click a term to start a new filter from it.";
   container.appendChild(hint);
 
+  let counted = 0, matched = 0;
   for (const term of terms) {
     const chip = document.createElement("button");
     chip.className = "tag discover-chip";
@@ -2030,12 +2069,31 @@ function renderDiscoverChips(terms) {
     chip.dataset.term = term;
     chip.textContent = term;
     chip.title = "Click: add as a group · Right-click: new filter";
+    const count = chipCount(term, info);
+    if (count) {
+      counted++;
+      if (count.n) matched++;
+      // Flagged, not hidden (P2): the term may still find papers elsewhere.
+      else chip.classList.add("chip-unmatched");
+      const badge = document.createElement("span");
+      badge.className = "chip-count";
+      badge.textContent = count.text;
+      chip.appendChild(badge);
+      chip.title = `${count.title} ${chip.title}`;
+    }
     chip.addEventListener("click", () => addTermAsGroup(term));
     chip.addEventListener("contextmenu", (e) => {
       e.preventDefault();                 // the browser's menu, not ours
       createFilterFromTerm(term);
     });
     container.appendChild(chip);
+  }
+  if (counted) {
+    const line = document.createElement("p");
+    line.className = "muted small";
+    line.style.margin = "4px 0 0";
+    line.textContent = `${matched} of ${counted} terms occur in the sampled papers.`;
+    container.appendChild(line);
   }
   renderDiscoverChipState();
 }
@@ -2096,6 +2154,8 @@ function appendedFilterName(current, term, takenNames) {
 async function createFilterFromTerm(term) {
   if (state.discoverSaving) return;       // one save at a time
   await newFilter();
+  // The window the term came from, not the New filter default (DT6.B).
+  if (state.discoverDays) $("filter-days").value = state.discoverDays;
   const name = freeFilterName(term, (state.filters || []).map(f => f.name));
   $("filter-name").value = name;
   renderTextGroups(groupsWithTerm([], term));
@@ -2118,15 +2178,17 @@ async function addTermAsGroup(term) {
   const others = (state.filters || []).filter(f => f.id !== state.activeFilterId)
                                       .map(f => f.name);
   const name = appendedFilterName(current, term, others);
+  const note = windowNote($("filter-days").value,
+                          $("filter-date-range-toggle").checked, state.discoverDays);
   renderTextGroups(groupsWithTerm(groups, term));
   if (name === null) {
     await saveTermFilter(`Added "${term}" to "${current}" as a new group. The ` +
       `name was left as it is: adding the term would pass the ` +
-      `${FILTER_NAME_MAX}-character limit.`);
+      `${FILTER_NAME_MAX}-character limit.${note}`);
     return;
   }
   $("filter-name").value = name;
-  await saveTermFilter(`Added "${term}" as a new group. The filter is now "${name}".`);
+  await saveTermFilter(`Added "${term}" as a new group. The filter is now "${name}".${note}`);
 }
 
 /* Save the filter in the editor: create it if new, update it if not. */

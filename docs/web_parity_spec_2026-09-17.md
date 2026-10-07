@@ -110,7 +110,9 @@ or via environment variables.
 
 **Discover terms:** caps input at 30 paper titles+abstracts; LLM prompt asks for 5–10 keyword phrases. Submitted as a **background job** (returns 202 + job_id; frontend polls `GET /api/discover-terms/{job_id}` until done and reads `result.terms`). The description is split into keywords (stop words removed, `src/discover.py`) and searched as a `both` text group; `days_back`, `max_papers` and the stop words are in `llm_config.yaml` under `discover:`. An owner-key slot is released if the model is never called. An unparsable reply is a job error, not an empty list. Respects the user's inline key / stored key / owner key with the same `_resolve_for` logic from routes_summaries.
 
-**Discover-terms job result shape:** `{"terms": [...], "papers_found": N, "keywords": "..."}`; `sources_failed` on the job.
+**Discover-terms job result shape:** `{"terms": [...], "papers_found": N, "papers_sampled": N, "keywords": "...", "term_hits": {term: n}, "days_back": N}`; `sources_failed` on the job. `terms` stays a list of strings.
+
+**Discover terms, 2026-10-07 (DT6–DT8, `docs/implementation_plan_2026-10-07_discover_terms.md`):** the model's instructions are `discover.system_prompt` in `llm_config.yaml` and ask for 1–3 word terms that occur word for word in the sampled papers; paper text is sent inside `<papers>` tags. `term_hits` counts sampled papers containing each term (title or full abstract, the filter's own match rule). The page shows the count on each term, flags zero-count terms without hiding them, and gives a filter created from a term the result's `days_back`.
 
 ---
 

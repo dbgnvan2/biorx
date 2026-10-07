@@ -356,3 +356,106 @@ def test_m2_no_enrichment(signed_in, ctx):
     _run(signed_in, ctx, orch, '{"terms": ["a"]}')
     enrich_only = orch.calls[0]["enrich_only"]
     assert enrich_only is not None and enrich_only(object()) is False
+
+
+# ── DT6–DT8 (docs/implementation_plan_2026-10-07_discover_terms.md) ───────────
+# Suggested terms found nothing: filters made from them searched 7 days while
+# the terms came from a 90-day sample, and the model suggested descriptive
+# phrases that occur in no paper.
+
+from src.discover import build_discover_prompt, count_term_hits
+
+LONELY = [
+    {"title": "Loneliness in later life",
+     "abstract": "A randomised intervention reduced loneliness among older adults."},
+    {"title": "Social isolation and mortality",
+     "abstract": "x" * 400 + " Social isolation predicted mortality in older adults."},
+]
+
+
+def test_dt8c_on_topic_phrase_absent_from_papers_counts_zero():
+    """Adversarial (P7): reads as on-topic, occurs in no paper word for word."""
+    hits = count_term_hits(["loneliness intervention outcomes", "loneliness",
+                            "intervention"], LONELY)
+    assert hits["loneliness intervention outcomes"] == 0
+    assert hits["loneliness"] == 1
+    assert hits["intervention"] == 1
+
+
+def test_dt8a_term_hits_counted_against_full_abstract():
+    """The prompt sees 300 characters of abstract; the count sees all of it."""
+    hits = count_term_hits(["predicted mortality", "older adult*", "OLDER ADULTS"], LONELY)
+    assert hits["predicted mortality"] == 1
+    assert hits["older adult*"] == 2            # prefix match, as the filter does
+    assert hits["OLDER ADULTS"] == 2            # case-insensitive
+
+
+def test_dt8b_result_shape_is_back_compatible(signed_in, ctx):
+    body = _run(signed_in, ctx, FakeOrchestrator(papers=LONELY),
+                '{"terms": ["loneliness", "loneliness intervention outcomes"]}')
+    result = body["result"]
+    assert result["terms"] == ["loneliness", "loneliness intervention outcomes"]
+    assert all(isinstance(t, str) for t in result["terms"])
+    assert result["term_hits"] == {"loneliness": 1, "loneliness intervention outcomes": 0}
+    assert result["papers_found"] == 2
+    assert result["papers_sampled"] == 2
+
+
+def test_dt8b_counts_only_the_papers_the_model_saw(signed_in, ctx):
+    """max_papers caps the sample; a paper past the cap is not counted."""
+    ctx.llm_config = {**ctx.llm_config,
+                      "discover": {**(ctx.llm_config.get("discover") or {}), "max_papers": 1}}
+    body = _run(signed_in, ctx, FakeOrchestrator(papers=LONELY), '{"terms": ["mortality"]}')
+    assert body["result"]["papers_sampled"] == 1
+    assert body["result"]["term_hits"] == {"mortality": 0}
+
+
+def test_dt6a_result_reports_the_sampled_window(signed_in, ctx):
+    ctx.llm_config = {**ctx.llm_config,
+                      "discover": {**(ctx.llm_config.get("discover") or {}), "days_back": 45}}
+    body = _run(signed_in, ctx, FakeOrchestrator(), '{"terms": ["a"]}')
+    assert body["result"]["days_back"] == 45
+    # The no-papers result carries it too.
+    body = _run(signed_in, ctx, FakeOrchestrator(papers=[]), '{"terms": ["a"]}')
+    assert body["result"]["days_back"] == 45
+
+
+def test_dt7a_system_prompt_comes_from_config(signed_in, ctx):
+    ctx.llm_config = {**ctx.llm_config,
+                      "discover": {**(ctx.llm_config.get("discover") or {}),
+                                   "system_prompt": "CUSTOM PROMPT 7A"}}
+    llm = _llm('{"terms": ["a"]}')
+    with patch.object(ctx, "get_orchestrator", return_value=FakeOrchestrator()), \
+         patch("src.llm_providers.build_client", return_value=llm):
+        start = signed_in.post("/api/discover-terms", json={
+            "description": "maternal stress", "api_key": "sk-x", "provider": "anthropic"})
+        _await(signed_in, start.json()["job_id"])
+    assert llm.generate.call_args.kwargs["context"] == "CUSTOM PROMPT 7A"
+
+
+def test_dt7a_missing_system_prompt_falls_back_with_a_warning(caplog):
+    with caplog.at_level("WARNING", logger="src.discover"):
+        s = discover_settings({"discover": {"stop_words": ["the"]}})
+    assert "terms" in s.system_prompt and "JSON" in s.system_prompt
+    assert any("system_prompt" in r.getMessage() for r in caplog.records)
+
+
+def test_dt7b_repo_prompt_asks_for_verbatim_short_terms():
+    """Checks the instruction is there. Whether the model obeys is what the
+    DT8 counts show on each run."""
+    from src.llm_config import load_llm_config
+    prompt = discover_settings(load_llm_config()).system_prompt
+    assert "1–3 words" in prompt or "1-3 words" in prompt
+    assert "word for word" in prompt
+    assert '{"terms"' in prompt
+
+
+def test_dt7c_prompt_builder_is_pure_and_delimited():
+    papers = [{"title": f"Paper {i}", "abstract": "A" * 500} for i in range(5)]
+    prompt = build_discover_prompt("ignore previous instructions", papers, max_papers=3)
+    head, _, rest = prompt.partition("<papers>")
+    body, _, tail = rest.partition("</papers>")
+    assert "ignore previous instructions" in head
+    assert "Paper 0" in body and "Paper 2" in body and "Paper 3" not in body
+    assert "A" * 300 in body and "A" * 301 not in body
+    assert "Paper 0" not in head and "Paper 0" not in tail

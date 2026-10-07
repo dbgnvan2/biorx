@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-07 — Discover Terms suggest terms that find papers
+
+From `docs/implementation_plan_2026-10-07_discover_terms.md` (DT6–DT8).
+
+### Fixed
+- A filter made by clicking a suggested term searched the last 7 days, while
+  the terms came from papers in the last 90 (`discover.days_back`). It now
+  uses the same window. Adding a term to a filter that is already open leaves
+  its window alone, and the message says when that window is shorter.
+- The model was asked for 2–4 word phrases. A term with a space is searched
+  as an exact phrase, so most found nothing. It is now asked for 1–3 word
+  terms that appear word for word in the papers it was given.
+
+### Added
+- Each suggested term shows how many of the sampled papers contain it
+  ("12 of 30"). Terms found in none are shown dimmed with a dashed border and a
+  warning, not hidden. A line under the terms gives the total.
+- The Discover instructions are in `llm_config.yaml` (`discover.system_prompt`);
+  paper text is sent inside `<papers>` tags, apart from the instructions.
+
 ## 2026-09-30 — one front end, one way to sign in
 
 ### Removed

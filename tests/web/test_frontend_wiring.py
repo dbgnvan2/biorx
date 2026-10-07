@@ -902,7 +902,7 @@ def test_dc2_click_adds_a_group_right_click_starts_a_filter():
     """contextmenu is the right-click event; without preventDefault the
     browser's own menu covers the page on every right-click."""
     code = _js_without_comments()
-    body = re.search(r"function renderDiscoverChips\(terms\) \{.*?\n\}",
+    body = re.search(r"function renderDiscoverChips\(terms, info\) \{.*?\n\}",
                      code, re.DOTALL).group(0)
     assert 'addEventListener("click", () => addTermAsGroup(term))' in body
     assert 'addEventListener("contextmenu"' in body
@@ -3107,3 +3107,127 @@ def test_t27_too_many_jobs_is_not_the_daily_cap(payload, expected):
     out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout) == expected
+
+
+# ── DT6/DT8: Discover terms carry their window and their hit counts ───────────
+# docs/implementation_plan_2026-10-07_discover_terms.md
+
+_FAKE_DOM = r"""
+function fakeEl(id) {
+  const el = { id, value: "", checked: false, className: "", style: {}, dataset: {},
+    children: [], listeners: {}, title: "", _text: "",
+    classList: { set: new Set(),
+      add(c) { this.set.add(c); }, remove(c) { this.set.delete(c); },
+      contains(c) { return this.set.has(c); },
+      toggle(c, on) { on ? this.set.add(c) : this.set.delete(c); } },
+    appendChild(c) { this.children.push(c); return c; },
+    addEventListener(t, f) { this.listeners[t] = f; },
+    focus() {}, querySelectorAll() { return []; },
+  };
+  Object.defineProperty(el, "textContent", {
+    get() { return el._text + el.children.map(c => c.textContent).join(""); },
+    set(v) { el._text = String(v); el.children = []; } });
+  return el;
+}
+const _els = {};
+const $ = id => (_els[id] = _els[id] || fakeEl(id));
+const document = { createElement: () => fakeEl("") };
+"""
+
+
+def _discover_js(*names):
+    return [_FAKE_DOM] + [_js_block(r"(async )?function " + n + r"\(.*?\n\}") for n in names]
+
+
+def test_dt6b_term_filter_uses_discover_window():
+    """A filter made from a term gets the window the term came from; the plain
+    New filter button still gives 7; an older result (no window) keeps 7."""
+    stubs = """
+      const state = { filters: [], discoverDays: 90, discoverSaving: false };
+      const FACET_FIELDS = []; const ANY = "(any)";
+      function setFacetValue() {} function renderTextGroups() {}
+      function renderSourcePicker() {} function defaultSourceIds() { return []; }
+      function renderDiscoverChipState() {} function groupsWithTerm() { return []; }
+      function freeFilterName(t) { return t; }
+      const saved = [];
+      async function saveTermFilter() { saved.push(Number($("filter-days").value)); }
+    """
+    script = _discover_js("newFilter", "createFilterFromTerm") + [stubs]
+    plain = _node_eval(script + ["newFilter();"], 'Number($("filter-days").value)')
+    assert plain == 7
+    import json
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    run = "\n".join(script) + """
+      (async () => {
+        await createFilterFromTerm("loneliness");
+        state.discoverDays = null;
+        await createFilterFromTerm("isolation");
+        console.log(JSON.stringify(saved));
+      })();"""
+    result = subprocess.run([node, "-e", run], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.strip()) == [90, 7]
+
+
+def test_dt6c_shorter_window_is_named_in_the_notice():
+    fn = [_js_block(r"function windowNote\(.*?\n\}")]
+    assert "last 7 days" in _node_eval(fn, "windowNote('7', false, 90)")
+    assert "last 90" in _node_eval(fn, "windowNote('7', false, 90)")
+    assert _node_eval(fn, "windowNote('90', false, 90)") == ""
+    assert _node_eval(fn, "windowNote('120', false, 90)") == ""
+    assert _node_eval(fn, "windowNote('7', true, 90)") == ""      # a date range
+    assert _node_eval(fn, "windowNote('7', false, null)") == ""   # older result
+
+
+def test_dt6c_add_term_puts_the_note_in_its_message():
+    code = _js_without_comments()
+    body = re.search(r"async function addTermAsGroup\(term\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "windowNote(" in body
+    assert body.count("${note}") == 2      # both save messages carry it
+
+
+_RENDER = ["discoverWindowText", "chipCount", "renderDiscoverChips"]
+_RENDER_STUBS = """
+  function renderDiscoverChipState() {}
+  function addTermAsGroup() {} function createFilterFromTerm() {}
+"""
+
+
+def _render(expression_setup):
+    return _node_eval(_discover_js(*_RENDER) + [_RENDER_STUBS, expression_setup], """(() => {
+      const c = $("discover-terms-chips");
+      const chips = c.children.filter(ch => ch.dataset.term);
+      return { hint: c.children[0].textContent,
+               last: c.children[c.children.length - 1].textContent,
+               chips: chips.map(ch => ({ term: ch.dataset.term, text: ch.textContent,
+                 title: ch.title, unmatched: ch.classList.contains("chip-unmatched") })) };
+    })()""")
+
+
+def test_dt6d_hint_names_the_window():
+    got = _render('renderDiscoverChips(["a"], {days_back: 45, term_hits: {a: 1}, papers_sampled: 3});')
+    assert got["hint"].startswith("Suggested from papers in the last 45 days.")
+
+
+def test_dt8d_zero_hit_chip_is_flagged_not_hidden():
+    got = _render('renderDiscoverChips(["loneliness", "loneliness intervention outcomes"], '
+                  '{days_back: 90, papers_sampled: 30, '
+                  'term_hits: {"loneliness": 12, "loneliness intervention outcomes": 0}});')
+    chips = {c["term"]: c for c in got["chips"]}
+    assert set(chips) == {"loneliness", "loneliness intervention outcomes"}   # none hidden
+    zero = chips["loneliness intervention outcomes"]
+    assert zero["unmatched"] and "0 of 30" in zero["text"]
+    assert "None of the 30 sampled papers" in zero["title"]
+    assert not chips["loneliness"]["unmatched"] and "12 of 30" in chips["loneliness"]["text"]
+    # DT8.E: the count line.
+    assert got["last"] == "1 of 2 terms occur in the sampled papers."
+
+
+def test_dt8f_old_result_renders_without_counts():
+    got = _render('renderDiscoverChips(["a", "b"], {terms: ["a", "b"], papers_found: 2});')
+    assert [c["text"] for c in got["chips"]] == ["a", "b"]
+    assert not any(c["unmatched"] for c in got["chips"])
+    assert got["hint"].startswith("Click a term")
+    assert "terms occur" not in got["last"]

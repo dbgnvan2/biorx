@@ -13,7 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from src import user_store
-from src.discover import (DiscoverParseError, discover_settings, parse_terms,
+from src.discover import (DiscoverParseError, build_discover_prompt,
+                          count_term_hits, discover_settings, parse_terms,
                           query_to_keywords)
 from src.jobs import Job, JobLookup
 from src.llm_providers import LLMError, NoLLMCredentialError, ProviderResponseError
@@ -30,15 +31,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 JOB_KIND = "discover"
-
-_DISCOVER_SYSTEM_PROMPT = (
-    "You are a research librarian. Given a list of paper titles and abstracts, "
-    "suggest 5 to 10 concise keyword phrases (2–4 words each) that would be "
-    "effective as database search terms to find similar papers. "
-    "Respond with a JSON object: {\"terms\": [\"term1\", \"term2\", ...]}. "
-    "No explanation, only the JSON object."
-)
-
 
 class DiscoverRequest(BaseModel):
     description: str = Field(min_length=1, max_length=1000)
@@ -94,29 +86,19 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
                 enrich_only=lambda _r: False,
             )
 
-            context_parts = []
-            for p in papers[:settings.max_papers]:
-                title = (p.get("title") or "").strip()
-                abstract = (p.get("abstract") or "")[:300].strip()
-                if title:
-                    context_parts.append(f"Title: {title}")
-                    if abstract:
-                        context_parts.append(f"Abstract: {abstract}")
-
-            if not context_parts:
+            prompt = build_discover_prompt(body.description, papers,
+                                           settings.max_papers)
+            if not prompt:
                 # Nothing to ask the model about. Say so, with the keywords
                 # searched, rather than returning an empty list that reads as
                 # "the model had no ideas".
-                return {"terms": [], "papers_found": 0, "keywords": keywords}
-
-            prompt = (
-                f"Research interest: {body.description}\n\n"
-                "Papers found:\n" + "\n".join(context_parts)
-            )
+                return {"terms": [], "papers_found": 0, "keywords": keywords,
+                        "papers_sampled": 0, "term_hits": {},
+                        "days_back": settings.days_back}
 
             job.phase = f"Asking {resolved.provider} ({len(papers)} papers found)"
             call.model_called()
-            raw, usage = resolved.client.generate(prompt, context=_DISCOVER_SYSTEM_PROMPT)
+            raw, usage = resolved.client.generate(prompt, context=settings.system_prompt)
             job.token_usage = usage
             try:
                 terms = parse_terms(raw)
@@ -126,7 +108,13 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
                     f"{resolved.provider} did not return a list of terms ({e})."
                 ) from e
 
-            return {"terms": terms, "papers_found": len(papers), "keywords": keywords}
+            # term_hits and days_back let the page say which terms occur in
+            # the sample and give a filter made from a term the same window
+            # (docs/implementation_plan_2026-10-07_discover_terms.md DT6, DT8).
+            return {"terms": terms, "papers_found": len(papers), "keywords": keywords,
+                    "papers_sampled": len(papers[:settings.max_papers]),
+                    "term_hits": count_term_hits(terms, papers[:settings.max_papers]),
+                    "days_back": settings.days_back}
 
     return work
 
