@@ -95,7 +95,7 @@ an existing filter opens with its own sources, keywords and days.
 | DT7.A system prompt from config | `test_discover_routes.py::test_dt7a_system_prompt_comes_from_config`, `test_dt7a_missing_system_prompt_falls_back_with_a_warning` | done |
 | DT7.B prompt asks for short verbatim terms | `test_discover_routes.py::test_dt7b_repo_prompt_asks_for_verbatim_short_terms` (instruction present; model compliance is shown per run by DT8) | done |
 | DT7.C pure, delimited prompt builder | `test_discover_routes.py::test_dt7c_prompt_builder_is_pure_and_delimited` | done |
-| DT8.A–C per-term hit counts | `test_discover_routes.py::test_dt8a_*`, `test_dt8b_*` (2), `test_dt8c_on_topic_phrase_absent_from_papers_counts_zero` | done |
+| DT8.A–C per-term hit counts | `test_discover_routes.py::test_dt8a_*`, `test_dt8b_*` (4), `test_dt8c_on_topic_phrase_absent_from_papers_counts_zero`, `test_dt8c_short_term_inside_a_longer_word_counts_zero` | done |
 | DT8.D–F zero-hit terms flagged, count line, old results | `test_frontend_wiring.py::test_dt8d_zero_hit_chip_is_flagged_not_hidden`, `test_dt8f_old_result_renders_without_counts` | done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |

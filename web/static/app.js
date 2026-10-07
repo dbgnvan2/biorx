@@ -1998,6 +1998,10 @@ async function pollDiscover() {
       $("discover-terms-chips").textContent =
         `No papers found for "${job.result.keywords}" in the date range, ` +
         `so there was nothing to suggest terms from.${failed}`;
+    } else if (job.status === "done" && job.result && job.result.papers_sampled === 0) {
+      $("discover-terms-chips").textContent =
+        `${job.result.papers_found} papers found for "${job.result.keywords}", ` +
+        `but none had a title, so there was nothing to suggest terms from.${failed}`;
     } else if (job.status === "done" && job.result) {
       // An older result has no days_back: a filter made from a term then
       // keeps the New filter default, and no window note is shown.
@@ -2028,8 +2032,8 @@ function chipCount(term, info) {
   return {
     n, total,
     text: `${n} of ${total}`,
-    title: n ? `${n} of the ${total} sampled papers contain this exact wording.`
-             : `None of the ${total} sampled papers contain this exact wording — ` +
+    title: n ? `${n} of the ${total} sampled papers contain this wording.`
+             : `None of the ${total} sampled papers contain this wording — ` +
                `it may find nothing.`,
   };
 }
@@ -2080,6 +2084,8 @@ function renderDiscoverChips(terms, info) {
       badge.textContent = count.text;
       chip.appendChild(badge);
       chip.title = `${count.title} ${chip.title}`;
+      // Without this the button reads as "sleep apnea3 of 30".
+      chip.setAttribute("aria-label", `${term}, in ${count.text} sampled papers`);
     }
     chip.addEventListener("click", () => addTermAsGroup(term));
     chip.addEventListener("contextmenu", (e) => {

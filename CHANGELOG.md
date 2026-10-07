@@ -15,7 +15,8 @@ From `docs/implementation_plan_2026-10-07_discover_terms.md` (DT6–DT8).
 
 ### Added
 - Each suggested term shows how many of the sampled papers contain it
-  ("12 of 30"). Terms found in none are shown dimmed with a dashed border and a
+  ("12 of 30"), counting whole words, so "aging" does not count a paper about
+  imaging. Terms found in none are shown dimmed with a dashed border and a
   warning, not hidden. A line under the terms gives the total.
 - The Discover instructions are in `llm_config.yaml` (`discover.system_prompt`);
   paper text is sent inside `<papers>` tags, apart from the instructions.

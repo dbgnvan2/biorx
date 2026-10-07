@@ -112,7 +112,7 @@ or via environment variables.
 
 **Discover-terms job result shape:** `{"terms": [...], "papers_found": N, "papers_sampled": N, "keywords": "...", "term_hits": {term: n}, "days_back": N}`; `sources_failed` on the job. `terms` stays a list of strings.
 
-**Discover terms, 2026-10-07 (DT6–DT8, `docs/implementation_plan_2026-10-07_discover_terms.md`):** the model's instructions are `discover.system_prompt` in `llm_config.yaml` and ask for 1–3 word terms that occur word for word in the sampled papers; paper text is sent inside `<papers>` tags. `term_hits` counts sampled papers containing each term (title or full abstract, the filter's own match rule). The page shows the count on each term, flags zero-count terms without hiding them, and gives a filter created from a term the result's `days_back`.
+**Discover terms, 2026-10-07 (DT6–DT8, `docs/implementation_plan_2026-10-07_discover_terms.md`):** the model's instructions are `discover.system_prompt` in `llm_config.yaml` and ask for 1–3 word terms that occur word for word in the sampled papers; paper text is sent inside `<papers>` tags. `term_hits` counts sampled papers (those with a title, the ones the model saw; `papers_sampled`) containing each term as whole words in the title or full abstract — not the filter's substring rule, so "aging" does not count "imaging". The page shows the count on each term, flags zero-count terms without hiding them, and gives a filter created from a term the result's `days_back`.
 
 ---
 

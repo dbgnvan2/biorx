@@ -86,13 +86,14 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
                 enrich_only=lambda _r: False,
             )
 
-            prompt = build_discover_prompt(body.description, papers,
-                                           settings.max_papers)
+            prompt, sampled = build_discover_prompt(body.description, papers,
+                                                    settings.max_papers)
             if not prompt:
                 # Nothing to ask the model about. Say so, with the keywords
                 # searched, rather than returning an empty list that reads as
-                # "the model had no ideas".
-                return {"terms": [], "papers_found": 0, "keywords": keywords,
+                # "the model had no ideas". papers_found is the real number:
+                # papers with no title are found but cannot be sampled.
+                return {"terms": [], "papers_found": len(papers), "keywords": keywords,
                         "papers_sampled": 0, "term_hits": {},
                         "days_back": settings.days_back}
 
@@ -112,8 +113,8 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
             # the sample and give a filter made from a term the same window
             # (docs/implementation_plan_2026-10-07_discover_terms.md DT6, DT8).
             return {"terms": terms, "papers_found": len(papers), "keywords": keywords,
-                    "papers_sampled": len(papers[:settings.max_papers]),
-                    "term_hits": count_term_hits(terms, papers[:settings.max_papers]),
+                    "papers_sampled": len(sampled),
+                    "term_hits": count_term_hits(terms, sampled),
                     "days_back": settings.days_back}
 
     return work

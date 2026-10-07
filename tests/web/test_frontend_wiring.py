@@ -3122,6 +3122,7 @@ function fakeEl(id) {
       toggle(c, on) { on ? this.set.add(c) : this.set.delete(c); } },
     appendChild(c) { this.children.push(c); return c; },
     addEventListener(t, f) { this.listeners[t] = f; },
+    attrs: {}, setAttribute(k, v) { this.attrs[k] = String(v); },
     focus() {}, querySelectorAll() { return []; },
   };
   Object.defineProperty(el, "textContent", {
@@ -3202,6 +3203,7 @@ def _render(expression_setup):
       return { hint: c.children[0].textContent,
                last: c.children[c.children.length - 1].textContent,
                chips: chips.map(ch => ({ term: ch.dataset.term, text: ch.textContent,
+                 label: ch.attrs["aria-label"] || null,
                  title: ch.title, unmatched: ch.classList.contains("chip-unmatched") })) };
     })()""")
 
@@ -3221,6 +3223,7 @@ def test_dt8d_zero_hit_chip_is_flagged_not_hidden():
     assert zero["unmatched"] and "0 of 30" in zero["text"]
     assert "None of the 30 sampled papers" in zero["title"]
     assert not chips["loneliness"]["unmatched"] and "12 of 30" in chips["loneliness"]["text"]
+    assert chips["loneliness"]["label"] == "loneliness, in 12 of 30 sampled papers"
     # DT8.E: the count line.
     assert got["last"] == "1 of 2 terms occur in the sampled papers."
 
@@ -3231,3 +3234,10 @@ def test_dt8f_old_result_renders_without_counts():
     assert not any(c["unmatched"] for c in got["chips"])
     assert got["hint"].startswith("Click a term")
     assert "terms occur" not in got["last"]
+
+
+def test_dt8b_page_says_found_but_untitled_not_none_found():
+    code = _js_without_comments()
+    body = re.search(r"async function pollDiscover\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "papers_sampled === 0" in body
+    assert "none had a title" in body

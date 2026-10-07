@@ -13,9 +13,9 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-from src.filtering import text_group_matches
+from src.filtering import split_terms
 
 
 logger = logging.getLogger(__name__)
@@ -87,8 +87,10 @@ def query_to_keywords(query: str, stop_words: Iterable[str]) -> str:
 
 
 def build_discover_prompt(description: str, papers: List[Mapping[str, Any]],
-                          max_papers: int) -> str:
-    """The user prompt: the description, then the papers inside <papers> tags.
+                          max_papers: int) -> Tuple[str, List[Mapping[str, Any]]]:
+    """The user prompt (the description, then the papers inside <papers> tags)
+    and the papers it included. A paper with no title is left out, so the hit
+    counts are taken over the included list, not the papers found.
 
     Purpose: Build the Discover prompt without network or app state, with paper
              text kept apart from the instructions (standards L5, L9).
@@ -96,32 +98,51 @@ def build_discover_prompt(description: str, papers: List[Mapping[str, Any]],
     Tests:   tests/web/test_discover_routes.py::test_dt7c_prompt_builder_is_pure_and_delimited
     """
     parts: List[str] = []
+    included: List[Mapping[str, Any]] = []
     for p in papers[:max_papers]:
         title = (p.get("title") or "").strip()
         abstract = (p.get("abstract") or "")[:PROMPT_ABSTRACT_CHARS].strip()
         if title:
+            included.append(p)
             parts.append(f"Title: {title}")
             if abstract:
                 parts.append(f"Abstract: {abstract}")
     if not parts:
-        return ""
+        return "", []
     return (f"Research interest: {description}\n\n"
-            "<papers>\n" + "\n".join(parts) + "\n</papers>")
+            "<papers>\n" + "\n".join(parts) + "\n</papers>"), included
+
+
+def _whole_word_pattern(term: str) -> "re.Pattern[str]":
+    """A term as whole words: "aging" does not match "imaging". A trailing *
+    is a prefix of a word, as in the filter ("adolescen*")."""
+    if term.endswith("*"):
+        return re.compile(r"(?<!\w)" + re.escape(term[:-1]))
+    return re.compile(r"(?<!\w)" + re.escape(term) + r"(?!\w)")
 
 
 def count_term_hits(terms: Iterable[str],
                     papers: List[Mapping[str, Any]]) -> Dict[str, int]:
-    """How many papers contain each term in the title or full abstract.
+    """How many papers contain each term, as whole words, in the title or the
+    full abstract. Commas split a term into alternatives, as in a filter.
 
-    Purpose: Show which suggested terms occur in the sampled papers, using the
-             same match rule as a filter's "both" field.
+    The filter's own matcher (src/filtering.py match_term) is a plain
+    substring test, so "aging" would count every paper about imaging; the
+    sources search words, so this count uses whole words to say what a search
+    is likely to find.
+
+    Purpose: Show which suggested terms occur in the sampled papers.
     Spec:    docs/implementation_plan_2026-10-07_discover_terms.md#DT8.A
     Tests:   tests/web/test_discover_routes.py::test_dt8a_term_hits_counted_against_full_abstract,
-             tests/web/test_discover_routes.py::test_dt8c_on_topic_phrase_absent_from_papers_counts_zero
+             tests/web/test_discover_routes.py::test_dt8c_on_topic_phrase_absent_from_papers_counts_zero,
+             tests/web/test_discover_routes.py::test_dt8c_short_term_inside_a_longer_word_counts_zero
     """
-    return {t: sum(1 for p in papers
-                   if text_group_matches(p, {"title": "", "abstract": "", "both": t}))
-            for t in terms}
+    texts = [f"{p.get('title') or ''} {p.get('abstract') or ''}".lower() for p in papers]
+    hits: Dict[str, int] = {}
+    for term in terms:
+        patterns = [_whole_word_pattern(t) for t in split_terms(term)]
+        hits[term] = sum(1 for text in texts if any(pt.search(text) for pt in patterns))
+    return hits
 
 
 _FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | re.IGNORECASE)
