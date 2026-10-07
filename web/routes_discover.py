@@ -9,13 +9,17 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+import requests
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from src import user_store
-from src.discover import (DiscoverParseError, build_discover_prompt,
-                          count_term_hits, discover_settings, parse_terms,
+
+from src.discover import (DiscoverParseError, DiscoverSettings, build_discover_prompt,
+                          build_replace_prompt, check_terms, count_term_hits,
+                          discover_settings, europepmc_term_count, parse_terms,
                           query_to_keywords)
+from src.sources.config import polite_user_agent
 from src.jobs import Job, JobLookup
 from src.llm_providers import LLMError, NoLLMCredentialError, ProviderResponseError
 
@@ -40,6 +44,18 @@ class DiscoverRequest(BaseModel):
     api_key: str = Field(default="", max_length=500)
     provider: str = Field(default="", max_length=50)
     model: str = Field(default="", max_length=200)
+
+
+def _europepmc_counter(ctx: AppContext, settings: DiscoverSettings):
+    """term -> Europe PMC hit count (None when it could not answer). A seam
+    for tests, which must never reach the network."""
+    session = requests.Session()
+    session.headers.update({"User-Agent": polite_user_agent(ctx.sources_config)})
+
+    def count(term: str):
+        return europepmc_term_count(term, settings.days_back, session.get,
+                                    settings.check_timeout_s)
+    return count
 
 
 def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved,
@@ -94,8 +110,8 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
                 # "the model had no ideas". papers_found is the real number:
                 # papers with no title are found but cannot be sampled.
                 return {"terms": [], "papers_found": len(papers), "keywords": keywords,
-                        "papers_sampled": 0, "term_hits": {},
-                        "days_back": settings.days_back}
+                        "papers_sampled": 0, "term_hits": {}, "live_hits": {},
+                        "dropped": [], "days_back": settings.days_back}
 
             job.phase = f"Asking {resolved.provider} ({len(papers)} papers found)"
             call.model_called()
@@ -109,12 +125,56 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
                     f"{resolved.provider} did not return a list of terms ({e})."
                 ) from e
 
+            # DT9: offer only terms that find papers. Each is checked with the
+            # Europe PMC query a filter made from it sends; terms finding 0
+            # are replaced once, and those still at 0 are dropped and named.
+            # A term that could not be checked (None) is kept (P1).
+            count = _europepmc_counter(ctx, settings)
+
+            def progress(i: int, n: int):
+                job.phase = f"Checking terms in Europe PMC ({i} of {n})"
+
+            live = check_terms(terms, count, settings.check_delay_s, progress)
+            failed = [t for t in terms if live[t] == 0]
+            new_terms: List[str] = []
+            if failed:
+                job.phase = (f"Asking {resolved.provider} to replace {len(failed)} "
+                             "term(s) that found no papers")
+                try:
+                    raw2, usage2 = resolved.client.generate(
+                        build_replace_prompt(prompt, failed, settings.replace_prompt),
+                        context=settings.system_prompt)
+                    job.token_usage = job.token_usage + usage2
+                    seen = {t.lower() for t in terms}
+                    for t in parse_terms(raw2):
+                        if t.lower() not in seen:
+                            seen.add(t.lower())
+                            new_terms.append(t)
+                except (LLMError, DiscoverParseError) as e:
+                    # The first terms still stand; say what the round cost.
+                    carried = getattr(e, "usage", None)
+                    if carried is not None:
+                        job.token_usage = job.token_usage + carried
+                    logger.warning("Discover: replacement round failed: %s", e)
+                live.update(check_terms(new_terms, count, settings.check_delay_s, progress))
+
+            reason = f"0 papers in Europe PMC, last {settings.days_back} days"
+            candidates = list(dict.fromkeys(terms + new_terms))   # in order, once
+            offered = [t for t in candidates if live[t] != 0]
+            dropped = [{"term": t, "reason": reason} for t in candidates if live[t] == 0]
+            if dropped:
+                logger.info("Discover: dropped %d of %d terms that found no papers: %s",
+                            len(dropped), len(candidates),
+                            [d["term"] for d in dropped])
+
             # term_hits and days_back let the page say which terms occur in
             # the sample and give a filter made from a term the same window
             # (docs/implementation_plan_2026-10-07_discover_terms.md DT6, DT8).
-            return {"terms": terms, "papers_found": len(papers), "keywords": keywords,
+            return {"terms": offered, "papers_found": len(papers), "keywords": keywords,
                     "papers_sampled": len(sampled),
-                    "term_hits": count_term_hits(terms, sampled),
+                    "term_hits": count_term_hits(offered, sampled),
+                    "live_hits": {t: live[t] for t in offered},
+                    "dropped": dropped,
                     "days_back": settings.days_back}
 
     return work

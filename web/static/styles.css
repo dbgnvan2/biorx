@@ -132,4 +132,5 @@ body.modal-open { overflow: hidden; }
 .discover-chip:hover { border-color: var(--accent); }
 .discover-chip.chip-on { background: var(--accent); color: #fff; }
 .discover-chip .chip-count { margin-left: 6px; opacity: 0.7; font-size: 11px; }
-.discover-chip.chip-unmatched { opacity: 0.6; border: 1px dashed var(--muted); }
+.discover-chip.chip-unmatched,
+.discover-chip.chip-unchecked { opacity: 0.6; border: 1px dashed var(--muted); }

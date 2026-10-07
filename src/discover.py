@@ -12,10 +12,17 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+
+import requests
 
 from src.filtering import split_terms, wildcard_pattern
+from src.sources.base import with_retry
+from src.sources.errors import SourceUnavailableError
+from src.sources.europepmc import BASE_URL as EUROPEPMC_URL
+from src.sources.query_builder import build_europepmc_query
 
 
 logger = logging.getLogger(__name__)
@@ -29,6 +36,15 @@ FALLBACK_SYSTEM_PROMPT = (
     "in the titles or abstracts given. "
     'Respond with a JSON object: {"terms": ["term1", "term2", ...]}. '
     "No explanation, only the JSON object."
+)
+
+# Used only when llm_config.yaml has no discover.replace_prompt. {terms} is
+# replaced with the terms that found nothing.
+FALLBACK_REPLACE_PROMPT = (
+    "These terms found no papers when searched: {terms}. A multi-word term is "
+    "searched as an exact phrase. Replace each with a term of 1-3 words that "
+    "appears word for word in the titles or abstracts above. "
+    'Respond with a JSON object: {"terms": ["term1", ...]}. No explanation.'
 )
 
 # How much of each abstract the prompt carries (the hit counts use all of it).
@@ -45,6 +61,9 @@ class DiscoverSettings:
     max_papers: int
     stop_words: frozenset
     system_prompt: str
+    replace_prompt: str = FALLBACK_REPLACE_PROMPT
+    check_timeout_s: float = 15.0
+    check_delay_s: float = 0.2
 
 
 def discover_settings(config: Dict[str, Any]) -> DiscoverSettings:
@@ -58,11 +77,22 @@ def discover_settings(config: Dict[str, Any]) -> DiscoverSettings:
         logger.warning("llm_config has no discover.system_prompt — using the "
                        "built-in instructions")
         system_prompt = FALLBACK_SYSTEM_PROMPT
+    replace_prompt = str(block.get("replace_prompt") or "").strip()
+    if "{terms}" not in replace_prompt:
+        logger.warning("llm_config has no discover.replace_prompt with {terms} — "
+                       "using the built-in instructions")
+        replace_prompt = FALLBACK_REPLACE_PROMPT
+    if "check_timeout_s" not in block or "check_delay_s" not in block:
+        logger.warning("llm_config discover block has no check_timeout_s / "
+                       "check_delay_s — using 15 s and 0.2 s")
     return DiscoverSettings(
         days_back=int(block.get("days_back", 90)),
         max_papers=int(block.get("max_papers", 30)),
         stop_words=frozenset(str(w).lower() for w in block.get("stop_words", []) or []),
         system_prompt=system_prompt,
+        replace_prompt=replace_prompt,
+        check_timeout_s=float(block.get("check_timeout_s", 15.0)),
+        check_delay_s=float(block.get("check_delay_s", 0.2)),
     )
 
 
@@ -171,3 +201,73 @@ def parse_terms(raw: Optional[str], limit: int = 20) -> List[str]:
     if not isinstance(obj, dict) or not isinstance(obj.get("terms"), list):
         raise DiscoverParseError(f"no terms list in: {text[:200]!r}")
     return [str(t).strip()[:100] for t in obj["terms"] if str(t).strip()][:limit]
+
+
+# ── DT9: offer only terms that find papers ────────────────────────────────────
+# docs/implementation_plan_2026-10-07_discover_terms_verified.md
+
+def term_filter(term: str, days_back: int) -> Dict[str, Any]:
+    """The filter a click on this term creates, as far as the search sees it:
+    the term as a "both" group over the Discover window, no other limits."""
+    return {"text_groups": [{"title": "", "abstract": "", "both": term}],
+            "days_back": days_back}
+
+
+def europepmc_term_count(term: str, days_back: int, get: Callable[..., Any],
+                         timeout: float) -> Optional[int]:
+    """Papers Europe PMC returns for this term, or None when it could not say.
+
+    Purpose: Check a suggested term with the query a filter made from it sends.
+             A failure is None, never 0, so an outage does not drop good
+             terms (P1) — the adapter's get_total returns 0 on failure.
+    Spec:    docs/implementation_plan_2026-10-07_discover_terms_verified.md#DT9.A
+    Tests:   tests/web/test_discover_routes.py::test_dt9a_check_uses_the_filters_own_query,
+             tests/web/test_discover_routes.py::test_dt9a2_failed_count_is_none_not_zero
+    """
+    params = {"query": build_europepmc_query(term_filter(term, days_back)),
+              "resultType": "idlist", "pageSize": 1, "format": "json"}
+    try:
+        resp = with_retry(lambda: get(EUROPEPMC_URL, params=params, timeout=timeout),
+                          source_label="Europe PMC term check")
+    except (SourceUnavailableError, requests.RequestException) as e:
+        logger.warning("Discover: could not check %r in Europe PMC: %s", term, e)
+        return None
+    if resp.status_code != 200:
+        logger.warning("Discover: Europe PMC answered %s checking %r", resp.status_code, term)
+        return None
+    try:
+        return int(resp.json()["hitCount"])
+    except (ValueError, KeyError, TypeError) as e:
+        logger.warning("Discover: unusable Europe PMC reply checking %r: %s", term, e)
+        return None
+
+
+def check_terms(terms: List[str], count: Callable[[str], Optional[int]],
+                delay_s: float,
+                on_progress: Callable[[int, int], None] = lambda *_: None
+                ) -> Dict[str, Optional[int]]:
+    """Count each term, one request at a time with a gap between (rate limit).
+
+    Purpose: The live count for every term, in order.
+    Spec:    docs/implementation_plan_2026-10-07_discover_terms_verified.md#DT9.A
+    Tests:   tests/web/test_discover_routes.py::test_dt9f_phase_names_the_check
+    """
+    counts: Dict[str, Optional[int]] = {}
+    for i, term in enumerate(terms):
+        on_progress(i + 1, len(terms))
+        if i and delay_s > 0:
+            time.sleep(delay_s)
+        counts[term] = count(term)
+    return counts
+
+
+def build_replace_prompt(first_prompt: str, failed: List[str], template: str) -> str:
+    """The first prompt (the papers again — the model keeps no memory) with
+    the request to replace the terms that found nothing.
+
+    Purpose: Ask once for replacements of zero-hit terms.
+    Spec:    docs/implementation_plan_2026-10-07_discover_terms_verified.md#DT9.B
+    Tests:   tests/web/test_discover_routes.py::test_dt9b_zero_terms_are_replaced_once
+    """
+    listed = "; ".join(f'"{t}"' for t in failed)
+    return f"{first_prompt}\n\n{template.replace('{terms}', listed)}"

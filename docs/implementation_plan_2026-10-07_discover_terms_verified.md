@@ -2,7 +2,10 @@
 
 **Request:** "this search returns nothing.... cooperative species survival" →
 "Discover terms should return workable search phrases!"
-**Status:** PLAN — awaiting owner approval. No code written.
+**Status:** APPROVED 2026-10-07; built. DT9.A–G done (tests in `docs/spec_coverage_webapp.md`); DT9-L after deploy.
+**Deviation:** the result has no `replaced: {old: new}` map. The model returns
+a fresh list, and matching old to new by position would be a guess; the
+dropped terms are in `dropped` and the replacements simply appear in `terms`.
 **Follows:** `docs/implementation_plan_2026-10-07_discover_terms.md` (DT6–DT8, deployed `3667a15`).
 **Spec extended:** `docs/web_parity_spec_2026-09-17.md#FP1-B`.
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-07 — Discover offers only terms that find papers (DT9)
+
+From `docs/implementation_plan_2026-10-07_discover_terms_verified.md`.
+
+### Fixed
+- Discover could still offer a term that finds nothing (e.g. "cooperative
+  species survival": 0 papers in Europe PMC). Each suggested term is now
+  searched in Europe PMC with the query a filter made from it sends, over the
+  same window. Terms that find no papers are sent back to the model once for
+  replacements; terms that still find none are not offered and are listed
+  under the terms ("Not offered (found no papers): …").
+
+### Changed
+- A term button shows what a search for it finds ("1,147 in Europe PMC");
+  the count in the sampled papers moved to its tooltip. If Europe PMC does
+  not answer, the term is kept and marked "not checked".
+- Settings `discover.replace_prompt`, `check_timeout_s`, `check_delay_s` in
+  `llm_config.yaml`. At most one extra model call per run, billed with the first.
+
+
 ## 2026-10-07 — Discover Terms suggest terms that find papers
 
 From `docs/implementation_plan_2026-10-07_discover_terms.md` (DT6–DT8).

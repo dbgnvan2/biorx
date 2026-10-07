@@ -147,6 +147,19 @@ discover:
     example adolescen*), over a descriptive phrase.
     Respond with a JSON object: {"terms": ["term1", "term2", ...]}.
     No explanation, only the JSON object.
+  # Each suggested term is checked in Europe PMC with the query a filter made
+  # from it sends (DT9). Terms that find no papers are sent back once with
+  # this text ({terms} = the terms that failed); those still finding none are
+  # not offered, and the page names them.
+  replace_prompt: >-
+    These terms found no papers when searched: {terms}. A multi-word term is
+    searched as an exact phrase, so it must appear word for word. Replace each
+    with a term of 1–3 words that appears word for word in the titles or
+    abstracts above; a single word or a word stem ending in * is fine.
+    Respond with a JSON object: {"terms": ["term1", ...]}. No explanation.
+  # One count request per term, one at a time (Europe PMC rate limit).
+  check_timeout_s: 15
+  check_delay_s: 0.2
 
 # Background job workers (review A14). Searches and model calls (summaries,
 # discover, reviews) have separate pools, so long searches cannot hold every

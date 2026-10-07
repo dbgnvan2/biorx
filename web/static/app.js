@@ -2049,10 +2049,41 @@ function windowNote(filterDays, usesRange, discoverDays) {
          `the last ${discoverDays}.`;
 }
 
+/* What a chip says about its term in Europe PMC (DT9): the papers a search
+   for it returns over the Discover window, or "not checked" when Europe PMC
+   did not answer. null for a result without live counts (an older job). Pure. */
+function liveCount(term, info) {
+  const live = info && info.live_hits;
+  if (!live || !(term in live)) return null;
+  const days = info.days_back ? ` in the last ${info.days_back} days` : "";
+  if (live[term] === null || live[term] === undefined) {
+    return { checked: false, text: "not checked",
+             title: "Europe PMC did not answer, so this term was not checked." };
+  }
+  const n = Number(live[term]);
+  return { checked: true, n, text: `${n.toLocaleString("en-US")} in Europe PMC`,
+           title: `A search for this term finds ${n.toLocaleString("en-US")} ` +
+                  `papers in Europe PMC${days}.` };
+}
+
+/* The names of the terms that were not offered, for the line under the
+   chips: "a; b". Pure. */
+function droppedTermsText(info) {
+  return ((info && info.dropped) || []).map(d => d.term).join("; ");
+}
+
 function renderDiscoverChips(terms, info) {
   const container = $("discover-terms-chips");
   container.textContent = "";
-  if (!terms.length) { container.textContent = "No terms suggested."; return; }
+  if (!terms.length) {
+    const dropped = droppedTermsText(info);
+    container.textContent = dropped
+      ? `No suggested term found papers in Europe PMC` +
+        `${info.days_back ? ` in the last ${info.days_back} days` : ""}: ${dropped}. ` +
+        `Try a shorter description or different words.`
+      : "No terms suggested.";
+    return;
+  }
 
   const hint = document.createElement("p");
   hint.className = "muted small";
@@ -2064,7 +2095,7 @@ function renderDiscoverChips(terms, info) {
                      "Right-click a term to start a new filter from it.";
   container.appendChild(hint);
 
-  let counted = 0, matched = 0;
+  let counted = 0, matched = 0, unchecked = 0;
   for (const term of terms) {
     const chip = document.createElement("button");
     chip.className = "tag discover-chip";
@@ -2073,8 +2104,19 @@ function renderDiscoverChips(terms, info) {
     chip.dataset.term = term;
     chip.textContent = term;
     chip.title = "Click: add as a group · Right-click: new filter";
+    const live = liveCount(term, info);
     const count = chipCount(term, info);
-    if (count) {
+    if (live) {
+      // DT9: the count that matters is what the search finds; the sample
+      // count moves to the tooltip.
+      if (!live.checked) { unchecked++; chip.classList.add("chip-unchecked"); }
+      const badge = document.createElement("span");
+      badge.className = "chip-count";
+      badge.textContent = live.text;
+      chip.appendChild(badge);
+      chip.title = [live.title, count && count.title, chip.title].filter(Boolean).join(" ");
+      chip.setAttribute("aria-label", `${term}, ${live.text}`);
+    } else if (count) {
       counted++;
       if (count.n) matched++;
       // Flagged, not hidden (P2): the term may still find papers elsewhere.
@@ -2094,11 +2136,20 @@ function renderDiscoverChips(terms, info) {
     });
     container.appendChild(chip);
   }
-  if (counted) {
+  const notes = [];
+  if (info && info.live_hits) {
+    const dropped = droppedTermsText(info);
+    if (dropped) notes.push(`Not offered (found no papers): ${dropped}.`);
+    if (unchecked) notes.push(`Europe PMC did not answer; ${unchecked} ` +
+                              `term${unchecked === 1 ? " was" : "s were"} not checked.`);
+  } else if (counted) {
+    notes.push(`${matched} of ${counted} terms occur in the sampled papers.`);
+  }
+  for (const text of notes) {
     const line = document.createElement("p");
     line.className = "muted small";
     line.style.margin = "4px 0 0";
-    line.textContent = `${matched} of ${counted} terms occur in the sampled papers.`;
+    line.textContent = text;
     container.appendChild(line);
   }
   renderDiscoverChipState();

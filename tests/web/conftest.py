@@ -78,6 +78,15 @@ def _full_text_finders_are_offline_by_default(monkeypatch):
     monkeypatch.setattr("web.routes_summaries._FINDER_GET_JSON", lambda url, params: None)
 
 
+@pytest.fixture(autouse=True)
+def _discover_term_check_is_offline_by_default(monkeypatch):
+    """Discover checks each suggested term in Europe PMC (DT9). Every web test
+    gets "1 paper" for every term unless it sets its own counter, so none
+    reaches the network."""
+    monkeypatch.setattr("web.routes_discover._europepmc_counter",
+                        lambda ctx, settings: (lambda term: 1))
+
+
 @pytest.fixture
 def ctx(tmp_path):
     from web.deps import build_context

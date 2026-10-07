@@ -3266,7 +3266,8 @@ def test_dt6a_poll_carries_days_back_into_a_term_filter():
     assert got["savedDays"] == 7
 
 
-_RENDER = ["discoverWindowText", "chipCount", "renderDiscoverChips"]
+_RENDER = ["discoverWindowText", "chipCount", "liveCount", "droppedTermsText",
+           "renderDiscoverChips"]
 _RENDER_STUBS = """
   function renderDiscoverChipState() {}
   function addTermAsGroup() {} function createFilterFromTerm() {}
@@ -3277,11 +3278,14 @@ def _render(expression_setup):
     return _node_eval(_discover_js(*_RENDER) + [_RENDER_STUBS, expression_setup], """(() => {
       const c = $("discover-terms-chips");
       const chips = c.children.filter(ch => ch.dataset.term);
+      if (!c.children.length) return { only: c.textContent };
       return { hint: c.children[0].textContent,
+               notes: c.children.filter(ch => !ch.dataset.term).slice(1).map(ch => ch.textContent),
                last: c.children[c.children.length - 1].textContent,
                chips: chips.map(ch => ({ term: ch.dataset.term, text: ch.textContent,
                  label: ch.attrs["aria-label"] || null,
-                 title: ch.title, unmatched: ch.classList.contains("chip-unmatched") })) };
+                 title: ch.title, unmatched: ch.classList.contains("chip-unmatched"),
+                 unchecked: ch.classList.contains("chip-unchecked") })) };
     })()""")
 
 
@@ -3319,3 +3323,48 @@ def test_dt8b_page_says_found_but_untitled_not_none_found():
     assert got["rendered"] is None                  # no chips drawn
     assert "3 papers found" in got["shown"] and "none had a title" in got["shown"]
     assert "No papers found" not in got["shown"]
+
+
+# ── DT9: the page shows what a search for each term finds ─────────────────────
+# docs/implementation_plan_2026-10-07_discover_terms_verified.md
+
+_LIVE = ('{days_back: 90, papers_sampled: 30, '
+         'term_hits: {"cooperative breeding": 4, "kin selection": 0}, '
+         'live_hits: {"cooperative breeding": 1147, "kin selection": null}, '
+         'dropped: [{term: "cooperative species survival", reason: "0 papers"}]}')
+
+
+def test_dt9e_chip_shows_live_count():
+    got = _render(f'renderDiscoverChips(["cooperative breeding", "kin selection"], {_LIVE});')
+    chips = {c["term"]: c for c in got["chips"]}
+    good = chips["cooperative breeding"]
+    assert "1,147 in Europe PMC" in good["text"] and "of 30" not in good["text"]
+    assert "finds 1,147 papers in Europe PMC in the last 90 days" in good["title"]
+    assert "4 of the 30 sampled papers" in good["title"]          # sample count kept, in the tooltip
+    assert good["label"] == "cooperative breeding, 1,147 in Europe PMC"
+    assert not good["unchecked"] and not good["unmatched"]
+    # DT9.D: Europe PMC did not answer for this one — kept, labelled.
+    bad = chips["kin selection"]
+    assert "not checked" in bad["text"] and bad["unchecked"]
+    assert not bad["unmatched"]           # a sample count of 0 is not shown as a flag here
+
+
+def test_dt9e_dropped_terms_are_listed():
+    got = _render(f'renderDiscoverChips(["cooperative breeding", "kin selection"], {_LIVE});')
+    assert "cooperative species survival" not in [c["term"] for c in got["chips"]]
+    assert "Not offered (found no papers): cooperative species survival." in got["notes"]
+    assert "Europe PMC did not answer; 1 term was not checked." in got["notes"]
+    assert not any("sampled papers" in n for n in got["notes"])
+
+
+def test_dt9c2_page_says_when_every_term_was_dropped():
+    got = _render('renderDiscoverChips([], {days_back: 90, live_hits: {}, '
+                  'dropped: [{term: "x y z"}, {term: "p q r"}]});')
+    assert got["only"].startswith("No suggested term found papers in Europe PMC in the last 90 days: x y z; p q r.")
+
+
+def test_dt9e_old_result_unchanged():
+    """A result from before DT9 (no live_hits) renders the DT8 way."""
+    got = _render('renderDiscoverChips(["a"], {days_back: 90, papers_sampled: 3, term_hits: {a: 2}});')
+    assert "2 of 3" in got["chips"][0]["text"]
+    assert got["notes"] == ["1 of 1 terms occur in the sampled papers."]

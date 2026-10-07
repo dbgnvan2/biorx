@@ -500,3 +500,218 @@ def test_dt8a_wildcard_counts_agree_with_the_filter():
     for term in ("adolescen*", "adult*", "teen*", "sleep*"):
         expected = sum(1 for p in papers if match_term(term, p["title"].lower()))
         assert count_term_hits([term], papers)[term] == expected, term
+
+
+# ── DT9: offer only terms that find papers ────────────────────────────────────
+# docs/implementation_plan_2026-10-07_discover_terms_verified.md
+
+import requests
+
+from src.discover import (build_replace_prompt, check_terms, europepmc_term_count,
+                          term_filter)
+from src.tokens import TokenUsage
+
+
+class FakeResp:
+    def __init__(self, status=200, body=None, bad_json=False):
+        self.status_code, self.ok = status, status < 400
+        self._body, self._bad = body, bad_json
+
+    def json(self):
+        if self._bad:
+            raise ValueError("not JSON")
+        return self._body
+
+
+def test_dt9a_check_uses_the_filters_own_query():
+    """The query is what the Europe PMC adapter is sent for the filter a click
+    on the term creates (the page saves it with every facet at "(any)")."""
+    from src.sources.query_builder import build_europepmc_query
+    sent = []
+
+    def get(url, params, timeout):
+        sent.append((url, params, timeout))
+        return FakeResp(body={"hitCount": 1147})
+
+    assert europepmc_term_count("cooperative breeding", 90, get, 7.0) == 1147
+    url, params, timeout = sent[0]
+    page_filter = {"name": "cooperative breeding", "enabled": True, "category": "(any)",
+                   "days_back": 90, "start_date": "", "end_date": "",
+                   "text_groups": [{"title": "", "abstract": "", "both": "cooperative breeding"}],
+                   "authors": [], "institution": "", "paper_type": "(any)",
+                   "version": "(any)", "published": "(any)", "license": "(any)",
+                   "species": "(any)"}
+    assert params["query"] == build_europepmc_query(page_filter)
+    assert params["query"] == build_europepmc_query(term_filter("cooperative breeding", 90))
+    assert '"cooperative breeding"' in params["query"]
+    assert "europepmc" in url and timeout == 7.0
+
+
+@pytest.mark.parametrize("make", [
+    lambda: FakeResp(status=429),
+    lambda: FakeResp(status=404),
+    lambda: FakeResp(bad_json=True),
+    lambda: FakeResp(body={"no": "count"}),
+    lambda: (_ for _ in ()).throw(requests.ConnectionError("down")),
+    lambda: (_ for _ in ()).throw(requests.Timeout("slow")),
+])
+def test_dt9a2_failed_count_is_none_not_zero(make):
+    with patch("src.sources.base.time.sleep"):
+        assert europepmc_term_count("x", 90, lambda *a, **k: make(), 1.0) is None
+
+
+def test_dt9a2_a_real_zero_is_zero():
+    assert europepmc_term_count("x", 90, lambda *a, **k: FakeResp(body={"hitCount": 0}), 1) == 0
+
+
+def _run_checked(signed_in, ctx, replies, counts, papers=LONELY):
+    """Run Discover with a model that answers `replies` in turn and a
+    Europe PMC that answers `counts` (term -> int or None)."""
+    llm = MagicMock()
+    llm.generate.side_effect = list(replies)
+    asked = []
+
+    def counter(ctx_, settings):
+        def count(term):
+            asked.append(term)
+            return counts.get(term, 5)
+        return count
+
+    body = {"description": "cooperative species survival", "api_key": "sk-x",
+            "provider": "anthropic"}
+    with patch.object(ctx, "get_orchestrator", return_value=FakeOrchestrator(papers=papers)), \
+         patch("src.llm_providers.build_client", return_value=llm), \
+         patch("web.routes_discover._europepmc_counter", counter):
+        start = signed_in.post("/api/discover-terms", json=body)
+        assert start.status_code == 202, start.text
+        return _await(signed_in, start.json()["job_id"]), llm, asked
+
+
+def test_dt9c_zero_hit_phrase_is_not_offered(signed_in, ctx):
+    """Adversarial (P7): the owner's term. On-topic, finds nothing — never offered."""
+    body, llm, _ = _run_checked(
+        signed_in, ctx,
+        [('{"terms": ["cooperative species survival", "cooperative breeding"]}', UNCOUNTED),
+         ('{"terms": ["kin selection survival"]}', UNCOUNTED)],
+        {"cooperative species survival": 0, "cooperative breeding": 1147,
+         "kin selection survival": 0})
+    r = body["result"]
+    assert r["terms"] == ["cooperative breeding"]
+    assert r["live_hits"] == {"cooperative breeding": 1147}
+    assert [d["term"] for d in r["dropped"]] == ["cooperative species survival",
+                                                  "kin selection survival"]
+    assert r["dropped"][0]["reason"] == "0 papers in Europe PMC, last 90 days"
+
+
+def test_dt9b_zero_terms_are_replaced_once(signed_in, ctx):
+    body, llm, asked = _run_checked(
+        signed_in, ctx,
+        [('{"terms": ["cooperative species survival", "cooperation"]}', UNCOUNTED),
+         ('{"terms": ["cooperative breeding", "Cooperation"]}', UNCOUNTED)],
+        {"cooperative species survival": 0, "cooperation": 900, "cooperative breeding": 1147})
+    assert llm.generate.call_count == 2                      # exactly one more call
+    second_prompt = llm.generate.call_args_list[1].args[0]
+    assert '"cooperative species survival"' in second_prompt
+    assert "<papers>" in second_prompt                        # the papers again
+    assert '"cooperation"' not in second_prompt.split("</papers>")[1]
+    r = body["result"]
+    assert r["terms"] == ["cooperation", "cooperative breeding"]   # duplicate skipped
+    assert asked == ["cooperative species survival", "cooperation", "cooperative breeding"]
+
+
+def test_dt9b_no_replacement_round_when_every_term_finds_papers(signed_in, ctx):
+    body, llm, _ = _run_checked(signed_in, ctx, [('{"terms": ["a", "b"]}', UNCOUNTED)],
+                                {"a": 3, "b": 4})
+    assert llm.generate.call_count == 1
+    assert body["result"]["dropped"] == []
+
+
+def test_dt9b_two_model_calls_are_billed_as_one(signed_in, ctx):
+    from src import user_store as us
+    recorded = []
+    with patch.object(us, "record_spend",
+                      side_effect=lambda *a, **k: recorded.append(a[-1])):
+        _run_checked(signed_in, ctx,
+                     [('{"terms": ["dead"]}', TokenUsage(100, 10, 110, True)),
+                      ('{"terms": ["alive"]}', TokenUsage(120, 5, 125, True))],
+                     {"dead": 0, "alive": 7})
+    assert recorded == [TokenUsage(220, 15, 235, True)]
+
+
+def test_dt9b_failed_replacement_keeps_first_terms_and_their_cost(signed_in, ctx):
+    from src import user_store as us
+    from src.llm_providers import ProviderResponseError
+    recorded = []
+    err = ProviderResponseError("boom")
+    with patch.object(us, "record_spend",
+                      side_effect=lambda *a, **k: recorded.append(a[-1])):
+        body, _, _ = _run_checked(signed_in, ctx,
+                                  [('{"terms": ["dead", "alive"]}', TokenUsage(100, 10, 110, True)),
+                                   err],
+                                  {"dead": 0, "alive": 7})
+    assert body["status"] == "done"
+    assert body["result"]["terms"] == ["alive"]
+    assert [d["term"] for d in body["result"]["dropped"]] == ["dead"]
+    assert recorded and recorded[0].total == 110
+
+
+def test_dt9c2_all_dropped_is_reported(signed_in, ctx):
+    body, _, _ = _run_checked(signed_in, ctx,
+                              [('{"terms": ["x y z"]}', UNCOUNTED), ('{"terms": ["p q r"]}', UNCOUNTED)],
+                              {"x y z": 0, "p q r": 0})
+    r = body["result"]
+    assert r["terms"] == [] and len(r["dropped"]) == 2
+    assert r["papers_found"] == 2                  # not the "no papers" case
+
+
+def test_dt9d_unchecked_terms_are_kept_and_labelled(signed_in, ctx):
+    """Europe PMC failing is not "found nothing" (P1): kept, null, no replacement."""
+    body, llm, _ = _run_checked(signed_in, ctx, [('{"terms": ["a", "b"]}', UNCOUNTED)],
+                                {"a": None, "b": 12})
+    r = body["result"]
+    assert r["terms"] == ["a", "b"]
+    assert r["live_hits"] == {"a": None, "b": 12}
+    assert r["dropped"] == []
+    assert llm.generate.call_count == 1
+
+
+def test_dt9f_phase_names_the_check():
+    phases = []
+    counts = check_terms(["a", "b", "c"], lambda t: len(t), 0,
+                         lambda i, n: phases.append((i, n)))
+    assert counts == {"a": 1, "b": 1, "c": 1}
+    assert phases == [(1, 3), (2, 3), (3, 3)]
+    import inspect
+    from web import routes_discover
+    assert "Checking terms in Europe PMC (" in inspect.getsource(routes_discover)
+
+
+def test_dt9f_requests_are_spaced_by_the_configured_delay():
+    with patch("src.discover.time.sleep") as sleep:
+        check_terms(["a", "b", "c"], lambda t: 1, 0.25)
+    assert [c.args[0] for c in sleep.call_args_list] == [0.25, 0.25]
+
+
+def test_dt9g_check_settings_come_from_config(caplog):
+    s = discover_settings({"discover": {"stop_words": ["the"], "system_prompt": "S",
+                                        "replace_prompt": "R {terms}",
+                                        "check_timeout_s": 4, "check_delay_s": 0.5}})
+    assert (s.replace_prompt, s.check_timeout_s, s.check_delay_s) == ("R {terms}", 4.0, 0.5)
+    with caplog.at_level("WARNING", logger="src.discover"):
+        s = discover_settings({"discover": {"stop_words": ["the"], "system_prompt": "S",
+                                            "replace_prompt": "no placeholder"}})
+    assert "{terms}" in s.replace_prompt
+    assert any("replace_prompt" in r.getMessage() for r in caplog.records)
+    assert any("check_timeout_s" in r.getMessage() for r in caplog.records)
+
+
+def test_dt9g_repo_config_has_check_settings():
+    from src.llm_config import load_llm_config
+    block = load_llm_config()["discover"]
+    assert "{terms}" in block["replace_prompt"]
+    assert block["check_timeout_s"] > 0 and block["check_delay_s"] >= 0
+
+
+def test_dt9b_replace_prompt_lists_the_failed_terms():
+    p = build_replace_prompt("FIRST", ["a b", "c"], "Replace {terms} please")
+    assert p.startswith("FIRST") and 'Replace "a b"; "c" please' in p
