@@ -118,7 +118,11 @@ ROOT = Path(__file__).parent.parent.parent
 #   title-term request, so a slow PsyArXiv search does not look hung — status text only,
 #   no change to what is fetched or kept — W1.a required)
 # Each advance is a W1.a-flagged exception documented here and in the commit message.
-BASELINE = "667e3de"
+# Updated from 667e3de → 408deae (AND1–AND5, 2026-10-07: query_builder.py reads "a AND b"
+#   inside a term via src/search_terms.and_parts — Europe PMC/PubMed and arXiv get both parts,
+#   OSF gets the longest part; required to send the new operator to the sources, flagged in
+#   docs/implementation_plan_2026-10-07_and_terms.md)
+BASELINE = "408deae"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
