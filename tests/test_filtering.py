@@ -316,3 +316,34 @@ def test_and2_through_filter_papers():
               {"title": "Cooperation and survival", "abstract": ""}]
     kept = filter_papers(papers, {"text_groups": [_group(both="cooperati* AND survival")]})
     assert [p["title"] for p in kept] == ["Cooperation and survival"]
+
+
+# ── SW1: search within results (docs/implementation_plan_2026-10-07_search_within.md)
+
+from src.filtering import within_matches
+
+
+def test_sw1_every_term_must_match():
+    p = {"title": "Infant cortisol and sleep", "abstract": "Maternal stress study."}
+    assert within_matches(p, ["cortisol", "infant*"])
+    assert within_matches(p, ["cortisol AND maternal"])
+    assert not within_matches(p, ["cortisol", "adolescen*"])
+
+
+def test_sw1_commas_or_inside_a_term():
+    p = {"title": "Infant sleep", "abstract": ""}
+    assert within_matches(p, ["cortisol, sleep"])
+    assert not within_matches(p, ["cortisol, melatonin"])
+
+
+def test_sw1_only_title_and_abstract_count():
+    """Adversarial (P7): the word is in the journal and authors, not the text."""
+    p = {"title": "Sleep in toddlers", "abstract": "Actigraphy.",
+         "journal": "Cortisol Research", "authors": "Cortisol, A."}
+    assert not within_matches(p, ["cortisol"])
+
+
+def test_sw1_no_terms_matches_everything_and_empty_terms_are_ignored():
+    p = {"title": "x", "abstract": ""}
+    assert within_matches(p, [])
+    assert within_matches(p, ["", "  ", "AND"])

@@ -1365,7 +1365,7 @@ def test_e2_run_controls_are_wired():
     ("  cortisol, maternal ", "cortisol, maternal – 2026-09-18"),
 ])
 def test_pf1_default_list_name(label, expected):
-    got = _node_eval([_js_block(r"function defaultListName\(label, isoDate\) \{.*?\n\}")],
+    got = _node_eval([_js_block(r"function defaultListName\(label, isoDate, within\) \{.*?\n\}")],
                      f"defaultListName({label!r}, '2026-09-18')")
     assert got == expected
 
@@ -1778,6 +1778,7 @@ async function api(method, path, body) {
 }
 const job = (status) => ({ status, fetched: 3, matched: 0, phase: "", sources_failed: [] });
 function notice() {} function renderSummariesPanel() {} function renderResults() {}
+function renderWithinChips() {}
 function refreshSearchSummaries() {} function failedSourcesText() { return ""; }
 async function populateFacetSelect() {} function getSourceSelection() { return { all: true }; }
 const POLL_MS = 1000;
@@ -1815,6 +1816,8 @@ def _run_flow(body):
         _js_block(r"function stopPolling\(\) \{.*?\n\}"),
         _js_block(r"async function pollSearch\(\) \{.*?\n\}"),
         _js_block(r"async function pollSearchFor\(jobId\) \{.*?\n\}"),
+        _js_block(r"function withinQuery\(.*?\n\}"),
+        _js_block(r"function resultsUrl\(.*?\n\}"),
         _js_block(r"async function loadResults\(\) \{.*?\n\}"),
         _js_block(r"function progressText\(job\) \{.*?\n\}"),
         _js_block(r"function elapsedText\(createdAt, nowSeconds\) \{.*?\n\}"),
@@ -3387,3 +3390,150 @@ def test_and8_and_hint_under_text_boxes():
     assert and_parts("cooperati* AND survival") == ["cooperati*", "survival"]
     # The boxes the hints describe are still there.
     assert 'id="q-both"' in html and 'id="filter-text-groups"' in html
+
+
+# ── SW7/SW8: search within results, on the page ───────────────────────────────
+# docs/implementation_plan_2026-10-07_search_within.md
+
+def test_sw7_within_query_encodes_each_term():
+    fns = [_js_block(r"function withinQuery\(.*?\n\}"), _js_block(r"function resultsUrl\(.*?\n\}")]
+    url = _node_eval(fns, 'resultsUrl("J", 0, 50, ["infant* AND sleep", "a&b"])')
+    assert url == ("/api/searches/J/results?offset=0&limit=50"
+                   "&within=infant*%20AND%20sleep&within=a%26b")
+    assert _node_eval(fns, 'resultsUrl("J", 50, 50, [])') == "/api/searches/J/results?offset=50&limit=50"
+    assert _node_eval(fns, 'withinQuery(["x"], "?")') == "?within=x"
+
+
+_SW_SCRIPT = r"""
+  const notices = []; function notice(m) { notices.push(m); }
+  const state = { jobId: "J", offset: 50, within: [], total: 4, totalUnrefined: 4,
+                  checkedPapers: new Set(["doi:x"]), searchSummaries: [1], results: [] };
+  const urls = []; let failNext = false;
+  const bodies = [];
+  async function api(method, url, body) {
+    urls.push(url); bodies.push(body || null);
+    if (failNext) { failNext = false; throw new Error("expired"); }
+    const n = url.includes("within=") ? 1 : 4;
+    if (url.endsWith("/save-as-list")) return { saved: 1, requested: 1, skipped: [] };
+    if (url.endsWith("/summaries.pdf")) return { status: 500, ok: false, json: async () => ({}) };
+    return { total: n, total_unrefined: 4, within_max_terms: 10, status: "running",
+             results: [] };
+  }
+  const PAGE_SIZE = 50;
+  function renderResults() {} function refreshSearchSummaries() {}
+  function updateSaveAsListBtn() {}
+  function chips() { return $("within-chips").children.map(c => c.textContent); }
+"""
+
+
+def _sw_run(steps, extra=()):
+    import json
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    names = ["withinQuery", "resultsUrl", "loadResults", "withinNote", "renderWithinChips",
+             "addWithinTerm", "removeWithinTerm", "applyWithin", *extra]
+    script = "\n".join(_discover_js(*names)) + _SW_SCRIPT + f"""
+      (async () => {{ const out = {{}}; {steps}
+        console.log(JSON.stringify(out)); }})();"""
+    r = subprocess.run([shutil.which("node"), "-e", script], capture_output=True, text=True,
+                       timeout=20)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout.strip())
+
+
+def test_sw7_adding_a_term_reloads_page_one_and_clears_ticks():
+    got = _sw_run("""
+      $("within-input").value = "cortisol";
+      await addWithinTerm();
+      out.url = urls[0]; out.ticks = state.checkedPapers.size; out.offset = state.offset;
+      out.chips = chips(); out.note = $("within-note").textContent;
+      out.input = $("within-input").value; out.notices = notices;
+      out.summaries = state.searchSummaries.length;
+      await removeWithinTerm("cortisol");
+      out.url2 = urls[1]; out.chips2 = chips(); out.note2 = $("within-note").textContent;
+    """)
+    assert got["url"] == "/api/searches/J/results?offset=0&limit=50&within=cortisol"
+    assert got["offset"] == 0 and got["ticks"] == 0 and got["summaries"] == 0
+    assert got["chips"] == ["cortisol ×"] and got["input"] == ""
+    assert got["note"].startswith("Showing 1 of 4 results (within: cortisol).")
+    assert any("Ticked papers were cleared" in n for n in got["notices"])
+    assert got["url2"] == "/api/searches/J/results?offset=0&limit=50"
+    assert got["chips2"] == [] and got["note2"] == ""
+
+
+def test_sw7_terms_stack_with_and_and_duplicates_are_refused():
+    got = _sw_run("""
+      $("within-input").value = "cortisol"; await addWithinTerm();
+      $("within-input").value = "infant*"; await addWithinTerm();
+      $("within-input").value = "CORTISOL"; await addWithinTerm();
+      out.within = state.within; out.last = urls[urls.length - 1]; out.calls = urls.length;
+      out.notices = notices;
+    """)
+    assert got["within"] == ["cortisol", "infant*"] and got["calls"] == 2
+    assert got["last"].endswith("&within=cortisol&within=infant*")
+    assert any("already a search-within term" in n for n in got["notices"])
+
+
+def test_sw7_refused_while_the_search_runs_and_kept_on_failure():
+    got = _sw_run("""
+      state.searchRunning = true;
+      $("within-input").value = "cortisol"; await addWithinTerm();
+      out.running = { calls: urls.length, within: state.within.slice(), notices: notices.slice() };
+      state.searchRunning = false;
+      $("within-input").value = "cortisol"; await addWithinTerm();
+      failNext = true;
+      $("within-input").value = "infant*"; await addWithinTerm();
+      out.after = { within: state.within, input: $("within-input").value,
+                    disabled: $("btn-within-add").disabled, notices };
+    """)
+    assert got["running"]["calls"] == 0 and got["running"]["within"] == []
+    assert "Wait for the search to finish" in got["running"]["notices"][0]
+    assert got["after"]["within"] == ["cortisol"]            # failed add not kept
+    assert got["after"]["input"] == "infant*"                # typed text not lost
+    assert got["after"]["disabled"] is False
+    assert any("Could not search within" in n for n in got["after"]["notices"])
+
+
+def test_sw7_zero_results_note():
+    fn = [_js_block(r"function withinNote\(.*?\n\}")]
+    assert _node_eval(fn, 'withinNote(0, 183, ["a", "b"])') == \
+        "No results contain all of: a; b. Remove a term to widen."
+    assert _node_eval(fn, 'withinNote(5, 5, [])') == ""
+
+
+def test_sw7_new_search_clears_terms():
+    """Run the real startSearch far enough to see the terms cleared."""
+    got = _sw_run("""
+      state.within = ["cortisol"]; $("within-input").value = "infant";
+      globalThis.stopPolling = () => {}; globalThis.renderSummariesPanel = () => {};
+      globalThis.renderFilterRunButtons = () => {}; globalThis.searchFinished = () => {};
+      globalThis.getSourceSelection = () => ({});
+      failNext = true;
+      await startSearch({ filter: {} });
+      out.within = state.within; out.input = $("within-input").value; out.chips = chips();
+    """, extra=("startSearch",))
+    assert got == {"within": [], "input": "", "chips": []}
+
+
+def test_sw8_save_and_pdf_send_the_terms_and_name_them():
+    """Run the real saveResultsAs and saveSummariesPdf: with nothing ticked,
+    both send the search-within terms, so "all" means the refined set."""
+    got = _sw_run("""
+      state.within = ["cortisol", "infant*"]; state.searchLabel = "sleep"; state.checkedPapers.clear();
+      globalThis.reloadRefLists = async () => {}; globalThis.loadRefTab = async () => {};
+      await saveResultsAs("L");
+      await saveSummariesPdf();
+      out.bodies = bodies; out.urls = urls;
+    """, extra=("saveResultsAs", "saveSummariesPdf"))
+    save = got["bodies"][got["urls"].index("/api/searches/J/save-as-list")]
+    pdf = got["bodies"][got["urls"].index("/api/searches/J/summaries.pdf")]
+    assert save == {"name": "L", "paper_ids": None, "within": ["cortisol", "infant*"]}
+    assert pdf["within"] == ["cortisol", "infant*"] and pdf["paper_ids"] is None
+    name = _node_eval([_js_block(r"function defaultListName\(.*?\n\}")],
+                      'defaultListName("sleep", "2026-10-07", ["cortisol", "infant*"])')
+    assert name == "sleep – within cortisol; infant* – 2026-10-07"
+    plain = _node_eval([_js_block(r"function defaultListName\(.*?\n\}")],
+                       'defaultListName("sleep", "2026-10-07", [])')
+    assert plain == "sleep – 2026-10-07"

@@ -4,7 +4,11 @@
 result set. Above the Results allow the user to add new terms and search
 through the result set. Can this be done efficiently as it's like
 {previous search terms} AND {New Term}"
-**Status:** PLAN — awaiting owner approval. No code written.
+**Status:** APPROVED 2026-10-07; built. SW1–SW8 done; checked in a local browser; SW-L after deploy.
+**Changes from the plan:** the term limit is sent by the server
+(`within_max_terms`) instead of copied into the page; adding a term while the
+search runs is refused with a message (the result list is set when it
+finishes); SW4 tests are in `test_searches_routes.py`.
 **Retrieval layer untouched:** no change to any `PROTECTED` file.
 
 ---

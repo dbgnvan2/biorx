@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-10-07 — search within a search's results (SW1–SW8)
+
+From `docs/implementation_plan_2026-10-07_search_within.md`.
+
+### Added
+- A "Search within these results" box above the results. Each term added
+  becomes a chip; chips combine with AND, so the shown results are
+  {the search} AND {term 1} AND {term 2}. Same syntax as every box (commas,
+  AND, `*`), matched against title or abstract. Only the results the search
+  returned are searched; no source is asked again.
+- "Save all N results", the summaries list and the summaries PDF use the
+  narrowed results. Changing the terms clears ticked papers (with a notice);
+  a new search clears the terms.
+
+
 ## 2026-10-07 — "all of these words" in one search box (AND1–AND8)
 
 From `docs/implementation_plan_2026-10-07_and_terms.md`.

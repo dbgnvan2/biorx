@@ -113,6 +113,16 @@ an existing filter opens with its own sources, keywords and days.
 | AND6 Discover counts | `tests/web/test_discover_routes.py::test_and6_and_term_counts_need_every_part` | done |
 | AND8 page hint | `tests/web/test_frontend_wiring.py::test_and8_and_hint_under_text_boxes` | done |
 | AND-L live filter run on production | needs a signed-in browser | not done |
+| SW1 within_matches | `tests/test_filtering.py::test_sw1_*` (4) | done |
+| SW2 results route narrows and pages | `tests/web/test_searches_routes.py::test_sw2_within_narrows_and_pages`, `test_sw2_no_within_is_unchanged` | done |
+| SW3 no source calls | `test_searches_routes.py::test_sw3_within_makes_no_source_calls` | done |
+| SW4 save-as-list follows within | `test_searches_routes.py::test_sw4_*` (2) (in this file, not test_filter_test_route.py as planned) | done |
+| SW5 summaries list and PDF follow within | `test_searches_routes.py::test_sw5_summaries_and_pdf_follow_within` | done |
+| SW6 limits; 2,000 papers < 0.5 s | `test_searches_routes.py::test_sw6_limits_are_enforced`, `test_sw6_real_scale_is_fast` | done |
+| SW7 page box, chips, ticks, reset | `tests/web/test_frontend_wiring.py::test_sw7_*` (5) | done |
+| SW8 save/PDF send terms; list name | `test_frontend_wiring.py::test_sw8_save_and_pdf_send_the_terms_and_name_them` | done |
+| SW local browser check | local server, Europe PMC search `cooperati* AND survival` (16 results) → within `cancer` 10 → `+ lung` 6 → remove `cancer` 6; ticks cleared with notice; Save label "Save all 6 results"; matches `/results?within=` totals | done |
+| SW-L live check on production | needs a signed-in browser | not done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |

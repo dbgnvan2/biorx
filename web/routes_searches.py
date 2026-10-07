@@ -18,11 +18,11 @@ import logging
 import sqlite3
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from src import user_store
-from src.filtering import filter_papers, normalise_filter, without_license
+from src.filtering import filter_papers, normalise_filter, within_matches, without_license
 from src.filters_store import EMPTY_FILTER_MESSAGE, filter_has_text
 from src.jobs import Job, JobLookup
 
@@ -68,6 +68,9 @@ SEARCH_JOB_KINDS = (SEARCH_JOB_KIND, FILTER_TEST_JOB_KIND)
 MAX_RESULTS_CEILING = 2000
 DEFAULT_MAX_RESULTS = 200
 DEFAULT_PAGE_SIZE = 50
+# Search within results (SW6): how many terms, and how long each may be.
+WITHIN_MAX_TERMS = 10
+WITHIN_MAX_CHARS = 200
 MAX_PAGE_SIZE = 200
 
 
@@ -273,23 +276,59 @@ def search_status(job_id: str,
 
 @router.get("/api/searches/{job_id}/results")
 def search_results(job_id: str, offset: int = 0, limit: int = DEFAULT_PAGE_SIZE,
+                   within: List[str] = Query(default=[]),
                    ctx: AppContext = Depends(get_context),
                    user_id: str = Depends(current_user)):
     """A page of matched papers. Empty until the job is done: the result is set
-    when the job finishes."""
+    when the job finishes. `within` (repeatable) narrows the finished list to
+    papers containing every term — no source is asked again (SW2)."""
     job = _job_or_404(ctx, job_id, user_id)
+    within = _checked_within(within)
     limit = max(1, min(limit, MAX_PAGE_SIZE))
     offset = max(0, offset)
-    results = job.result or []
+    everything = job.result or []
+    results = _refined(everything, within)
     return {
         "job_id": job.id,
         "status": job.status,
         "total": len(results),
+        "total_unrefined": len(everything),
+        "within": within,
+        "within_max_terms": WITHIN_MAX_TERMS,
         "offset": offset,
         "limit": limit,
         "results": results[offset:offset + limit],
         "sources_failed": list(job.sources_failed),
     }
+
+
+def _checked_within(within: Optional[List[str]]) -> List[str]:
+    """The search-within terms, trimmed, empty ones dropped; 422 past the limits.
+
+    Purpose: Bound what a client can ask the server to match (SW6).
+    Spec:    docs/implementation_plan_2026-10-07_search_within.md#SW6
+    Tests:   tests/web/test_searches_routes.py::test_sw6_limits_are_enforced
+    """
+    terms = [t.strip() for t in (within or []) if t and t.strip()]
+    if len(terms) > WITHIN_MAX_TERMS:
+        raise HTTPException(status_code=422,
+                            detail=f"At most {WITHIN_MAX_TERMS} search-within terms.")
+    if any(len(t) > WITHIN_MAX_CHARS for t in terms):
+        raise HTTPException(status_code=422,
+                            detail=f"A search-within term is limited to {WITHIN_MAX_CHARS} characters.")
+    return terms
+
+
+def _refined(results: List[Dict[str, Any]], within: List[str]) -> List[Dict[str, Any]]:
+    """The results containing every search-within term (all of them when none).
+
+    Purpose: {the search} AND {new terms}, over what the search returned.
+    Spec:    docs/implementation_plan_2026-10-07_search_within.md#SW2
+    Tests:   tests/web/test_searches_routes.py::test_sw2_within_narrows_and_pages
+    """
+    if not within:
+        return results
+    return [p for p in results if within_matches(p, within)]
 
 
 @router.delete("/api/searches/{job_id}")
@@ -304,6 +343,7 @@ def cancel_search(job_id: str,
 class SaveAsListBody(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     paper_ids: Optional[List[str]] = None   # canonical_ids; None means save all
+    within: List[str] = Field(default_factory=list)   # SW4: "all" = the refined set
 
 
 @router.post("/api/searches/{job_id}/save-as-list", status_code=status.HTTP_201_CREATED)
@@ -318,6 +358,7 @@ def save_search_as_list(job_id: str, body: SaveAsListBody,
     so a paper that could not be stored is never dropped silently (P2).
     """
     job = _job_or_404(ctx, job_id, user_id)
+    within = _checked_within(body.within)
     if job.status != "done":
         # job.result is only set when the job finishes; saving earlier would
         # create an empty list and take the name.
@@ -325,7 +366,9 @@ def save_search_as_list(job_id: str, body: SaveAsListBody,
                             detail="The search has not finished yet.")
 
     results: List[Dict[str, Any]] = job.result or []
-    if body.paper_ids is not None:
+    if body.paper_ids is None:
+        results = _refined(results, within)
+    else:
         selected_ids = set(body.paper_ids)
         results = [p for p in results
                    if p.get("canonical_id") in selected_ids or p.get("doi") in selected_ids]
@@ -389,7 +432,8 @@ def summary_card(paper: Dict[str, Any], s: Dict[str, Any], **extra) -> Dict[str,
 
 # ── Summaries for a search's results (S1–S3, docs/implementation_plan_2026-09-18_cache_and_summaries.md)
 
-def _job_summaries(ctx: AppContext, job: Job, only_ids: Optional[List[str]] = None):
+def _job_summaries(ctx: AppContext, job: Job, only_ids: Optional[List[str]] = None,
+                   within: Optional[List[str]] = None):
     """(items, summaries) for a finished search: every result as an item, and
     the stored summary of each one that has one, keyed by paper row id.
 
@@ -397,7 +441,9 @@ def _job_summaries(ctx: AppContext, job: Job, only_ids: Optional[List[str]] = No
     nothing is inserted here.
     """
     results: List[Dict[str, Any]] = job.result or []
-    if only_ids is not None:
+    if only_ids is None:
+        results = _refined(results, within or [])       # SW5
+    else:
         wanted = set(only_ids)
         results = [p for p in results
                    if p.get("canonical_id") in wanted or p.get("doi") in wanted]
@@ -426,11 +472,14 @@ def _finished_search(ctx: AppContext, job_id: str, user_id: str) -> Job:
 
 @router.get("/api/searches/{job_id}/summaries")
 def search_summaries(job_id: str,
+                     within: List[str] = Query(default=[]),
                      ctx: AppContext = Depends(get_context),
                      user_id: str = Depends(current_user)):
-    """Stored summaries for this search's results, newest first (S1, S2)."""
+    """Stored summaries for this search's results, newest first (S1, S2);
+    with `within`, for the refined results (SW5)."""
+    within = _checked_within(within)
     job = _finished_search(ctx, job_id, user_id)
-    items, summaries = _job_summaries(ctx, job)
+    items, summaries = _job_summaries(ctx, job, within=within)
     out = [summary_card(item["paper"], summaries[item["paper"]["paper_id"]])
            for item in items        # one item per paper (_job_summaries dedupes)
            if item["paper"]["paper_id"] in summaries]
@@ -441,6 +490,7 @@ def search_summaries(job_id: str,
 class SummariesPdfBody(BaseModel):
     title: str = Field(default="", max_length=200)
     paper_ids: Optional[List[str]] = None     # canonical_ids; None = all results
+    within: List[str] = Field(default_factory=list)   # SW5: "all" = the refined set
 
 
 @router.post("/api/searches/{job_id}/summaries.pdf")
@@ -452,8 +502,9 @@ def search_summaries_pdf(job_id: str, body: SummariesPdfBody,
     from fastapi import Response
     from src.summary_pdf import build_summaries_pdf
 
+    within = _checked_within(body.within)
     job = _finished_search(ctx, job_id, user_id)
-    items, summaries = _job_summaries(ctx, job, body.paper_ids)
+    items, summaries = _job_summaries(ctx, job, body.paper_ids, within)
     title = body.title.strip() or "Search results"
     data = build_summaries_pdf(title, items, summaries)
     from src.reference_export import safe_filename

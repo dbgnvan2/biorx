@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -459,3 +459,135 @@ def test_m11_card_identical_across_endpoints(ctx, signed_in):
     list_card = dict(from_list[0])
     list_card.pop("item_id")
     assert list_card == from_search[0]
+
+
+# ── SW2–SW6: search within results ────────────────────────────────────────────
+# docs/implementation_plan_2026-10-07_search_within.md
+
+SW_PAPERS = [
+    {"canonical_id": "doi:10.9/a", "doi": "10.9/a", "title": "Infant cortisol and sleep",
+     "abstract": "Maternal stress."},
+    {"canonical_id": "doi:10.9/b", "doi": "10.9/b", "title": "Cortisol in adolescents",
+     "abstract": "Sleep loss."},
+    {"canonical_id": "doi:10.9/c", "doi": "10.9/c", "title": "Infant feeding",
+     "abstract": "Breast milk.", "journal": "Cortisol Letters"},
+    {"canonical_id": "doi:10.9/d", "doi": "10.9/d", "title": "Melatonin and infants",
+     "abstract": "Sleep onset."},
+]
+
+
+def _finished_job(ctx, client, papers=SW_PAPERS):
+    from src.jobs import JobStatus
+    me = client.get("/api/me").json()["user_id"]
+    job = ctx.jobs.submit("search", me, lambda j: [dict(p) for p in papers])
+    for _ in range(300):
+        if job.status == JobStatus.DONE:
+            return job
+        time.sleep(0.01)
+    raise AssertionError("job never finished")
+
+
+def _ids(body):
+    return [r["canonical_id"] for r in body["results"]]
+
+
+def test_sw2_within_narrows_and_pages(ctx, signed_in):
+    job = _finished_job(ctx, signed_in)
+    url = f"/api/searches/{job.id}/results"
+    one = signed_in.get(url, params={"within": ["cortisol"]}).json()
+    assert _ids(one) == ["doi:10.9/a", "doi:10.9/b"]           # not c: journal only
+    assert one["total"] == 2 and one["total_unrefined"] == 4
+    assert one["within"] == ["cortisol"]
+    two = signed_in.get(url, params={"within": ["cortisol", "infant*"]}).json()
+    assert _ids(two) == ["doi:10.9/a"]                        # AND across terms
+    alt = signed_in.get(url, params={"within": ["cortisol, melatonin", "sleep"]}).json()
+    assert _ids(alt) == ["doi:10.9/a", "doi:10.9/b", "doi:10.9/d"]
+    paged = signed_in.get(url, params={"within": ["sleep"], "offset": 1, "limit": 1}).json()
+    assert paged["total"] == 3 and _ids(paged) == ["doi:10.9/b"]
+
+
+def test_sw2_no_within_is_unchanged(ctx, signed_in):
+    job = _finished_job(ctx, signed_in)
+    body = signed_in.get(f"/api/searches/{job.id}/results").json()
+    assert body["total"] == body["total_unrefined"] == 4 and body["within"] == []
+    assert _ids(body) == [p["canonical_id"] for p in SW_PAPERS]
+
+
+def test_sw3_within_makes_no_source_calls(ctx, signed_in):
+    ctx.orchestrator = _fake_orchestrator(records=[_record("Generative Agents")])
+    job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
+    _await_status(signed_in, job_id)
+    calls = ctx.orchestrator.search.call_count
+    for terms in (["generative"], ["agents", "simulation"], ["nothing"]):
+        signed_in.get(f"/api/searches/{job_id}/results", params={"within": terms})
+    assert ctx.orchestrator.search.call_count == calls == 1
+
+
+def test_sw4_save_all_with_within_saves_the_refined_set(ctx, signed_in):
+    job = _finished_job(ctx, signed_in)
+    r = signed_in.post(f"/api/searches/{job.id}/save-as-list",
+                       json={"name": "Refined", "within": ["cortisol", "infant*"]})
+    assert r.status_code == 201, r.text
+    assert r.json()["saved"] == 1
+    items = signed_in.get(f"/api/references/{r.json()['id']}/items").json()["items"]
+    assert [i["paper"]["title"] for i in items] == ["Infant cortisol and sleep"]
+
+
+def test_sw4_ticked_papers_win_over_within(ctx, signed_in):
+    job = _finished_job(ctx, signed_in)
+    r = signed_in.post(f"/api/searches/{job.id}/save-as-list",
+                       json={"name": "Ticked", "paper_ids": ["doi:10.9/d"],
+                             "within": ["cortisol"]})
+    assert r.json()["saved"] == 1
+    items = signed_in.get(f"/api/references/{r.json()['id']}/items").json()["items"]
+    assert [i["paper"]["title"] for i in items] == ["Melatonin and infants"]
+
+
+def test_sw5_summaries_and_pdf_follow_within(ctx, signed_in):
+    for p in SW_PAPERS:
+        pid = ctx.db.insert_paper(p)
+        ctx.db.insert_summary(pid, summary_text="", key_findings=[p["title"]],
+                              source_text="full_text")
+    job = _finished_job(ctx, signed_in)
+    body = signed_in.get(f"/api/searches/{job.id}/summaries",
+                         params={"within": ["cortisol"]}).json()
+    assert body["total_results"] == 2 and len(body["summaries"]) == 2
+    from web import routes_searches
+    seen = {}
+    real = routes_searches._job_summaries
+
+    def spy(ctx_, job_, only_ids=None, within=None):
+        items, summaries = real(ctx_, job_, only_ids, within)
+        seen["titles"] = [i["paper"]["title"] for i in items]
+        return items, summaries
+    with patch.object(routes_searches, "_job_summaries", spy):
+        r = signed_in.post(f"/api/searches/{job.id}/summaries.pdf",
+                           json={"title": "x", "within": ["melatonin"]})
+    assert r.status_code == 200
+    assert seen["titles"] == ["Melatonin and infants"]
+
+
+def test_sw6_limits_are_enforced(ctx, signed_in):
+    job = _finished_job(ctx, signed_in)
+    url = f"/api/searches/{job.id}/results"
+    assert signed_in.get(url, params={"within": [f"t{i}" for i in range(11)]}).status_code == 422
+    assert signed_in.get(url, params={"within": ["x" * 201]}).status_code == 422
+    r = signed_in.post(f"/api/searches/{job.id}/save-as-list",
+                       json={"name": "Too many", "within": [f"t{i}" for i in range(11)]})
+    assert r.status_code == 422
+    ok = signed_in.get(url, params={"within": ["", "  ", "AND"]}).json()
+    assert ok["total"] == 4                                   # ignored terms
+
+
+def test_sw6_real_scale_is_fast(ctx, signed_in):
+    """P9: the cap's worth of papers (2,000), three terms."""
+    papers = [{"canonical_id": f"doi:10.9/{i}", "title": f"Paper {i} on sleep",
+               "abstract": ("cortisol " if i % 3 == 0 else "") + "infant study " * 40}
+              for i in range(2000)]
+    job = _finished_job(ctx, signed_in, papers)
+    start = time.perf_counter()
+    body = signed_in.get(f"/api/searches/{job.id}/results",
+                         params={"within": ["sleep", "cortisol", "infant* AND study"]}).json()
+    elapsed = time.perf_counter() - start
+    assert body["total"] == 667 and body["total_unrefined"] == 2000
+    assert elapsed < 0.5, elapsed

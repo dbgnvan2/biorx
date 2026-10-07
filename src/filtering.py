@@ -205,6 +205,24 @@ def text_group_matches(paper: Dict[str, Any], group: Dict[str, str]) -> bool:
     return True
 
 
+def within_matches(paper: Dict[str, Any], terms: List[str]) -> bool:
+    """A paper against search-within terms: every term must match its title
+    or abstract (commas = alternatives, AND = all parts, as in any box).
+    Empty terms, and terms that are only "AND", are ignored.
+
+    Purpose: Narrow a finished search's results without asking any source.
+    Spec:    docs/implementation_plan_2026-10-07_search_within.md#SW1
+    Tests:   tests/test_filtering.py::test_sw1_every_term_must_match,
+             tests/test_filtering.py::test_sw1_only_title_and_abstract_count
+    """
+    text = f"{(paper.get('title') or '').lower()} {(paper.get('abstract') or '').lower()}"
+    for term in terms:
+        alternatives = split_terms(term)
+        if alternatives and not any(term_matches(t, text) for t in alternatives):
+            return False
+    return True
+
+
 def filter_papers(papers: List[Dict[str, Any]], f: Dict[str, Any], *,
                   normalised: bool = False) -> List[Dict[str, Any]]:
     """Apply filter criteria to a list of papers. No API calls.

@@ -56,6 +56,8 @@ const state = {
   searchFilters: [],          // saved filters behind the Select Filter dropdown
   results: [],
   checkedPapers: new Set(),   // canonical_ids of checked search results
+  within: [],                 // search-within terms, all must match (SW)
+  totalUnrefined: 0,          // results before the search-within terms
   summarizing: new Set(),     // paperKey()s with a summary in progress
   activeTab: "search",
   sources: [],                // from /api/config
@@ -854,6 +856,10 @@ async function startSearch(payload) {
   state.fetched = 0;
   state.checkedPapers.clear();
   state.searchSummaries = [];
+  // A new search starts without search-within terms (SW7).
+  state.within = [];
+  $("within-input").value = "";
+  renderWithinChips();
   renderSummariesPanel();
   // A1: a new search starts with nothing ticked, header box included.
   $("select-all-results").checked = false;
@@ -988,23 +994,120 @@ async function cancelSearch() {
   catch (e) { notice(e.message); }
 }
 
+/* "?within=a&within=b" for the search-within terms, each encoded; "" for
+   none. Pure, for the node-run test. */
+function withinQuery(within, lead = "&") {
+  const parts = (within || []).map(t => `within=${encodeURIComponent(t)}`);
+  return parts.length ? lead + parts.join("&") : "";
+}
+
+/* The results page URL. Pure, for the node-run test. */
+function resultsUrl(jobId, offset, limit, within) {
+  return `/api/searches/${jobId}/results?offset=${offset}&limit=${limit}` +
+         withinQuery(within);
+}
+
 async function loadResults() {
   if (!state.jobId) return;
-  const page = await api(
-    "GET",
-    `/api/searches/${state.jobId}/results?offset=${state.offset}&limit=${PAGE_SIZE}`
-  );
+  const page = await api("GET", resultsUrl(state.jobId, state.offset, PAGE_SIZE, state.within));
   state.total = page.total;
+  state.totalUnrefined = page.total_unrefined ?? page.total;
+  state.withinMax = page.within_max_terms || null;   // the server's limit
   state.results = page.results;
   renderResults();
   if (page.status === "done") refreshSearchSummaries();
+}
+
+/* The line under the search-within box. Pure, for the node-run test. */
+function withinNote(total, unrefined, within) {
+  if (!within || !within.length) return "";
+  const terms = within.join("; ");
+  if (!total) return `No results contain all of: ${terms}. Remove a term to widen.`;
+  return `Showing ${total} of ${unrefined} results (within: ${terms}). ` +
+         `Only this search's results are searched.`;
+}
+
+function renderWithinChips() {
+  const box = $("within-chips");
+  box.textContent = "";
+  for (const term of state.within) {
+    const chip = document.createElement("button");
+    chip.className = "tag within-chip";
+    chip.dataset.term = term;
+    chip.textContent = `${term} ×`;
+    chip.title = "Remove this term";
+    chip.setAttribute("aria-label", `Remove ${term}`);
+    chip.addEventListener("click", () => removeWithinTerm(term));
+    box.appendChild(chip);
+  }
+  const note = withinNote(state.total, state.totalUnrefined, state.within);
+  $("within-note").textContent = note;
+  $("within-note").classList.toggle("hidden", !note);
+}
+
+async function addWithinTerm() {
+  const term = $("within-input").value.trim();
+  if (!term) return;
+  if (state.searchRunning) {
+    // The result list is set when the search finishes; before that every
+    // term would read as "no results contain it".
+    notice("Wait for the search to finish, then search within its results.", "warn");
+    return;
+  }
+  if (state.within.some(t => t.toLowerCase() === term.toLowerCase())) {
+    notice(`"${term}" is already a search-within term.`, "warn");
+    return;
+  }
+  if (state.withinMax && state.within.length >= state.withinMax) {
+    notice(`At most ${state.withinMax} search-within terms.`, "warn");
+    return;
+  }
+  const ok = await applyWithin([...state.within, term]);
+  if (ok) $("within-input").value = "";
+}
+
+async function removeWithinTerm(term) {
+  await applyWithin(state.within.filter(t => t !== term));
+}
+
+/* Show the results for these search-within terms: page 1, ticks cleared
+   (a tick on a paper no longer shown would be saved unseen). On failure the
+   old terms stay. Returns true when the new terms were applied. */
+async function applyWithin(terms) {
+  if (!state.jobId || state.withinLoading) return false;
+  const previous = state.within;
+  state.withinLoading = true;
+  $("btn-within-add").disabled = true;
+  try {
+    state.within = terms;
+    state.offset = 0;
+    const hadTicks = state.checkedPapers.size;
+    state.checkedPapers.clear();
+    $("select-all-results").checked = false;
+    state.searchSummaries = [];
+    await loadResults();
+    if (hadTicks) notice("Ticked papers were cleared because the shown results changed.", "warn");
+    return true;
+  } catch (e) {
+    state.within = previous;
+    notice(`Could not search within the results: ${e.message}`);
+    return false;
+  } finally {
+    state.withinLoading = false;
+    $("btn-within-add").disabled = false;
+    renderWithinChips();
+    updateSaveAsListBtn();
+  }
 }
 
 function renderResults() {
   const body = $("results-body");
   body.textContent = "";
   $("results-card").classList.remove("hidden");
-  $("results-heading").textContent = `Results — ${state.total} matching`;
+  $("results-heading").textContent = state.within.length
+    ? `Results — ${state.total} of ${state.totalUnrefined} matching`
+    : `Results — ${state.total} matching`;
+  renderWithinChips();
 
   const empty = $("empty-note");
   if (state.total === 0 && state.fetched > 0) {
@@ -1126,9 +1229,11 @@ function saveButtonLabel(checked, total) {
 }
 
 /* Default name for a saved list: what drove the search, and when (PF1). */
-function defaultListName(label, isoDate) {
+function defaultListName(label, isoDate, within) {
   const base = (label || "").trim() || "Search";
-  return `${base.slice(0, 150)} – ${isoDate}`;
+  const terms = (within || []).join("; ");
+  const refined = terms ? ` – within ${terms}`.slice(0, 40) : "";
+  return `${base.slice(0, 150)}${refined} – ${isoDate}`;
 }
 
 function updateSaveAsListBtn() {
@@ -1158,7 +1263,8 @@ function nextListName(name) {
    A taken name re-opens the dialog with the reason and a free name. */
 async function saveResults() {
   if (!state.jobId) { notice("No search to save."); return; }
-  let name = defaultListName(state.searchLabel, new Date().toISOString().slice(0, 10));
+  let name = defaultListName(state.searchLabel, new Date().toISOString().slice(0, 10),
+                             state.within);
   let message = "Save to Saved References as:";
   for (;;) {
     name = window.prompt(message, name);
@@ -1179,8 +1285,10 @@ async function saveResults() {
 async function saveResultsAs(name) {
   const saved = await api("POST", `/api/searches/${state.jobId}/save-as-list`, {
     name,
-    // Nothing ticked means "save all results" (null), not "save nothing".
+    // Nothing ticked means "save all results" (null), not "save nothing";
+    // with search-within terms, all of the refined results (SW4).
     paper_ids: state.checkedPapers.size ? Array.from(state.checkedPapers) : null,
+    within: state.within,
   });
   if (saved.skipped && saved.skipped.length) {
     notice(`Saved "${name}": ${saved.saved} of ${saved.requested} papers. ` +
@@ -1474,7 +1582,7 @@ async function refreshSearchSummaries() {
   if (!state.jobId) return;
   const jobId = state.jobId;
   let data;
-  try { data = await api("GET", `/api/searches/${jobId}/summaries`); }
+  try { data = await api("GET", `/api/searches/${jobId}/summaries` + withinQuery(state.within, "?")); }
   catch (e) { return; }                    // not finished, or expired: keep what we have
   if (state.jobId !== jobId) return;       // a newer search started meanwhile
   state.searchSummaries = mergeSummaries(state.searchSummaries || [], data.summaries || []);
@@ -1512,6 +1620,7 @@ async function saveSummariesPdf() {
   const body = {
     title: (state.searchLabel || "Search results").slice(0, 200),
     paper_ids: state.checkedPapers.size ? Array.from(state.checkedPapers) : null,
+    within: state.within,                 // "all" = the refined results (SW5)
   };
   let resp;
   try {
@@ -3196,6 +3305,10 @@ function wire() {
   $("next-page").addEventListener("click", () => turnPage(PAGE_SIZE));
   $("select-all-results").addEventListener("change", (e) => toggleSelectAll(e.target.checked));
   $("btn-save-as-list").addEventListener("click", saveResults);
+  $("btn-within-add").addEventListener("click", addWithinTerm);
+  $("within-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); addWithinTerm(); }
+  });
   $("btn-save-summaries-pdf").addEventListener("click", saveSummariesPdf);
 
   // Modal

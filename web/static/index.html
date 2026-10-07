@@ -140,6 +140,16 @@
           <label class="shrink small source-pick"><input id="select-all-results" type="checkbox"> All</label>
           <button id="btn-save-as-list" class="primary shrink" disabled>Save to Saved References</button>
         </div>
+        <div class="row within-row">
+          <label style="flex:1"><span class="small">Search within these results</span>
+            <input id="within-input" type="text" maxlength="200"
+              placeholder="e.g. cortisol, or infant* AND sleep"></label>
+          <div class="shrink" style="align-self:flex-end">
+            <button id="btn-within-add">Add</button>
+          </div>
+        </div>
+        <div id="within-chips" class="chips"></div>
+        <p id="within-note" class="muted small hidden"></p>
         <div id="sources-failed" class="banner warn hidden small"></div>
         <div id="enrich-problems" class="banner warn hidden small"></div>
         <p id="empty-note" class="muted small hidden"></p>
