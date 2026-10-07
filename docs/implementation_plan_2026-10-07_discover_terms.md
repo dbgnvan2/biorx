@@ -35,7 +35,7 @@ local `biorx.log` is empty.
 **Retrieval layer untouched.** No change to any file in `PROTECTED`
 (`tests/web/test_no_retrieval_drift.py`). All work is in `src/discover.py`,
 `web/routes_discover.py`, `llm_config.yaml`, `web/static/app.js`,
-`web/static/styles.css`. `src/filtering.py` is read (its `match_term`), not changed.
+`web/static/styles.css`, and `src/filtering.py` (after the QA gate: its wildcard pattern moved into a shared `wildcard_pattern`, behaviour unchanged).
 
 ---
 
