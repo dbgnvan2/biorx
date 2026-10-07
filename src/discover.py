@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-from src.filtering import split_terms
+from src.filtering import split_terms, wildcard_pattern
 
 
 logger = logging.getLogger(__name__)
@@ -117,7 +117,7 @@ def _whole_word_pattern(term: str) -> "re.Pattern[str]":
     """A term as whole words: "aging" does not match "imaging". A trailing *
     is a prefix of a word, as in the filter ("adolescen*")."""
     if term.endswith("*"):
-        return re.compile(r"(?<!\w)" + re.escape(term[:-1]))
+        return wildcard_pattern(term)
     return re.compile(r"(?<!\w)" + re.escape(term) + r"(?!\w)")
 
 

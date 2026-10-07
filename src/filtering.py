@@ -138,6 +138,15 @@ def normalize_authors(value: Any) -> List[str]:
     return out
 
 
+def wildcard_pattern(term: str) -> "re.Pattern[str]":
+    """The pattern for a term ending in '*': the rest is the start of a word.
+
+    Shared by match_term and the Discover hit counts (src/discover.py), so
+    the two cannot drift (QA gate 2026-10-07 finding 2).
+    """
+    return re.compile(r"(?<!\w)" + re.escape(term[:-1]))
+
+
 def match_term(term: str, text: str) -> bool:
     """Match a single term against text. term ending in '*' = prefix of any word.
 
@@ -150,8 +159,7 @@ def match_term(term: str, text: str) -> bool:
     Europe PMC's Lucene wildcard does. A plain term is a substring match.
     """
     if term.endswith("*"):
-        prefix = term[:-1]
-        return re.search(r"(?<!\w)" + re.escape(prefix), text) is not None
+        return wildcard_pattern(term).search(text) is not None
     return term in text
 
 

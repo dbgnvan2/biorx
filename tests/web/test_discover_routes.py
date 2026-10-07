@@ -487,3 +487,16 @@ def test_dt8b_found_but_untitled_is_not_reported_as_none_found(signed_in, ctx):
     assert body["result"]["papers_found"] == 1
     assert body["result"]["papers_sampled"] == 0
     assert body["result"]["terms"] == []
+
+
+def test_dt8a_wildcard_counts_agree_with_the_filter():
+    """QA gate 2026-10-07 finding 2: a * term counts exactly the papers the
+    filter's match_term accepts. (Plain terms differ on purpose: whole words
+    here, substring in the filter.)"""
+    from src.filtering import match_term
+    papers = [{"title": t, "abstract": ""} for t in
+              ("Stress in adolescents", "preadolescent sleep", "Adolescence", "teen-adolescent",
+               "older adults", "adultery")]
+    for term in ("adolescen*", "adult*", "teen*", "sleep*"):
+        expected = sum(1 for p in papers if match_term(term, p["title"].lower()))
+        assert count_term_hits([term], papers)[term] == expected, term

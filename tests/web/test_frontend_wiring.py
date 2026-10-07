@@ -3183,10 +3183,87 @@ def test_dt6c_shorter_window_is_named_in_the_notice():
 
 
 def test_dt6c_add_term_puts_the_note_in_its_message():
-    code = _js_without_comments()
-    body = re.search(r"async function addTermAsGroup\(term\) \{.*?\n\}", code, re.DOTALL).group(0)
-    assert "windowNote(" in body
-    assert body.count("${note}") == 2      # both save messages carry it
+    """Run addTermAsGroup: both save messages carry the note when the open
+    filter's window is shorter, and neither does when it is not."""
+    import json
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    script = "\n".join(_discover_js("windowNote", "addTermAsGroup")) + """
+      function notice() {}
+      const state = { activeFilterId: 1, filters: [], discoverDays: 90, discoverSaving: false };
+      function collectTextGroups() { return []; } function groupsHaveTerm() { return false; }
+      function groupsWithTerm() { return []; } function renderTextGroups() {}
+      const FILTER_NAME_MAX = 200; let tooLong = false;
+      function appendedFilterName(c, t) { return tooLong ? null : `${c}, ${t}`; }
+      const messages = [];
+      async function saveTermFilter(m) { messages.push(m); }
+      $("filter-name").value = "sleep";
+      (async () => {
+        $("filter-days").value = "7";
+        await addTermAsGroup("apnea");
+        tooLong = true; await addTermAsGroup("snoring"); tooLong = false;
+        $("filter-days").value = "90";
+        await addTermAsGroup("insomnia");
+        console.log(JSON.stringify(messages));
+      })();"""
+    result = subprocess.run([shutil.which("node"), "-e", script],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    appended, kept, same = json.loads(result.stdout.strip())
+    note = "This filter searches the last 7 days; these terms came from the last 90."
+    assert note in appended and "now" in appended
+    assert note in kept and "left as it is" in kept
+    assert "This filter searches" not in same
+
+
+def _poll_then_create(result_json):
+    """Run the real pollDiscover on a finished job, then the real
+    createFilterFromTerm; return the days the new filter is saved with and
+    what the chip area says."""
+    import json
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    script = "\n".join(_discover_js("pollDiscover", "newFilter", "createFilterFromTerm")) + """
+      function notice() {}
+      const state = { discoverJobId: "D", discoverPolling: 1, filters: [], discoverSaving: false };
+      globalThis.clearInterval = () => {};
+      const POLL_GIVE_UP = 8; function shouldStopPolling() { return true; }
+      async function api() { return { status: "done", result: RESULT }; }
+      function refreshTokenMeter() {} function failedSourcesText() { return ""; }
+      let rendered = null; function renderDiscoverChips(t, info) { rendered = t; }
+      const FACET_FIELDS = []; const ANY = "(any)";
+      function setFacetValue() {} function renderTextGroups() {}
+      function renderSourcePicker() {} function defaultSourceIds() { return []; }
+      function renderDiscoverChipState() {} function groupsWithTerm() { return []; }
+      function freeFilterName(t) { return t; }
+      let savedDays = null;
+      async function saveTermFilter() { savedDays = Number($("filter-days").value); }
+      (async () => {
+        await pollDiscover();
+        await createFilterFromTerm("loneliness");
+        console.log(JSON.stringify({ savedDays, rendered,
+                                     shown: $("discover-terms-chips").textContent }));
+      })();""".replace("RESULT", result_json)
+    out = subprocess.run([shutil.which("node"), "-e", script],
+                         capture_output=True, text=True, timeout=20)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout.strip())
+
+
+def test_dt6a_poll_carries_days_back_into_a_term_filter():
+    """QA gate 2026-10-07 finding 1: the server's days_back must reach the
+    filter a term click creates, through pollDiscover — not a stubbed state."""
+    got = _poll_then_create('{"terms": ["loneliness"], "papers_found": 2, '
+                            '"papers_sampled": 2, "days_back": 90, "term_hits": {"loneliness": 1}}')
+    assert got["rendered"] == ["loneliness"]
+    assert got["savedDays"] == 90
+    # An older result without days_back keeps the New filter default.
+    got = _poll_then_create('{"terms": ["loneliness"], "papers_found": 2}')
+    assert got["savedDays"] == 7
 
 
 _RENDER = ["discoverWindowText", "chipCount", "renderDiscoverChips"]
@@ -3237,7 +3314,8 @@ def test_dt8f_old_result_renders_without_counts():
 
 
 def test_dt8b_page_says_found_but_untitled_not_none_found():
-    code = _js_without_comments()
-    body = re.search(r"async function pollDiscover\(\) \{.*?\n\}", code, re.DOTALL).group(0)
-    assert "papers_sampled === 0" in body
-    assert "none had a title" in body
+    got = _poll_then_create('{"terms": [], "papers_found": 3, "papers_sampled": 0, '
+                            '"keywords": "loneliness", "days_back": 90, "term_hits": {}}')
+    assert got["rendered"] is None                  # no chips drawn
+    assert "3 papers found" in got["shown"] and "none had a title" in got["shown"]
+    assert "No papers found" not in got["shown"]

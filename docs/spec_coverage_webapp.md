@@ -88,14 +88,14 @@ an existing filter opens with its own sources, keywords and days.
 | CSV bioRxiv version | `test_references_routes.py::test_ref4_csv_uses_the_papers_biorxiv_version` | done |
 | Save-as-list: finished only, skips reported | `test_filter_test_route.py::test_sal1_running_search_cannot_be_saved`, `test_sal2_unstorable_papers_are_reported` | done |
 | Discover DT1–DT5 | `tests/web/test_discover_routes.py` (21 tests) | done |
-| DT6.A result carries the sampled window | `test_discover_routes.py::test_dt6a_result_reports_the_sampled_window` | done |
+| DT6.A result carries the sampled window, and the page reads it | `test_discover_routes.py::test_dt6a_result_reports_the_sampled_window`, `test_frontend_wiring.py::test_dt6a_poll_carries_days_back_into_a_term_filter` | done |
 | DT6.B filter from a term uses that window | `test_frontend_wiring.py::test_dt6b_term_filter_uses_discover_window` | done |
 | DT6.C shorter open-filter window named | `test_frontend_wiring.py::test_dt6c_shorter_window_is_named_in_the_notice`, `test_dt6c_add_term_puts_the_note_in_its_message` | done |
 | DT6.D hint names the window | `test_frontend_wiring.py::test_dt6d_hint_names_the_window` | done |
 | DT7.A system prompt from config | `test_discover_routes.py::test_dt7a_system_prompt_comes_from_config`, `test_dt7a_missing_system_prompt_falls_back_with_a_warning` | done |
 | DT7.B prompt asks for short verbatim terms | `test_discover_routes.py::test_dt7b_repo_prompt_asks_for_verbatim_short_terms` (instruction present; model compliance is shown per run by DT8) | done |
 | DT7.C pure, delimited prompt builder | `test_discover_routes.py::test_dt7c_prompt_builder_is_pure_and_delimited` | done |
-| DT8.A–C per-term hit counts | `test_discover_routes.py::test_dt8a_*`, `test_dt8b_*` (4), `test_dt8c_on_topic_phrase_absent_from_papers_counts_zero`, `test_dt8c_short_term_inside_a_longer_word_counts_zero` | done |
+| DT8.A–C per-term hit counts | `test_discover_routes.py::test_dt8a_*`, `test_dt8b_*` (4), `test_dt8c_on_topic_phrase_absent_from_papers_counts_zero`, `test_dt8c_short_term_inside_a_longer_word_counts_zero`, `test_dt8a_wildcard_counts_agree_with_the_filter` | done |
 | DT8.D–F zero-hit terms flagged, count line, old results | `test_frontend_wiring.py::test_dt8d_zero_hit_chip_is_flagged_not_hidden`, `test_dt8f_old_result_renders_without_counts` | done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
