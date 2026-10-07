@@ -681,9 +681,6 @@ def test_dt9f_phase_names_the_check():
                          lambda i, n: phases.append((i, n)))
     assert counts == {"a": 1, "b": 1, "c": 1}
     assert phases == [(1, 3), (2, 3), (3, 3)]
-    import inspect
-    from web import routes_discover
-    assert "Checking terms in Europe PMC (" in inspect.getsource(routes_discover)
 
 
 def test_dt9f_requests_are_spaced_by_the_configured_delay():
@@ -715,3 +712,38 @@ def test_dt9g_repo_config_has_check_settings():
 def test_dt9b_replace_prompt_lists_the_failed_terms():
     p = build_replace_prompt("FIRST", ["a b", "c"], "Replace {terms} please")
     assert p.startswith("FIRST") and 'Replace "a b"; "c" please' in p
+
+
+def test_dt9b_replacement_that_never_reached_the_model_keeps_the_cost_counted(signed_in, ctx):
+    """DT9 gate F1: an LLMError carrying UNCOUNTED never reached the model.
+    Adding it would mark the first call's known 110 tokens "not reported"."""
+    from src import user_store as us
+    from src.llm_providers import ProviderUnavailableError
+    recorded = []
+    with patch.object(us, "record_spend",
+                      side_effect=lambda *a, **k: recorded.append(a[-1])):
+        _run_checked(signed_in, ctx,
+                     [('{"terms": ["dead", "alive"]}', TokenUsage(100, 10, 110, True)),
+                      ProviderUnavailableError("down")],
+                     {"dead": 0, "alive": 7})
+    assert recorded == [TokenUsage(100, 10, 110, True)]
+
+
+def test_dt9b_replacement_that_cost_tokens_adds_them(signed_in, ctx):
+    from src import user_store as us
+    from src.llm_providers import ProviderResponseError
+    recorded = []
+    with patch.object(us, "record_spend",
+                      side_effect=lambda *a, **k: recorded.append(a[-1])):
+        _run_checked(signed_in, ctx,
+                     [('{"terms": ["dead", "alive"]}', TokenUsage(100, 10, 110, True)),
+                      ProviderResponseError("declined", usage=TokenUsage(50, 0, 50, True))],
+                     {"dead": 0, "alive": 7})
+    assert recorded == [TokenUsage(150, 10, 160, True)]
+
+
+def test_dt9f_job_phase_shows_the_check(signed_in, ctx):
+    """DT9 gate F2: the phase the job actually reported, not the source text."""
+    body, _, _ = _run_checked(signed_in, ctx, [('{"terms": ["a", "b"]}', UNCOUNTED)],
+                              {"a": 3, "b": 4})
+    assert body["phase"] == "Checking terms in Europe PMC (2 of 2)"

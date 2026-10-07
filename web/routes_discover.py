@@ -152,8 +152,11 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
                             new_terms.append(t)
                 except (LLMError, DiscoverParseError) as e:
                     # The first terms still stand; say what the round cost.
+                    # UNCOUNTED on an LLMError means the call never reached the
+                    # model, so it adds nothing and must not turn the first
+                    # call's known cost into "not reported" (DT9 gate F1).
                     carried = getattr(e, "usage", None)
-                    if carried is not None:
+                    if carried is not None and carried.counted:
                         job.token_usage = job.token_usage + carried
                     logger.warning("Discover: replacement round failed: %s", e)
                 live.update(check_terms(new_terms, count, settings.check_delay_s, progress))

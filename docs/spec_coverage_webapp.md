@@ -98,11 +98,11 @@ an existing filter opens with its own sources, keywords and days.
 | DT8.A–C per-term hit counts | `test_discover_routes.py::test_dt8a_*`, `test_dt8b_*` (4), `test_dt8c_on_topic_phrase_absent_from_papers_counts_zero`, `test_dt8c_short_term_inside_a_longer_word_counts_zero`, `test_dt8a_wildcard_counts_agree_with_the_filter` | done |
 | DT8.D–F zero-hit terms flagged, count line, old results | `test_frontend_wiring.py::test_dt8d_zero_hit_chip_is_flagged_not_hidden`, `test_dt8f_old_result_renders_without_counts` | done |
 | DT9.A, A2 live check with the filter's query; failure is None | `test_discover_routes.py::test_dt9a_check_uses_the_filters_own_query`, `test_dt9a2_failed_count_is_none_not_zero` (6 cases), `test_dt9a2_a_real_zero_is_zero` | done |
-| DT9.B one replacement round, billed as one | `test_dt9b_zero_terms_are_replaced_once`, `test_dt9b_no_replacement_round_when_every_term_finds_papers`, `test_dt9b_two_model_calls_are_billed_as_one`, `test_dt9b_failed_replacement_keeps_first_terms_and_their_cost`, `test_dt9b_replace_prompt_lists_the_failed_terms` | done |
+| DT9.B one replacement round, billed as one | `test_dt9b_zero_terms_are_replaced_once`, `test_dt9b_no_replacement_round_when_every_term_finds_papers`, `test_dt9b_two_model_calls_are_billed_as_one`, `test_dt9b_failed_replacement_keeps_first_terms_and_their_cost`, `test_dt9b_replacement_that_never_reached_the_model_keeps_the_cost_counted`, `test_dt9b_replacement_that_cost_tokens_adds_them`, `test_dt9b_replace_prompt_lists_the_failed_terms` | done |
 | DT9.C, C2 zero-hit terms not offered, named | `test_dt9c_zero_hit_phrase_is_not_offered`, `test_dt9c2_all_dropped_is_reported`, `test_frontend_wiring.py::test_dt9c2_page_says_when_every_term_was_dropped` | done |
 | DT9.D unchecked terms kept, labelled | `test_dt9d_unchecked_terms_are_kept_and_labelled`, `test_frontend_wiring.py::test_dt9e_chip_shows_live_count` | done |
 | DT9.E page shows live counts and dropped terms | `test_frontend_wiring.py::test_dt9e_chip_shows_live_count`, `test_dt9e_dropped_terms_are_listed`, `test_dt9e_old_result_unchanged` | done |
-| DT9.F phase text, request spacing | `test_dt9f_phase_names_the_check`, `test_dt9f_requests_are_spaced_by_the_configured_delay` | done |
+| DT9.F phase text, request spacing | `test_dt9f_job_phase_shows_the_check`, `test_dt9f_phase_names_the_check`, `test_dt9f_requests_are_spaced_by_the_configured_delay` | done |
 | DT9.G settings in config | `test_dt9g_check_settings_come_from_config`, `test_dt9g_repo_config_has_check_settings` | done |
 | DT9-L live check on production | needs a signed-in browser | not done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
