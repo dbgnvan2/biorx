@@ -105,6 +105,14 @@ an existing filter opens with its own sources, keywords and days.
 | DT9.F phase text, request spacing | `test_dt9f_job_phase_shows_the_check`, `test_dt9f_phase_names_the_check`, `test_dt9f_requests_are_spaced_by_the_configured_delay` | done |
 | DT9.G settings in config | `test_dt9g_check_settings_come_from_config`, `test_dt9g_repo_config_has_check_settings` | done |
 | DT9-L live check on production | needs a signed-in browser | not done |
+| AND1 parser | `tests/test_search_terms.py::test_and1_and_parts` (14 cases) | done |
+| AND2 local filter needs every part | `tests/test_filtering.py::test_and2_*` (6) | done |
+| AND3 Europe PMC / PubMed query | `tests/test_query_builder.py::test_and3_*` (3, 9 cases); live: `cooperative AND species AND survival` 1,147, `cooperati* AND survival` 6,380 (90 days, 2026-10-07) | done |
+| AND4 arXiv query | `tests/test_query_builder.py::test_and4_arxiv_queries`; live: `cooperative AND survival` 62 vs phrase 2 | done |
+| AND5 OSF title part, PsyArXiv keywords | `tests/test_query_builder.py::test_and5_*` (3) | done |
+| AND6 Discover counts | `tests/web/test_discover_routes.py::test_and6_and_term_counts_need_every_part` | done |
+| AND8 page hint | `tests/web/test_frontend_wiring.py::test_and8_and_hint_under_text_boxes` | done |
+| AND-L live filter run on production | needs a signed-in browser | not done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |

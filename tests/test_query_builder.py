@@ -372,3 +372,80 @@ def test_b2_none_dates_treated_as_missing():
     from src.sources.query_builder import get_date_range
     start, end = get_date_range({"days_back": 3, "start_date": None, "end_date": None})
     assert start and end and start < end
+
+
+# ── AND3–AND5: "a AND b" inside one term (docs/implementation_plan_2026-10-07_and_terms.md)
+
+from src.sources.query_builder import osf_title_terms
+
+
+def _text(q):
+    """The text part of a Europe PMC query, without the date clause."""
+    return q.split(" AND FIRST_PDATE")[0]
+
+
+@pytest.mark.parametrize("group, expected", [
+    ({"both": "cooperati* AND survival"}, "((cooperati* AND survival))"),
+    ({"both": "a AND b AND c"}, "((a AND b AND c))"),
+    ({"title": "cooperati* AND survival"}, "((TITLE:cooperati* AND TITLE:survival))"),
+    ({"abstract": "kin selection AND survival"},
+     '((ABSTRACT:"kin selection" AND ABSTRACT:survival))'),
+    ({"both": "cooperati* AND survival, kin selection"},
+     '(((cooperati* AND survival) OR "kin selection"))'),
+    ({"both": "anxiety and depression"}, '("anxiety and depression")'),     # lowercase: phrase
+    ({"both": "cooperative species survival"}, '("cooperative species survival")'),
+])
+def test_and3_europepmc_queries(group, expected):
+    g = {"title": "", "abstract": "", "both": "", **group}
+    assert _text(build_europepmc_query(_q([g]))) == expected
+
+
+def test_and3_europepmc_and_term_in_two_groups_and_two_fields():
+    q = _text(build_europepmc_query(_q([
+        {"title": "stress AND cortisol", "abstract": "infant*", "both": ""},
+        {"title": "", "abstract": "", "both": "sleep AND apnea"}])))
+    assert q == "((((TITLE:stress AND TITLE:cortisol)) AND (ABSTRACT:infant*)) OR ((sleep AND apnea)))"
+
+
+def test_and3_a_term_that_is_only_and_is_ignored():
+    """Same as an empty box today: no clause, never "()"."""
+    q = build_europepmc_query(_q([{"title": "", "abstract": "", "both": "AND"}]))
+    assert "()" not in q and q.startswith("FIRST_PDATE")
+    q = build_europepmc_query(_q([{"title": "", "abstract": "", "both": "AND, sleep"}]))
+    assert _text(q) == "(sleep)"
+
+
+@pytest.mark.parametrize("group, expected", [
+    ({"both": "cooperati* AND survival"}, "(all:cooperati AND all:survival)"),
+    ({"title": "kin selection AND survival"}, '(ti:"kin selection" AND ti:survival)'),
+    ({"abstract": "a AND b, c"}, "((abs:a AND abs:b) OR abs:c)"),
+])
+def test_and4_arxiv_queries(group, expected):
+    g = {"title": "", "abstract": "", "both": "", **group}
+    q = build_arxiv_query(_q([g]))
+    assert q.startswith(f"({expected}) AND submittedDate:")
+
+
+def test_and5_osf_sends_one_part_of_an_and_term():
+    fd = {"days_back": 7, "text_groups": [
+        {"title": "ant* AND cooperative breeding"}, {"title": "kin selection"}]}
+    assert osf_title_terms(fd, 10) == ["cooperative breeding", "kin selection"]
+
+
+@pytest.mark.parametrize("term", ["ant* AND cooperative breeding", "a AND bb AND c",
+                                  "survival AND cooperati*"])
+def test_and5_osf_part_is_a_superset(term):
+    """Any title that matches every part contains the part sent, so the
+    title narrowing cannot lose a match the local filter would keep."""
+    from src.filtering import term_matches
+    sent = osf_title_terms({"days_back": 7, "text_groups": [{"title": term}]}, 10)[0].lower()
+    titles = ["Ants and cooperative breeding", "a bb c", "Survival of cooperative birds",
+              "cooperative breeding only", "bb"]
+    for t in titles:
+        if term_matches(term, t.lower()):
+            assert sent in t.lower(), (term, t)
+
+
+def test_and5_psyarxiv_keywords_list_the_parts():
+    q = build_psyarxiv_query(_q([{"title": "", "abstract": "", "both": "cooperati* AND survival"}]))
+    assert q == "cooperati survival"

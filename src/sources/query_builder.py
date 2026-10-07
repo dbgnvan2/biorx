@@ -9,6 +9,9 @@ Groups are OR-joined. Within a group:
   - abstract terms → must appear in abstract
   - both terms   → must appear in title OR abstract
 
+AND inside a term ("cooperati* AND survival", uppercase): every part must
+  appear in that field (docs/implementation_plan_2026-10-07_and_terms.md AND3–AND5).
+
 Wildcard: term ending in '*' = prefix match (works natively in Europe PMC Lucene and
   in Europe PMC's bare term matches — but NOT in arXiv, which has no wildcard operator).
 """
@@ -17,14 +20,22 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
+from src.search_terms import and_parts
+
 logger = logging.getLogger(__name__)
 
 
 # ── Internal helpers ────────────────────────────────────────────────────────────
 
 def _split_terms(s: str) -> List[str]:
-    """Split comma-separated field into non-empty stripped terms."""
-    return [t.strip() for t in s.split(",") if t.strip()]
+    """Split comma-separated field into non-empty stripped terms. A term with
+    nothing but AND in it has no parts and is dropped."""
+    return [t.strip() for t in (s or "").split(",") if and_parts(t)]
+
+
+def _has_text(group: Dict[str, str]) -> bool:
+    """True when any field of the group has a usable term."""
+    return any(_split_terms(group.get(k) or "") for k in ("title", "abstract", "both"))
 
 
 def _lucene_term(term: str, field: str = "") -> str:
@@ -36,6 +47,19 @@ def _lucene_term(term: str, field: str = "") -> str:
     return f'"{safe}"' if " " in safe.rstrip("*") else safe
 
 
+def _lucene_clause(term: str, field: str = "") -> str:
+    """One comma-separated term: a single term, or its AND parts in brackets.
+
+    Purpose: Send "a AND b" to Europe PMC as both words, not one phrase.
+    Spec:    docs/implementation_plan_2026-10-07_and_terms.md#AND3
+    Tests:   tests/test_query_builder.py::test_and3_europepmc_queries
+    """
+    parts = and_parts(term)
+    if len(parts) == 1:
+        return _lucene_term(parts[0], field)
+    return "(" + " AND ".join(_lucene_term(p, field) for p in parts) + ")"
+
+
 def _group_to_lucene(group: Dict[str, str]) -> str:
     """Convert one AND-group dict to a Lucene clause string."""
     title_terms    = _split_terms(group.get("title",    ""))
@@ -45,16 +69,16 @@ def _group_to_lucene(group: Dict[str, str]) -> str:
     parts: List[str] = []
 
     if title_terms:
-        clauses = [_lucene_term(t, "TITLE") for t in title_terms]
+        clauses = [_lucene_clause(t, "TITLE") for t in title_terms]
         parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
 
     if abstract_terms:
-        clauses = [_lucene_term(t, "ABSTRACT") for t in abstract_terms]
+        clauses = [_lucene_clause(t, "ABSTRACT") for t in abstract_terms]
         parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
 
     if both_terms:
         # "both" = any field — bare term matches title OR abstract in Europe PMC
-        clauses = [_lucene_term(t) for t in both_terms]
+        clauses = [_lucene_clause(t) for t in both_terms]
         parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
 
     if not parts:
@@ -123,7 +147,7 @@ def build_europepmc_query(filter_dict: Dict[str, Any]) -> str:
 
     non_empty = [
         g for g in groups
-        if any(g.get(k, "").strip() for k in ("title", "abstract", "both"))
+        if _has_text(g)
     ]
 
     species = filter_dict.get("species", "(any)")
@@ -155,7 +179,8 @@ def build_psyarxiv_query(filter_dict: Dict[str, Any]) -> str:
     all_terms: List[str] = []
     for g in groups:
         for field in ("title", "abstract", "both"):
-            all_terms.extend(_split_terms(g.get(field, "")))
+            for t in _split_terms(g.get(field, "")):
+                all_terms.extend(and_parts(t))
 
     # Remove duplicates (case-insensitive), strip wildcards for plain-text search
     seen: set = set()
@@ -167,6 +192,15 @@ def build_psyarxiv_query(filter_dict: Dict[str, Any]) -> str:
             unique.append(clean)
 
     return " ".join(unique)
+
+
+def _osf_title_part(term: str) -> str:
+    """What one title term sends as filter[title]. For "a AND b" that is the
+    longest part: any title containing every part contains it, so nothing is
+    lost, and the local filter checks the rest (AND5)."""
+    parts = [p.rstrip("*").strip() for p in and_parts(term)]
+    parts = [p for p in parts if p]
+    return max(parts, key=len) if parts else ""
 
 
 def osf_title_terms(filter_dict: Dict[str, Any], max_terms: int) -> List[str]:
@@ -183,17 +217,18 @@ def osf_title_terms(filter_dict: Dict[str, Any], max_terms: int) -> List[str]:
     terms covers every possible match. When any group has none (or there are
     more distinct terms than max_terms), return [] so the caller fetches by
     date alone. Multi-word terms are kept whole; a trailing wildcard is
-    dropped, since filter[title] is already a contains-match.
+    dropped, since filter[title] is already a contains-match. An AND term
+    sends its longest part (AND5).
     """
     groups = filter_dict.get("text_groups") or []
     non_empty = [g for g in groups
-                 if any((g.get(k) or "").strip() for k in ("title", "abstract", "both"))]
+                 if _has_text(g)]
     if not non_empty:
         return []
     terms: List[str] = []
     seen: set = set()
     for g in non_empty:
-        title_terms = [t.rstrip("*").strip() for t in _split_terms(g.get("title") or "")]
+        title_terms = [_osf_title_part(t) for t in _split_terms(g.get("title") or "")]
         title_terms = [t for t in title_terms if t]
         if not title_terms:
             return []
@@ -288,6 +323,17 @@ def _strip_arxiv_wildcard(term: str) -> str:
     return clean
 
 
+def _arxiv_clause(term: str, prefix: str) -> str:
+    """One comma-separated term for arXiv: ti:x, or (ti:a AND ti:b) for an
+    AND term; wildcards stripped per part (AND4)."""
+    parts = [_strip_arxiv_wildcard(p) for p in and_parts(term)]
+    parts = [p for p in parts if p]
+    clauses = [f'{prefix}:"{p}"' if " " in p else f"{prefix}:{p}" for p in parts]
+    if not clauses:
+        return ""
+    return clauses[0] if len(clauses) == 1 else "(" + " AND ".join(clauses) + ")"
+
+
 def _group_to_arxiv(group: Dict[str, str]) -> str:
     """Convert one text_group to an arXiv query clause (title/abstract/both).
 
@@ -298,23 +344,16 @@ def _group_to_arxiv(group: Dict[str, str]) -> str:
     only cost is that they count against arXiv's Max results before they are
     dropped (plan 2026-09-29 T3.6).
     """
-    title_terms    = [_strip_arxiv_wildcard(t) for t in _split_terms(group.get("title",    ""))]
-    abstract_terms = [_strip_arxiv_wildcard(t) for t in _split_terms(group.get("abstract", ""))]
-    both_terms     = [_strip_arxiv_wildcard(t) for t in _split_terms(group.get("both",     ""))]
+    title_terms    = _split_terms(group.get("title",    ""))
+    abstract_terms = _split_terms(group.get("abstract", ""))
+    both_terms     = _split_terms(group.get("both",     ""))
 
     parts: List[str] = []
 
-    if title_terms:
-        clauses = [f'ti:"{t}"' if " " in t else f"ti:{t}" for t in title_terms]
-        parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
-
-    if abstract_terms:
-        clauses = [f'abs:"{t}"' if " " in t else f"abs:{t}" for t in abstract_terms]
-        parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
-
-    if both_terms:
-        clauses = [f'all:"{t}"' if " " in t else f"all:{t}" for t in both_terms]
-        parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
+    for prefix, terms in (("ti", title_terms), ("abs", abstract_terms), ("all", both_terms)):
+        clauses = [c for c in (_arxiv_clause(t, prefix) for t in terms) if c]
+        if clauses:
+            parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
 
     if not parts:
         return ""

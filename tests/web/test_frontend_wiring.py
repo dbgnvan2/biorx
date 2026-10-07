@@ -3368,3 +3368,22 @@ def test_dt9e_old_result_unchanged():
     got = _render('renderDiscoverChips(["a"], {days_back: 90, papers_sampled: 3, term_hits: {a: 2}});')
     assert "2 of 3" in got["chips"][0]["text"]
     assert got["notes"] == ["1 of 1 terms occur in the sampled papers."]
+
+
+# ── AND8: the page says what commas and AND mean ─────────────────────────────
+# docs/implementation_plan_2026-10-07_and_terms.md
+
+def test_and8_and_hint_under_text_boxes():
+    html = (APP_JS.parent / "index.html").read_text()
+    for hint_id in ("and-search", "and-filter"):
+        m = re.search(rf'<p data-hint="{hint_id}"[^>]*>(.*?)</p>', html, re.DOTALL)
+        assert m, f"{hint_id} missing"
+        text = m.group(1)
+        assert "Commas = any of these" in text or "commas = any of these" in text
+        assert "AND = all of these" in text and "cooperati* AND survival" in text
+        assert "<" not in text                    # plain text, no markup
+    # The hint example is what the parser and every source actually do.
+    from src.search_terms import and_parts
+    assert and_parts("cooperati* AND survival") == ["cooperati*", "survival"]
+    # The boxes the hints describe are still there.
+    assert 'id="q-both"' in html and 'id="filter-text-groups"' in html

@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-07 — "all of these words" in one search box (AND1–AND8)
+
+From `docs/implementation_plan_2026-10-07_and_terms.md`.
+
+### Added
+- Uppercase `AND` inside a term means every part must appear:
+  `cooperati* AND survival` finds papers with both words, in any order.
+  Commas still mean "any of these" (`a AND b, c` = (a and b) or c), and
+  lowercase "and" is still part of a phrase. Works in the Search box and in
+  every Title / Abstract / Title-or-abstract box, for Europe PMC, PubMed,
+  arXiv, PsyArXiv, SocArXiv, OSF and bioRxiv/medRxiv, and in the Discover counts.
+- A one-line hint under the Search box and the filter's text groups.
+
+### Changed
+- A saved filter with ` AND ` in a term used to search that whole term as an
+  exact phrase (and found nothing); it now requires each part. Locally this
+  affects one filter, "Bowen and Marriage" (title and abstract
+  `Bowen AND Marriage`). Filters on production were not checked from here.
+
+
 ## 2026-10-07 — Discover offers only terms that find papers (DT9)
 
 From `docs/implementation_plan_2026-10-07_discover_terms_verified.md`.

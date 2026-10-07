@@ -266,3 +266,53 @@ def test_br7_hyphenated_animal_titles_and_plural_models_still_drop():
               # Only the prefix phrase is taken out: the rest still counts.
               "An anti-mouse antibody for immunostaining in mice"]
     assert filter_papers([_t(t) for t in titles], {"species": "no-animal"}) == []
+
+
+# ── AND2: "a AND b" inside one term (docs/implementation_plan_2026-10-07_and_terms.md)
+
+def _group(**fields):
+    return {"title": "", "abstract": "", "both": "", **fields}
+
+
+def test_and2_all_parts_must_match():
+    """Adversarial (P7): mentions cooperation, not survival — must not match."""
+    g = _group(both="cooperati* AND survival")
+    only_one = {"title": "Cooperation in ant colonies", "abstract": "Foraging and nests."}
+    both_any_order = {"title": "Survival of meerkat groups",
+                      "abstract": "Cooperative breeding raises pup survival."}
+    split_fields = {"title": "Cooperative hunting", "abstract": "Survival rates rose."}
+    assert not text_group_matches(only_one, g)
+    assert text_group_matches(both_any_order, g)
+    assert text_group_matches(split_fields, g)      # title-or-abstract: either field
+
+
+def test_and2_comma_still_ors_and_terms():
+    g = _group(both="cooperati* AND survival, kin selection")
+    assert text_group_matches({"title": "Kin selection revisited", "abstract": ""}, g)
+    assert not text_group_matches({"title": "Cooperation", "abstract": "kin"}, g)
+
+
+def test_and2_title_field_needs_all_parts_in_title():
+    g = _group(title="cooperati* AND survival")
+    assert not text_group_matches({"title": "Cooperative hunting",
+                                   "abstract": "Survival rates rose."}, g)
+    assert text_group_matches({"title": "Cooperation and survival", "abstract": ""}, g)
+
+
+def test_and2_phrase_part_is_still_a_phrase():
+    g = _group(both="kin selection AND survival")
+    assert not text_group_matches({"title": "Selection of kin and survival", "abstract": ""}, g)
+    assert text_group_matches({"title": "Kin selection and survival", "abstract": ""}, g)
+
+
+def test_and2_lowercase_and_is_a_phrase():
+    g = _group(both="anxiety and depression")
+    assert not text_group_matches({"title": "Depression and anxiety", "abstract": ""}, g)
+    assert text_group_matches({"title": "Anxiety and depression in teens", "abstract": ""}, g)
+
+
+def test_and2_through_filter_papers():
+    papers = [{"title": "Cooperation in ants", "abstract": ""},
+              {"title": "Cooperation and survival", "abstract": ""}]
+    kept = filter_papers(papers, {"text_groups": [_group(both="cooperati* AND survival")]})
+    assert [p["title"] for p in kept] == ["Cooperation and survival"]

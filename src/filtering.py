@@ -20,6 +20,7 @@ import re
 from typing import Any, Dict, List
 
 from src import filter_vocabulary as vocab
+from src.search_terms import and_parts
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +107,25 @@ def without_license(f: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def split_terms(s: str) -> List[str]:
-    """Split a comma-separated field into non-empty lowercase terms."""
-    return [t.strip().lower() for t in s.split(",") if t.strip()]
+    """Split a comma-separated field into non-empty terms (alternatives).
+
+    Case is kept: an uppercase AND inside a term is an operator
+    (src/search_terms.py), so lowercasing waits until term_matches.
+    """
+    return [t.strip() for t in (s or "").split(",") if and_parts(t)]
+
+
+def term_matches(term: str, text: str) -> bool:
+    """A term against lowercase text: every AND part must match.
+
+    Purpose: "cooperati* AND survival" requires both words; a term without
+             AND matches as before.
+    Spec:    docs/implementation_plan_2026-10-07_and_terms.md#AND2
+    Tests:   tests/test_filtering.py::test_and2_all_parts_must_match,
+             tests/test_filtering.py::test_and2_comma_still_ors_and_terms
+    """
+    parts = and_parts(term)
+    return bool(parts) and all(match_term(p.lower(), text) for p in parts)
 
 
 def normalize_authors(value: Any) -> List[str]:
@@ -167,6 +185,7 @@ def text_group_matches(paper: Dict[str, Any], group: Dict[str, str]) -> bool:
     """
     A group is a set of AND conditions.
     Each field may have comma-separated terms — any term in that field matches (OR within field).
+    A term with uppercase AND needs every part (AND within a term).
     Terms ending in '*' use prefix (begins-with) matching.
     All non-empty fields must match (AND between fields).
     """
@@ -177,11 +196,11 @@ def text_group_matches(paper: Dict[str, Any], group: Dict[str, str]) -> bool:
     abstract_terms = split_terms(group.get("abstract", ""))
     both_terms     = split_terms(group.get("both",     ""))
 
-    if title_terms    and not any(match_term(t, title)              for t in title_terms):
+    if title_terms    and not any(term_matches(t, title)              for t in title_terms):
         return False
-    if abstract_terms and not any(match_term(t, abstract)           for t in abstract_terms):
+    if abstract_terms and not any(term_matches(t, abstract)           for t in abstract_terms):
         return False
-    if both_terms     and not any(match_term(t, f"{title} {abstract}") for t in both_terms):
+    if both_terms     and not any(term_matches(t, f"{title} {abstract}") for t in both_terms):
         return False
     return True
 

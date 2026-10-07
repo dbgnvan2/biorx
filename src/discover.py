@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 import requests
 
 from src.filtering import split_terms, wildcard_pattern
+from src.search_terms import and_parts
 from src.sources.base import with_retry
 from src.sources.errors import SourceUnavailableError
 from src.sources.europepmc import BASE_URL as EUROPEPMC_URL
@@ -154,7 +155,8 @@ def _whole_word_pattern(term: str) -> "re.Pattern[str]":
 def count_term_hits(terms: Iterable[str],
                     papers: List[Mapping[str, Any]]) -> Dict[str, int]:
     """How many papers contain each term, as whole words, in the title or the
-    full abstract. Commas split a term into alternatives, as in a filter.
+    full abstract. Commas split a term into alternatives and AND joins parts
+    that must all appear, as in a filter.
 
     The filter's own matcher (src/filtering.py match_term) is a plain
     substring test, so "aging" would count every paper about imaging; the
@@ -165,13 +167,18 @@ def count_term_hits(terms: Iterable[str],
     Spec:    docs/implementation_plan_2026-10-07_discover_terms.md#DT8.A
     Tests:   tests/web/test_discover_routes.py::test_dt8a_term_hits_counted_against_full_abstract,
              tests/web/test_discover_routes.py::test_dt8c_on_topic_phrase_absent_from_papers_counts_zero,
-             tests/web/test_discover_routes.py::test_dt8c_short_term_inside_a_longer_word_counts_zero
+             tests/web/test_discover_routes.py::test_dt8c_short_term_inside_a_longer_word_counts_zero,
+             tests/web/test_discover_routes.py::test_and6_and_term_counts_need_every_part
     """
     texts = [f"{p.get('title') or ''} {p.get('abstract') or ''}".lower() for p in papers]
     hits: Dict[str, int] = {}
     for term in terms:
-        patterns = [_whole_word_pattern(t) for t in split_terms(term)]
-        hits[term] = sum(1 for text in texts if any(pt.search(text) for pt in patterns))
+        # Commas: any alternative; AND inside one: every part (AND6).
+        alternatives = [[_whole_word_pattern(p.lower()) for p in and_parts(t)]
+                        for t in split_terms(term)]
+        hits[term] = sum(1 for text in texts
+                         if any(alt and all(pt.search(text) for pt in alt)
+                                for alt in alternatives))
     return hits
 
 

@@ -747,3 +747,14 @@ def test_dt9f_job_phase_shows_the_check(signed_in, ctx):
     body, _, _ = _run_checked(signed_in, ctx, [('{"terms": ["a", "b"]}', UNCOUNTED)],
                               {"a": 3, "b": 4})
     assert body["phase"] == "Checking terms in Europe PMC (2 of 2)"
+
+
+def test_and6_and_term_counts_need_every_part():
+    """docs/implementation_plan_2026-10-07_and_terms.md AND6."""
+    papers = [{"title": "Cooperation in ants", "abstract": ""},
+              {"title": "Survival of cooperative birds", "abstract": ""},
+              {"title": "Survival", "abstract": "Cooperative breeding."}]
+    hits = count_term_hits(["cooperati* AND survival", "cooperati* AND survival, ants",
+                            "Cooperative AND Survival"], papers)
+    assert hits == {"cooperati* AND survival": 2, "cooperati* AND survival, ants": 3,
+                    "Cooperative AND Survival": 2}

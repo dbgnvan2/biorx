@@ -2,7 +2,13 @@
 
 **Request:** "if I put multiple terms in the 'title or abstract' box, separated
 by a comma is that an AND search of those terms" → (no, OR) → "yes, plan the AND option".
-**Status:** PLAN — awaiting owner approval. No code written.
+**Status:** APPROVED 2026-10-07; built. AND1–AND8 done (tests in `docs/spec_coverage_webapp.md`); AND-L after deploy.
+**Found while building:** `filtering.split_terms` lowercased terms, which would
+have turned `AND` into `and`; it now keeps case and `term_matches` lowercases
+each part. The page hints use `data-hint`, not `id` (a test forbids ids no
+script reads). Affected local saved filter: "Bowen and Marriage".
+**Adjacent, not fixed:** arXiv has no wildcards, so `cooperati*` is sent as
+the non-word `cooperati` and finds 0 there (true before this change too).
 **Touches protected retrieval code:** `src/sources/query_builder.py` (W1.a,
 `tests/web/test_no_retrieval_drift.py`). This change is required to send the
 new operator to the sources; it is flagged here and the drift baseline is

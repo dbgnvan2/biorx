@@ -97,6 +97,7 @@
           <label class="shrink" style="min-width:160px"><span>Category</span>
             <select id="search-category"></select></label>
         </div>
+        <p data-hint="and-search" class="muted small term-hint">Commas = any of these. AND = all of these (e.g. cooperati* AND survival). Several words without AND are an exact phrase.</p>
         <div class="row" style="margin-top:8px">
           <label class="shrink"><span><input id="search-date-range-toggle" type="checkbox"> Use date range</span></label>
           <label class="shrink" id="search-days-wrap" style="min-width:110px"><span>Days back</span>
@@ -222,6 +223,7 @@
 
           <fieldset style="margin-top:8px">
             <legend class="small muted">Text Search Groups — OR between groups, AND within a group</legend>
+            <p data-hint="and-filter" class="muted small term-hint">In each box: commas = any of these. AND = all of these (e.g. cooperati* AND survival). Several words without AND are an exact phrase.</p>
             <div id="filter-text-groups"></div>
             <button id="btn-add-group" class="link small" style="margin-top:4px">+ Add group</button>
           </fieldset>
