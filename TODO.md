@@ -3,6 +3,15 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## AND terms gate (`docs/cycles/2026-10-07_and-terms-qa-gate.md`) — APPROVED
+
+- `_lucene_term` escapes only `"`; a part such as `OR`, `NOT`, or one with
+  `:` `(` `)` reaches Europe PMC as query syntax while the local filter reads
+  it literally. Pre-existing; Lucene-escape reserved words and characters in
+  the next query-builder change.
+- `src/search_terms.is_and_term` has no callers; delete it or use it.
+- arXiv has no wildcards: `cooperati*` is sent as `cooperati` and finds 0 there.
+
 ## From the browser run (`docs/cycles/2026-09-29_browser-run.md`)
 
 - All findings fixed (see the report). A search including bioRxiv/medRxiv
