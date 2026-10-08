@@ -21,6 +21,13 @@
 |---|---|---|
 | TG6 | One reader for every numeric setting, `src/config_values.py` (`config_int`, `config_float`). It refuses blank, text, fractions, bools, inf/nan and values below a minimum, and logs the full setting path. Every numeric read in both config files now uses it: (1) `orchestrator._page_limit` (protected); (2) `OsfPreprintAdapter._max_title_terms` (protected), so the adapter and the limit summary agree on any value (F4); (3) `fulltext.extract_limits`; (4) `paper_meta.scrape_max_chars`; (5) the summary routes' `max_downloads`; (6) `discover_settings`; (7) `llm_config` timeout, `max_text_chars` and the daily cap (0 is allowed for the cap). F3: a default above the ceiling is brought down to the ceiling. | `tests/test_config_values.py` (25: every bad shape for both readers, and each caller with inf); `tests/test_search_limits.py::test_tg1_default_above_ceiling_is_clamped`, `test_tg2_osf_terms_summary_and_adapter_agree` (calls the adapter); `test_orchestrator.py::test_br3_page_limit_bad_config_falls_back` message updated |
 
+**Re-gate (APPROVED, `docs/cycles/2026-10-08_gate-todos-regate-qa-gate.md`):**
+it found three `llm_config.yaml` reads still outside the reader and fixed
+them, with tests: `sign_in_limits._setting` (F5); the `tokens.py` estimate
+settings and rates (F6); `job_lanes` taking `true` as one worker (F7).
+Reviewed before commit; the token high bound is unchanged for the shipped
+config (12,000).
+
 **Touches protected retrieval code (TG6, flagged):** `src/sources/orchestrator.py`
 (`_page_limit`) and `src/sources/osf.py` (`_max_title_terms`). Each now reads its
 setting through the shared reader; a value that was valid before reads the same.
