@@ -1809,6 +1809,8 @@ def _run_flow(body):
         _js_block(r"async function loadSearchFilters\(\) \{.*?\n\}"),
         _js_block(r"function filterRunLabel\(filterId, run\) \{.*?\n\}"),
         _js_block(r"function renderFilterRunButtons\(\) \{.*?\n\}"),
+        _js_block(r"function filterRunLimitText\(filter, limits\) \{.*?\n\}"),
+        _js_block(r"function filterFields\(f\) \{.*?\n\}"),
         _js_block(r"function runSelectedFilter\(\) \{.*?\n\}"),
         '$("btn-run-filter").onclick = runSelectedFilter;',
         _js_block(r"async function startSearch\(payload\) \{.*?\n\}"),
@@ -3126,6 +3128,7 @@ function fakeEl(id) {
     appendChild(c) { this.children.push(c); return c; },
     addEventListener(t, f) { this.listeners[t] = f; },
     attrs: {}, setAttribute(k, v) { this.attrs[k] = String(v); },
+    append(...cs) { for (const c of cs) this.children.push(c); },
     focus() {}, querySelectorAll() { return []; },
   };
   Object.defineProperty(el, "textContent", {
@@ -3624,3 +3627,131 @@ def test_bw6_poll_passes_the_notes():
                        timeout=20)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout.strip()) == ["note one"]
+
+
+# ── WS5 / FL: the summary block and the per-filter limit on the page ─────────
+# docs/implementation_plan_2026-10-08_limits_and_warnings.md
+
+_SUMMARY = ('{heading: "Results are incomplete — 2 sources could not be read in full.", '
+            'next_step: "Most useful next step: untick PubMed (it is part of Europe PMC).", '
+            'rows: [{source: "europepmc", label: "Europe PMC", counts: "read 200 of 2,391 matches", '
+            'action: "<b>Narrow</b> the words."}, {source: "pubmed", label: "PubMed", '
+            'counts: "read 200 of 1,204 matches", action: "Part of Europe PMC — untick it."}], '
+            'limit: 200, ceiling: 2000}')
+
+
+def test_ws5_summary_block():
+    got = _node_eval(_discover_js("renderLimitSummary"), f"""(() => {{
+      const box = $("sources-failed");
+      renderLimitSummary(box, {_SUMMARY}, false);
+      const adHoc = box.children.map(c => c.textContent);
+      const rows = box.children.find(c => c.className === "limit-rows").children
+        .map(r => r.children.map(c => c.textContent));
+      renderLimitSummary(box, {_SUMMARY}, true);
+      return {{ adHoc, rows, saved: box.children[box.children.length - 1].textContent }};
+    }})()""")
+    assert got["adHoc"][0] == "Results are incomplete — 2 sources could not be read in full."
+    assert got["adHoc"][1].startswith("Most useful next step: untick PubMed")
+    assert got["rows"] == [["Europe PMC", "read 200 of 2,391 matches", "<b>Narrow</b> the words."],
+                           ["PubMed", "read 200 of 1,204 matches", "Part of Europe PMC — untick it."]]
+    assert got["adHoc"][-1] == ("Limit for this search: 200 papers per source — change it in the "
+                                "Papers read per source box above.")
+    assert got["saved"] == ("Limit for this search: 200 papers per source — change it in Filters "
+                            "(Papers read per source).")
+
+
+def test_ws5_poll_uses_the_summary_not_the_old_paragraph():
+    import json
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    script = "\n".join(_discover_js("renderJobNotes", "renderLimitSummary", "failedSourcesText",
+                                      "pollSearchFor")) + f"""
+      function notice() {{}}
+      const state = {{ jobId: "j", polling: 1, pollFailures: 0, filterRun: null }};
+      async function api() {{ return {{ status: "running", phase: "x", fetched: 0, total: 0,
+          sources_failed: ["europepmc", "pubmed"], source_problems: {{"Europe PMC": "had more"}},
+          notes: [], limit_summary: {_SUMMARY} }}; }}
+      function progressText() {{ return "p"; }} function elapsedText() {{ return ""; }}
+      function enrichProblemsText() {{ return ""; }}
+      const POLL_GIVE_UP = 8; function shouldStopPolling() {{ return true; }}
+      (async () => {{ await pollSearchFor("j");
+        console.log(JSON.stringify($("sources-failed").textContent)); }})();"""
+    r = subprocess.run([shutil.which("node"), "-e", script], capture_output=True, text=True,
+                       timeout=20)
+    assert r.returncode == 0, r.stderr
+    text = json.loads(r.stdout.strip())
+    assert text.startswith("Results are incomplete — 2 sources")
+    assert "had more" not in text                      # the old run-on paragraph
+
+
+def test_fl6_run_limit_line():
+    fns = [_js_block(r"function filterFields\(f\) \{.*?\n\}"),
+           _js_block(r"function filterRunLimitText\(filter, limits\) \{.*?\n\}")]
+    lim = "{default: 200, ceiling: 2000}"
+    assert _node_eval(fns, f"filterRunLimitText({{max_results: 1500}}, {lim})") == \
+        "Reads up to 1,500 papers per source — set in Filters."
+    assert _node_eval(fns, f"filterRunLimitText({{}}, {lim})") == \
+        "Reads up to 200 papers per source — set in Filters."
+    assert _node_eval(fns, f"filterRunLimitText(undefined, {lim})") == ""
+
+
+def test_fl5_limits_come_from_config_not_the_page():
+    html = (APP_JS.parent / "index.html").read_text()
+    for el in ("q-max", "filter-max"):
+        tag = re.search(rf'<input id="{el}"[^>]*>', html).group(0)
+        assert "200" not in tag and "2000" not in tag, tag
+    got = _node_eval(_discover_js("applySearchLimits") + ["""
+      const state = {}; function renderFilterRunButtons() {}"""], """(() => {
+      applySearchLimits({default: 150, ceiling: 900});
+      return [$("q-max").value, $("q-max").max, $("filter-max").max, $("filter-max").placeholder];
+    })()""")
+    assert got == [150, 900, 900, "150"]
+
+
+def test_fl2_saved_filter_run_sends_no_limit():
+    """Run the real startSearch: a saved filter sends no max_results; an ad
+    hoc search sends the box's value."""
+    import json
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    script = "\n".join(_discover_js("startSearch")) + """
+      function notice() {} const sent = [];
+      const state = { checkedPapers: new Set(), within: [] };
+      async function api(m, p, body) { sent.push(body); throw new Error("stop"); }
+      function stopPolling() {} function renderWithinChips() {} function renderSummariesPanel() {}
+      function renderJobNotes() {} function renderFilterRunButtons() {} function searchFinished() {}
+      function getSourceSelection() { return {all: true}; }
+      (async () => {
+        $("q-max").value = "750";
+        await startSearch({ filter_id: 4 });
+        await startSearch({ filter: { days_back: 7 } });
+        $("q-max").value = "";
+        await startSearch({ filter: { days_back: 7 } });
+        console.log(JSON.stringify(sent));
+      })();"""
+    r = subprocess.run([shutil.which("node"), "-e", script], capture_output=True, text=True,
+                       timeout=20)
+    assert r.returncode == 0, r.stderr
+    saved, ad_hoc, empty = json.loads(r.stdout.strip())
+    assert "max_results" not in saved and saved["filter_id"] == 4
+    assert ad_hoc["max_results"] == 750
+    assert "max_results" not in empty                  # the server's default
+
+
+def test_fl1_editor_reads_and_writes_the_limit():
+    code = _js_without_comments()
+    build = re.search(r"function buildFilterDict\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    got = _node_eval(_discover_js("buildFilterDict") + ["""
+      const FACET_FIELDS = []; const ANY = "(any)";
+      function collectTextGroups() { return []; } function getSourceSelection() { return {}; }"""],
+      """(() => {
+        $("filter-days").value = "7";
+        $("filter-max").value = "1200"; const a = buildFilterDict();
+        $("filter-max").value = "";     const b = buildFilterDict();
+        return [a.max_results, "max_results" in b];
+      })()""")
+    assert got == [1200, False]

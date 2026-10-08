@@ -86,6 +86,7 @@
             <button id="btn-run-filter" class="primary">Run</button>
           </div>
         </div>
+        <p id="filter-run-limit" class="muted small" style="margin:4px 0 0"></p>
       </div>
 
       <!-- Search controls -->
@@ -106,8 +107,8 @@
             <label class="shrink"><span>From</span><input id="search-start-date" type="date"></label>
             <label class="shrink"><span>To</span><input id="search-end-date" type="date"></label>
           </span>
-          <label class="shrink" style="min-width:110px"><span>Max results</span>
-            <input id="q-max" type="number" value="200" min="1" max="2000"></label>
+          <label class="shrink" style="min-width:110px"><span>Papers read per source</span>
+            <input id="q-max" type="number" min="1"></label>
           <div class="shrink">
             <button id="run-search" class="primary">Search</button>
             <button id="cancel-search" disabled>Stop</button>
@@ -221,6 +222,8 @@
             <label class="shrink"><span><input id="filter-date-range-toggle" type="checkbox"> Use date range</span></label>
             <label class="shrink" id="filter-days-wrap"><span>Days back</span>
               <input id="filter-days" type="number" value="7" min="1" max="3650"></label>
+            <label class="shrink" style="min-width:150px"><span>Papers read per source</span>
+              <input id="filter-max" type="number" min="1"></label>
             <span id="filter-date-range-wrap" class="hidden row">
               <label class="shrink"><span>From</span><input id="filter-start-date" type="date"></label>
               <label class="shrink"><span>To</span><input id="filter-end-date" type="date"></label>

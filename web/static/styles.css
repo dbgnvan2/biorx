@@ -139,3 +139,9 @@ body.modal-open { overflow: hidden; }
 .within-row { margin-bottom: 4px; }
 .within-chip { border: 1px solid var(--accent); font: inherit; font-size: 12px; margin: 2px; cursor: pointer; }
 .job-note { margin: 4px 0 0; }
+.limit-heading { font-weight: 600; margin: 0 0 4px; }
+.limit-step { margin: 0 0 6px; }
+.limit-rows { display: grid; gap: 4px; margin: 0 0 6px; }
+.limit-row { display: grid; grid-template-columns: minmax(110px, 160px) minmax(140px, 1fr) 2fr; gap: 8px; }
+.limit-where { margin: 0; }
+@media (max-width: 640px) { .limit-row { grid-template-columns: 1fr; gap: 0; margin-bottom: 4px; } }

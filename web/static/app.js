@@ -570,6 +570,49 @@ function enrichProblemsText(job) {
     : "";
 }
 
+/* WS5: the "results are incomplete" block — heading, the most useful next
+   step, one row per source (read N of M, and what to do), and the limit with
+   where to change it. Built by the server (src/limit_summary.py); textContent
+   only. */
+function renderLimitSummary(box, summary, savedFilter) {
+  box.textContent = "";
+  const heading = document.createElement("p");
+  heading.className = "limit-heading";
+  heading.textContent = summary.heading || "Results are incomplete.";
+  box.appendChild(heading);
+  if (summary.next_step) {
+    const step = document.createElement("p");
+    step.className = "limit-step";
+    step.textContent = summary.next_step;
+    box.appendChild(step);
+  }
+  const table = document.createElement("div");
+  table.className = "limit-rows";
+  for (const row of summary.rows || []) {
+    const line = document.createElement("div");
+    line.className = "limit-row";
+    const label = document.createElement("strong");
+    label.textContent = row.label;
+    const counts = document.createElement("span");
+    counts.className = "limit-counts";
+    counts.textContent = row.counts;
+    const action = document.createElement("span");
+    action.className = "limit-action";
+    action.textContent = row.action;
+    line.append(label, counts, action);
+    table.appendChild(line);
+  }
+  box.appendChild(table);
+  if (summary.limit) {
+    const limit = document.createElement("p");
+    limit.className = "limit-where";
+    limit.textContent = `Limit for this search: ${Number(summary.limit).toLocaleString("en-US")} ` +
+      `papers per source — change it ` +
+      (savedFilter ? "in Filters (Papers read per source)." : "in the Papers read per source box above.");
+    box.appendChild(limit);
+  }
+}
+
 function failedSourcesText(job) {
   const problems = job.source_problems || {};
   const names = Object.keys(problems);
@@ -581,10 +624,23 @@ function failedSourcesText(job) {
 
 /* ── Sources ─────────────────────────────────────────────────────────────── */
 
+/* FL5: the limit's default and maximum come from the server's config; the
+   page holds no copy. The ad hoc box starts at the default; the filter
+   editor shows it as the placeholder (an empty box = the default). */
+function applySearchLimits(limits) {
+  if (!limits || !limits.default || !limits.ceiling) return;
+  state.searchLimits = limits;
+  if (!$("q-max").value) $("q-max").value = limits.default;
+  for (const id of ["q-max", "filter-max"]) $(id).max = limits.ceiling;
+  $("filter-max").placeholder = String(limits.default);
+  renderFilterRunButtons();
+}
+
 async function loadSources() {
   try {
     const health = await api("GET", "/api/config");     // signed-in only (M7)
     state.sources = (health.sources || []).filter(s => s.enabled);
+    applySearchLimits(health.search_limits);
     state.findByTitleDefault = health.find_by_title_default !== false;
     $("find-by-title").checked = findByTitle() !== false;
     if (health.startup_warnings && health.startup_warnings.length) {
@@ -774,6 +830,17 @@ function renderFilterRunButtons() {
   btn.textContent = filterRunLabel(sel.value, state.filterRun);
   btn.disabled = state.searchRunning || !sel.value;
   sel.disabled = state.searchRunning;
+  const f = (state.searchFilters || []).find(x => String(x.id) === String(sel.value));
+  $("filter-run-limit").textContent = filterRunLimitText(f, state.searchLimits);
+}
+
+/* FL6: "Reads up to 750 papers per source — set in Filters." for the saved
+   filter picked to run; "" with none picked. Pure, for the node-run test. */
+function filterRunLimitText(filter, limits) {
+  if (!filter) return "";
+  const n = filterFields(filter).max_results || (limits && limits.default);
+  return n ? `Reads up to ${Number(n).toLocaleString("en-US")} papers per source — set in Filters.`
+           : "";
 }
 
 /* One failed status check is not a failed job: it is still running on the
@@ -883,8 +950,11 @@ async function startSearch(payload) {
   // The Search panel's source boxes belong to the manual search. A saved
   // filter runs on the sources saved with it, so none are sent and the server
   // uses the filter's own (issue 1, 2026-09-18).
+  // FL2: only an ad hoc search sends a limit; a saved filter runs with its
+  // own (set in Filters), and an empty box means the server's default.
+  const adHocLimit = Number($("q-max").value);
   const body = Object.assign(
-    { max_results: Number($("q-max").value) || 200 },
+    payload.filter && adHocLimit ? { max_results: adHocLimit } : {},
     payload.filter ? { source_selection: getSourceSelection($("search-sources")) } : {},
     payload,
   );
@@ -940,7 +1010,10 @@ async function pollSearchFor(jobId) {
     $("progress").max = job.total;
     $("progress").value = job.fetched;
   }
-  if (job.sources_failed && job.sources_failed.length) {
+  if (job.limit_summary) {
+    renderLimitSummary($("sources-failed"), job.limit_summary, state.filterRun != null);
+    $("sources-failed").classList.remove("hidden");
+  } else if (job.sources_failed && job.sources_failed.length) {
     $("sources-failed").textContent = failedSourcesText(job);
     $("sources-failed").classList.remove("hidden");
   }
@@ -1771,6 +1844,7 @@ function selectFilter(filterId) {
   $("filter-days-wrap").classList.toggle("hidden", useRange);
   $("filter-date-range-wrap").classList.toggle("hidden", !useRange);
   $("filter-days").value = fd.days_back || 7;
+  $("filter-max").value = fd.max_results || "";        // empty = the default (FL1)
   $("filter-start-date").value = startDate;
   $("filter-end-date").value   = endDate;
 
@@ -1880,6 +1954,8 @@ function buildFilterDict() {
   } else {
     f.days_back = Number($("filter-days").value) || 7;
   }
+  const limit = $("filter-max").value.trim();
+  if (limit) f.max_results = Number(limit);           // FL1; checked by the server
   for (const [elId, facet] of FACET_FIELDS) {
     const val = $(elId).value;
     if (val && val !== ANY) f[facet] = val;
@@ -1892,6 +1968,7 @@ async function newFilter() {
   $("filter-name").value = "New filter";
   $("filter-enabled").checked = true;
   $("filter-days").value = 7;
+  $("filter-max").value = "";
   $("filter-date-range-toggle").checked = false;
   $("filter-days-wrap").classList.remove("hidden");
   $("filter-date-range-wrap").classList.add("hidden");

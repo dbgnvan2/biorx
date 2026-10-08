@@ -3,7 +3,17 @@
 **Request:** "plan the clearer warning summary and actions to take. And it's not
 clear that 'limit' can be set outside of an ad hoc search. This should be part
 of the FILTER settings."
-**Status:** PLAN — awaiting owner approval. No code written.
+**Status:** APPROVED 2026-10-08; built. WS1–WS7, FL1–FL6 done; FL-L after deploy.
+**Found in the WS7 local browser check** (broad `cooperation`, 90 days, five
+sources): the summary was built only when the search, enrichment included,
+ended, so the old paragraph showed for minutes; it is now rebuilt as each
+source reports (`test_ws1_summary_shown_while_the_search_runs`). The old
+`truncated` wording said "Max results"; renamed. Counts are papers *read*
+(PubMed read 400 against a limit of 200: the limit counts new papers, and most
+PubMed papers were already found by Europe PMC). PsyArXiv/SocArXiv reported no
+total for a date-only read ("total not reported").
+**Changes from the plan:** limit logic lives in `src/search_limits.py` (the
+monitor must not import the web app).
 **Touches protected retrieval code:** `src/sources/orchestrator.py` (WS2: one
 optional callback carrying read/total counts; nothing fetched, merged or kept
 changes) — W1.a, flagged; drift baseline advanced once.

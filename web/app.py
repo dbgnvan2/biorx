@@ -163,6 +163,7 @@ def create_app(ctx: AppContext = None) -> FastAPI:
         orch = c.get_orchestrator()
         enabled_sources = orch.get_enabled_sources() if orch else []
         from src.sources.config import get_default_selected_sources, source_label
+        from .routes_searches import search_limits
         server_defaults = set(get_default_selected_sources(c.sources_config or {}))
         sources_list = [
             {"id": sid, "label": source_label(sid), "enabled": True,
@@ -179,6 +180,9 @@ def create_app(ctx: AppContext = None) -> FastAPI:
             "startup_warnings": list(c.startup_warnings) + _codes_file_warning(c),
             "codes_in_use": bool(c.codes and c.codes.entries()),
             "sources": sources_list,
+            # FL5: the page takes the limit's default and maximum from here.
+            "search_limits": dict(zip(("default", "ceiling"),
+                                      search_limits(c.sources_config))),
             # Where summaries look for free full text (plan 2026-09-19 C4).
             # Unpaywall needs a contact email; without one it is not listed.
             "full_text_finders": _full_text_finders(c.sources_config or {}),

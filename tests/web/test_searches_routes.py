@@ -341,7 +341,7 @@ def test_one_user_cannot_read_or_cancel_anothers_search(ctx, app):
     ("rate-limited", "limiting how fast"),
     ("error", "unexpected error"),
     ("partial", "part-way"),
-    ("truncated", "raise Max results"),     # B1
+    ("truncated", "raise the limit"),       # B1 (renamed from "Max results", FL)
     ("something-new", "could not be reached"),     # unknown kind: honest fallback
 ])
 def test_d2_failure_reason_from_config(kind, expect):
@@ -646,3 +646,130 @@ def test_td7_dates_fixed_once(ctx, signed_in):
     assert fd["end_date"] == today.isoformat()
     assert fd["start_date"] == (today - timedelta(days=30)).isoformat()
     assert "last 21 days" in body["notes"][0]          # 30 days > 21: the note used these dates
+
+
+# ── WS1 / FL: limits and the incomplete-results summary ──────────────────────
+# docs/implementation_plan_2026-10-08_limits_and_warnings.md
+
+def _limited_orchestrator(limits, failures):
+    """A fake that reports truncated sources through the real callbacks and
+    records the max_results it was given."""
+    orch = MagicMock()
+    orch.seen_max = []
+
+    def search(filter_dict=None, source_selection=None, max_results=200, **kw):
+        orch.seen_max.append(max_results)
+        for name, kind in failures:
+            kw["on_source_failure"](name, kind)
+        for name, read, total in limits:
+            kw["on_source_limit"](name, read, total, False)
+        return []
+    orch.search.side_effect = search
+    orch.resolve_active_sources = lambda sel: ["europepmc", "pubmed", "arxiv"]
+    return orch
+
+
+def test_ws1_limits_on_the_job(ctx, signed_in):
+    ctx.orchestrator = _limited_orchestrator(
+        [("europepmc", 200, 2391), ("pubmed", 200, 1204)],
+        [("europepmc", "truncated"), ("pubmed", "truncated")])
+    job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
+    body = _await_status(signed_in, job_id)
+    s = body["limit_summary"]
+    assert s["heading"] == "Results are incomplete — 2 sources could not be read in full."
+    rows = {r["source"]: r for r in s["rows"]}
+    assert rows["europepmc"]["counts"] == "read 200 of 2,391 matches"
+    assert rows["pubmed"]["action"] == "Part of Europe PMC — untick it."
+    assert body["max_results"] == 200 and s["limit"] == 200
+
+
+def test_ws1_no_summary_when_nothing_was_cut(ctx, signed_in):
+    ctx.orchestrator = _limited_orchestrator([], [])
+    job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
+    assert _await_status(signed_in, job_id)["limit_summary"] is None
+
+
+def test_fl2_saved_filter_uses_its_limit(ctx, signed_in):
+    ctx.orchestrator = _limited_orchestrator([], [])
+    fid = signed_in.post("/api/filters", json={"name": "Limited",
+                                               "filter": {**FILTER, "max_results": 750}}).json()["id"]
+    # The ad hoc box's value (sent by an old page) must not win.
+    job_id = signed_in.post("/api/searches", json={"filter_id": fid, "max_results": 50}).json()["job_id"]
+    _await_status(signed_in, job_id)
+    assert ctx.orchestrator.seen_max == [750]
+
+
+def test_fl2_old_filter_without_a_limit_uses_the_default(ctx, signed_in):
+    ctx.orchestrator = _limited_orchestrator([], [])
+    fid = signed_in.post("/api/filters", json={"name": "Old", "filter": FILTER}).json()["id"]
+    job_id = signed_in.post("/api/searches", json={"filter_id": fid}).json()["job_id"]
+    _await_status(signed_in, job_id)
+    assert ctx.orchestrator.seen_max == [200]
+
+
+def test_fl2_ad_hoc_uses_the_box(ctx, signed_in):
+    ctx.orchestrator = _limited_orchestrator([], [])
+    job_id = signed_in.post("/api/searches", json={"filter": FILTER, "max_results": 1500}).json()["job_id"]
+    _await_status(signed_in, job_id)
+    assert ctx.orchestrator.seen_max == [1500]
+    assert signed_in.post("/api/searches", json={"filter": FILTER, "max_results": 2001}).status_code == 400
+
+
+def test_fl3_filter_test_uses_its_limit(ctx, signed_in):
+    ctx.orchestrator = _limited_orchestrator([], [])
+    fid = signed_in.post("/api/filters", json={"name": "T",
+                                               "filter": {**FILTER, "max_results": 333}}).json()["id"]
+    job_id = signed_in.post(f"/api/filters/{fid}/test").json()["job_id"]
+    _await_status(signed_in, job_id)
+    assert ctx.orchestrator.seen_max == [333]
+
+
+@pytest.mark.parametrize("bad", [0, 2001, "lots", 1.5, True])
+def test_fl1_bad_limit_refused_on_save(ctx, signed_in, bad):
+    r = signed_in.post("/api/filters", json={"name": f"Bad {bad}", "filter": {**FILTER, "max_results": bad}})
+    assert r.status_code == 400 and "from 1 to 2,000" in r.json()["detail"]
+
+
+def test_fl1_limit_saved_and_read_back(ctx, signed_in):
+    fid = signed_in.post("/api/filters", json={"name": "Keep", "filter": {**FILTER, "max_results": "600"}}).json()["id"]
+    got = [f for f in signed_in.get("/api/filters").json()["filters"] if f["id"] == fid][0]
+    stored = got.get("filter", got)
+    assert stored["max_results"] == 600
+    r = signed_in.put(f"/api/filters/{fid}", json={"name": "Keep", "filter": {**FILTER, "max_results": 2001}})
+    assert r.status_code == 400
+
+
+def test_fl5_limits_from_config(ctx, signed_in):
+    from web.routes_searches import search_limits
+    assert search_limits(ctx.sources_config) == (200, 2000)
+    assert search_limits({"search": {"default_max_results": 50, "max_results_ceiling": 400}}) == (50, 400)
+    cfg = signed_in.get("/api/config").json()
+    assert cfg["search_limits"] == {"default": 200, "ceiling": 2000}
+
+
+def test_ws1_summary_shown_while_the_search_runs(ctx, signed_in):
+    """The summary is on the job as soon as a source reports, not only after
+    the whole search (and enrichment) ends — seen in the local browser check."""
+    import threading
+    release = threading.Event()
+    orch = _limited_orchestrator([("europepmc", 200, 929)], [("europepmc", "truncated")])
+    inner = orch.search.side_effect
+
+    def slow(**kw):
+        inner(**kw)
+        release.wait(5)            # the rest of the search / enrichment
+        return []
+    orch.search.side_effect = slow
+    ctx.orchestrator = orch
+    job_id = signed_in.post("/api/searches", json={"filter": FILTER}).json()["job_id"]
+    try:
+        for _ in range(200):
+            body = signed_in.get(f"/api/searches/{job_id}").json()
+            if body.get("limit_summary"):
+                break
+            time.sleep(0.01)
+        assert body["status"] == "running"
+        assert body["limit_summary"]["rows"][0]["counts"] == "read 200 of 929 matches"
+    finally:
+        release.set()
+    _await_status(signed_in, job_id)

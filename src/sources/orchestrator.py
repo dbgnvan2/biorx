@@ -182,6 +182,7 @@ class SourceOrchestrator:
         on_enrich_progress: Optional[Callable[[int, int], None]] = None,
         on_enrich_problem: Optional[Callable[[str, int, int], None]] = None,
         on_source_failure: Optional[Callable[[str, str], None]] = None,
+        on_source_limit: Optional[Callable[[str, int, Optional[int], bool], None]] = None,
     ) -> List[CanonicalRecord]:
         """
         Execute a multi-source search and return deduplicated CanonicalRecords.
@@ -279,6 +280,7 @@ class SourceOrchestrator:
                     max_results=budget,
                     on_status=on_status,
                     on_source_failure=on_source_failure,
+                    on_source_limit=on_source_limit,
                     counts=counts,
                 )
                 total_fetched += fetched
@@ -395,6 +397,7 @@ class SourceOrchestrator:
         on_status: Optional[Callable] = None,
         on_source_failure: Optional[Callable[[str, str], None]] = None,
         counts: Optional[Dict[str, int]] = None,
+        on_source_limit: Optional[Callable[[str, int, Optional[int], bool], None]] = None,
     ) -> int:
         """Paginate through a single source and add results to dedup. Returns count fetched.
 
@@ -610,6 +613,10 @@ class SourceOrchestrator:
                 on_status(f"{label}: {seen_raw:,}{of_total} read ({why})")
             _report_failure(source_name, "page-limit" if by_pages else "truncated",
                             on_status, on_source_failure)
+            # WS2: how far over — papers read, the source's total if it gave
+            # one, and whether its page cap (not the result limit) stopped it.
+            if on_source_limit:
+                on_source_limit(source_name, seen_raw, src_total or None, by_pages)
         return fetched
 
     # ── Enrichment ─────────────────────────────────────────────────────────────

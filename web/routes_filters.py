@@ -67,6 +67,17 @@ def get_vocabulary(user_id: str = Depends(current_user)):
     return filter_vocabulary.for_client()
 
 
+def _check_filter_limit(filter_dict: Dict[str, Any], ctx: AppContext) -> None:
+    """FL1: a saved limit is a whole number within 1..ceiling (400 otherwise);
+    stored as an int, or left out to use the default."""
+    from .routes_searches import check_limit
+    n = check_limit(filter_dict.get("max_results"), ctx.sources_config)
+    if n is None:
+        filter_dict.pop("max_results", None)
+    else:
+        filter_dict["max_results"] = n
+
+
 @router.get("/api/filters")
 def list_filters(ctx: AppContext = Depends(get_context),
                  user_id: str = Depends(current_user)):
@@ -78,6 +89,7 @@ def create_filter(body: FilterBody,
                   ctx: AppContext = Depends(get_context),
                   user_id: str = Depends(current_user)):
     refuse_unusable_facets(body.filter)
+    _check_filter_limit(body.filter, ctx)
     _refuse_name_clash(ctx, user_id, body.name)
     filter_id = user_store.insert_filter(
         ctx.db, user_id, body.name, body.filter, body.enabled
@@ -94,6 +106,7 @@ def update_filter(filter_id: int, body: FilterBody,
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No such filter.")
     refuse_unusable_facets(body.filter)
+    _check_filter_limit(body.filter, ctx)
     _refuse_name_clash(ctx, user_id, body.name, exclude_id=filter_id)
     # Updated in place: a rename keeps the filter's id.
     user_store.update_filter(ctx.db, user_id, filter_id, body.name, body.filter,
@@ -122,6 +135,7 @@ def test_filter(filter_id: int,
                             detail="No such filter.")
     refuse_empty_filter(filter_dict)
     selection = filter_dict.get("source_selection", {"all": True, "selected": []})
-    from .routes_searches import DEFAULT_MAX_RESULTS
-    return submit_search(ctx, FILTER_TEST_JOB_KIND, user_id,
-                         _run_search(ctx, filter_dict, selection, DEFAULT_MAX_RESULTS))
+    from src.search_limits import filter_limit
+    return submit_search(ctx, FILTER_TEST_JOB_KIND, user_id,          # FL3: its own limit
+                         _run_search(ctx, filter_dict, selection,
+                                     filter_limit(filter_dict, ctx.sources_config)))

@@ -275,8 +275,9 @@ def main(args=None):
     parser.add_argument(
         "--max",
         type=int,
-        default=200,
-        help="Maximum results per filter (default: 200)",
+        default=None,
+        help="Papers read per source, for every filter in this run (default: "
+             "each filter's own limit, else sources_config.yaml search.default_max_results)",
     )
     parser.add_argument(
         "--filters-path",
@@ -334,12 +335,17 @@ def main(args=None):
     total_downloaded = 0
     total_failed_downloads = 0
 
+    from src.search_limits import filter_limit
+    if parsed.max is not None:
+        logger.info("--max %d overrides every filter's own limit for this run", parsed.max)
     for filter_name, filter_dict in filters_to_run:
+        # FL4: each filter's own limit, unless --max was given for this run.
+        limit = parsed.max if parsed.max is not None else filter_limit(filter_dict, config)
         records = run_search(
             orchestrator,
             filter_dict,
             filter_name,
-            max_results=parsed.max,
+            max_results=limit,
             dry_run=parsed.dry_run,
             sources_failed=all_sources_failed,
             enrich_problems=all_enrich_problems,

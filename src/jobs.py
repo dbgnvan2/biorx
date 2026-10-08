@@ -139,6 +139,12 @@ class Job:
     # Things the user should know about how this search ran (not failures),
     # e.g. which part of the range bioRxiv/medRxiv is read for (BW5).
     notes: List[str] = field(default_factory=list)
+    # WS1: why each source failed (kind), how far over a limit it was
+    # ({"read", "total"}), and the summary built from them when the search ends.
+    source_failure_kinds: Dict[str, str] = field(default_factory=dict)
+    source_limits: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    limit_summary: Optional[Dict[str, Any]] = None
+    max_results: Optional[int] = None
     created_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -172,6 +178,8 @@ class Job:
             "sources_failed": list(self.sources_failed),
             "source_problems": dict(self.source_problems),
             "notes": list(self.notes),
+            "limit_summary": self.limit_summary,
+            "max_results": self.max_results,
             "created_at": self.created_at,
             "finished_at": self.finished_at,
             "tokens": {

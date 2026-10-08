@@ -1111,3 +1111,26 @@ def test_td9_resend_after_merge_is_a_repeat():
         max_results=200, on_status=statuses.append)
     assert ("PubMed: 0 new, 1 already found by an earlier source, 1 repeated within PubMed"
             in statuses), statuses
+
+
+# ── WS2: the limit callback carries counts ────────────────────────────────────
+# docs/implementation_plan_2026-10-08_limits_and_warnings.md
+
+def test_ws2_limit_callback_carries_counts():
+    big = _PagedAdapter("europepmc", total=1000)
+    limits, failures = [], []
+    records = _orch_with({"europepmc": big}).search(
+        {"days_back": 7, "text_groups": [{"both": "x"}]}, {"all": True, "selected": []},
+        max_results=200, on_source_failure=lambda *a: failures.append(a),
+        on_source_limit=lambda *a: limits.append(a))
+    assert len(records) == 200
+    assert limits == [("europepmc", 200, 1000, False)]
+    assert failures == [("europepmc", "truncated")]           # unchanged
+
+
+def test_ws2_no_callback_when_read_in_full():
+    limits = []
+    _orch_with({"europepmc": _PagedAdapter("europepmc", total=150)}).search(
+        {"days_back": 7, "text_groups": [{"both": "x"}]}, {"all": True, "selected": []},
+        max_results=200, on_source_limit=lambda *a: limits.append(a))
+    assert limits == []

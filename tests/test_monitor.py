@@ -257,3 +257,40 @@ def test_t24_two_filters_with_one_name_both_run(tmp_path, caplog):
     enabled = monitor.get_enabled_filters(filters)
     assert [f["text_groups"][0]["both"] for f in enabled] == ["sleep", "apnea"]
     assert "Duplicate filter name 'New Filter'" in caplog.text
+
+
+# ── FL4: each filter runs with its own limit ──────────────────────────────────
+# docs/implementation_plan_2026-10-08_limits_and_warnings.md
+
+def _main_with_filters(filters, argv):
+    from unittest.mock import patch
+    seen = []
+    orch = MagicMock()
+    orch.search.side_effect = lambda filter_dict, max_results=200, **_: seen.append(
+        (filter_dict.get("name"), max_results)) or []
+    orch.resolve_active_sources = lambda sel: []
+    cfg = {"search": {"default_max_results": 200, "max_results_ceiling": 2000}}
+    with patch.object(monitor, "load_sources_config", return_value=cfg), \
+         patch.object(monitor, "SourceOrchestrator", return_value=orch), \
+         patch.object(monitor, "load_filters", return_value=filters):
+        monitor.main(argv)
+    return seen
+
+
+FILTERS = [
+    {"name": "Own", "enabled": True, "text_groups": [{"both": "stress"}], "max_results": 900},
+    {"name": "Default", "enabled": True, "text_groups": [{"both": "sleep"}]},
+    {"name": "Broken", "enabled": True, "text_groups": [{"both": "x"}], "max_results": 99999},
+]
+
+
+def test_fl4_filter_limits_used():
+    seen = _main_with_filters(FILTERS, ["--all", "--dry-run"])
+    assert [m for _n, m in seen] == [900, 200, 200]
+
+
+def test_fl4_explicit_max_overrides_and_is_logged(caplog):
+    with caplog.at_level("INFO"):
+        seen = _main_with_filters(FILTERS, ["--all", "--dry-run", "--max", "50"])
+    assert [m for _n, m in seen] == [50, 50, 50]
+    assert any("--max 50 overrides" in r.getMessage() for r in caplog.records)

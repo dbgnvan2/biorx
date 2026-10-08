@@ -154,6 +154,18 @@ an existing filter opens with its own sources, keywords and days.
 | HW1 hyphenated wildcard split | `tests/test_query_builder.py::test_hw1_hyphenated_wildcard_is_split` (5), `test_hw1_arxiv_splits_the_same_way` | done |
 | HW2 query is a superset of the filter | `test_query_builder.py::test_hw2_query_is_a_superset_of_the_filter` (2) | done |
 | HW3 live | `COVID-1*` 30 days: 0 → 1,229 hits, 195/200 kept; `kin-select*` 0 → 3 (2026-10-07) | done |
+| WS1 counts on the job | `tests/web/test_searches_routes.py::test_ws1_limits_on_the_job`, `test_ws1_no_summary_when_nothing_was_cut` | done |
+| WS2 orchestrator limit callback | `tests/test_orchestrator.py::test_ws2_limit_callback_carries_counts`, `test_ws2_no_callback_when_read_in_full` | done |
+| WS3 summary rows and next step | `tests/test_limit_summary.py::test_ws3_*` (4, incl. the owner's six-source case) | done |
+| WS4 advice does not misfire | `tests/test_limit_summary.py::test_ws4_*` (4; mutation-checked) | done |
+| WS5 page block | `tests/web/test_frontend_wiring.py::test_ws5_summary_block`, `test_ws5_poll_uses_the_summary_not_the_old_paragraph` | done |
+| WS6 wording in config | `tests/test_limit_summary.py::test_ws6_*` (3) | done |
+| FL1 filter stores its limit | `tests/web/test_searches_routes.py::test_fl1_*` (6), `tests/web/test_frontend_wiring.py::test_fl1_editor_reads_and_writes_the_limit` | done |
+| FL2 Run uses the filter's limit | `test_searches_routes.py::test_fl2_*` (3), `test_frontend_wiring.py::test_fl2_saved_filter_run_sends_no_limit` (mutation-checked) | done |
+| FL3 Test uses the filter's limit | `test_searches_routes.py::test_fl3_filter_test_uses_its_limit` | done |
+| FL4 monitor | `tests/test_monitor.py::test_fl4_*` (2) | done |
+| FL5 limits from config | `test_searches_routes.py::test_fl5_limits_from_config`, `test_frontend_wiring.py::test_fl5_limits_come_from_config_not_the_page` | done |
+| FL6 limit beside Run | `test_frontend_wiring.py::test_fl6_run_limit_line` | done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |

@@ -27,6 +27,8 @@ from src.filtering import (filter_papers, fixed_dates, normalise_filter, within_
                            without_license)
 from src.filters_store import EMPTY_FILTER_MESSAGE, filter_has_text
 from src.jobs import Job, JobLookup
+from src.limit_summary import limit_summary
+from src.search_limits import clean_limit, filter_limit, search_limits
 from src.sources.biorxiv_window import biorxiv_notes
 
 from .auth import current_user, get_context
@@ -59,6 +61,7 @@ def record_failure(job: Job, source_name: str, kind: str,
     from src.sources.config import source_label
     if source_name not in job.sources_failed:
         job.sources_failed.append(source_name)
+    job.source_failure_kinds.setdefault(source_name, kind)
     job.source_problems.setdefault(source_label(source_name),
                                    failure_reason(kind, sources_config))
 
@@ -68,8 +71,8 @@ SEARCH_JOB_KIND = "search"
 FILTER_TEST_JOB_KIND = "filter_test"
 SEARCH_JOB_KINDS = (SEARCH_JOB_KIND, FILTER_TEST_JOB_KIND)
 
-MAX_RESULTS_CEILING = 2000
-DEFAULT_MAX_RESULTS = 200
+# The limit (papers read per source): src/search_limits.py, values in
+# sources_config.yaml search: (FL5).
 DEFAULT_PAGE_SIZE = 50
 # Search within results (SW6): how many terms, and how long each may be.
 WITHIN_MAX_TERMS = 10
@@ -94,7 +97,8 @@ class SearchRequest(BaseModel):
     filter_id: Optional[int] = None
     filter: Optional[Dict[str, Any]] = None
     source_selection: Optional[Dict[str, Any]] = None
-    max_results: int = Field(default=DEFAULT_MAX_RESULTS, ge=1, le=MAX_RESULTS_CEILING)
+    # Ad hoc searches only; a saved filter runs with its own limit (FL2).
+    max_results: Optional[int] = None
 
 
 def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
@@ -148,15 +152,28 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
         def on_status(message: str):
             job.phase = message
 
+        job.max_results = max_results
+        orchestrator = ctx.get_orchestrator()
+        active = orchestrator.resolve_active_sources(source_selection)
+        ceiling = search_limits(ctx.sources_config)[1]
+
+        def refresh_summary():
+            # Rebuilt as each source reports, so the page shows it while the
+            # rest of the search and enrichment run, not only at the end.
+            job.limit_summary = limit_summary(
+                job.source_failure_kinds, job.source_limits, active, filter_dict,
+                max_results, ceiling, ctx.sources_config)
+
         def on_source_failure(source_name: str, kind: str):
             record_failure(job, source_name, kind, ctx.sources_config)
+            refresh_summary()
 
-        orchestrator = ctx.get_orchestrator()
+        def on_source_limit(source_name: str, read: int, total, by_pages: bool):
+            job.source_limits[source_name] = {"read": read, "total": total}
+            refresh_summary()
         # BW5: how bioRxiv/medRxiv will be read for this range, from the rule
         # the adapter follows, before the search starts.
-        job.notes.extend(biorxiv_notes(
-            filter_dict, orchestrator.resolve_active_sources(source_selection),
-            ctx.sources_config, date.today()))
+        job.notes.extend(biorxiv_notes(filter_dict, active, ctx.sources_config, date.today()))
         try:
             orchestrator.search(
                 filter_dict=filter_dict,
@@ -171,7 +188,10 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
                 on_enrich_progress=on_enrich_progress,
                 on_enrich_problem=on_enrich_problem,
                 on_source_failure=on_source_failure,
+                on_source_limit=on_source_limit,
             )
+            # WS3: one summary of what could not be read in full, and what to do.
+            refresh_summary()
         finally:
             # This job ran on a pool thread that took a database connection.
             ctx.db.release()
@@ -202,8 +222,13 @@ def start_search(body: SearchRequest,
     selection = body.source_selection or filter_dict.get(
         "source_selection", {"all": True, "selected": []}
     )
+    if body.filter_id is not None:
+        max_results = filter_limit(filter_dict, ctx.sources_config)       # FL2
+    else:
+        max_results = (check_limit(body.max_results, ctx.sources_config)
+                       or search_limits(ctx.sources_config)[0])
     return submit_search(ctx, SEARCH_JOB_KIND, user_id,
-                         _run_search(ctx, filter_dict, selection, body.max_results))
+                         _run_search(ctx, filter_dict, selection, max_results))
 
 
 # Searches (and filter tests) share one key per user: each can hold a worker
@@ -310,6 +335,17 @@ def search_results(job_id: str, offset: int = 0, limit: int = DEFAULT_PAGE_SIZE,
         "results": results[offset:offset + limit],
         "sources_failed": list(job.sources_failed),
     }
+
+
+def check_limit(value: Any, sources_config: Dict[str, Any]) -> Optional[int]:
+    """A limit within 1..ceiling, None when not set; 400 otherwise (FL1)."""
+    _default, ceiling = search_limits(sources_config)
+    try:
+        return clean_limit(value, ceiling)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Papers read per source must be a whole number "
+                                   f"from 1 to {ceiling:,}.") from None
 
 
 def _checked_within(within: Optional[List[str]]) -> List[str]:

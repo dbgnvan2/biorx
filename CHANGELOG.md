@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-10-08 — clearer "results are incomplete" summary; a limit per saved filter (WS, FL)
+
+From `docs/implementation_plan_2026-10-08_limits_and_warnings.md`.
+
+### Changed
+- The run-on warning ("Europe PMC had more results than Max results allows …
+  PubMed … PsyArXiv …") is replaced by a summary: a heading, the most useful
+  next step, one row per source with how far over it was ("read 200 of 2,391
+  matches") and what to do for that source (untick PubMed when Europe PMC is
+  ticked; put a word in the Title box for PsyArXiv/SocArXiv; untick
+  bioRxiv/medRxiv when it is refused; raise the limit or narrow the words),
+  and the limit with where to change it. Wording is in sources_config.yaml
+  (`limit_summary`).
+- "Max results" is now "Papers read per source". A saved filter has its own
+  (Filters editor); Run, Test and the monitor use it. The Search tab shows it
+  beside Run. The ad hoc box keeps its own. Default and maximum are in
+  sources_config.yaml (`search:`).
+
+### Fixed
+- Running a saved filter used the ad hoc box's limit without saying so; the
+  filter Test button always used 200; the monitor ignored any per-filter value.
+
+
 ## 2026-10-07 — wildcard on a hyphenated word (HW1–HW3)
 
 ### Fixed
