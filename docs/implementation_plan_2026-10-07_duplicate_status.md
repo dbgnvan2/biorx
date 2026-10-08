@@ -29,6 +29,14 @@ finds 52, after Europe PMC "0 fetched". It reads as if PubMed was skipped.
 | N | D | `PubMed: N new, D already found by an earlier source` |
 | 0 | 0 | `PubMed: 0 fetched` (unchanged — it found nothing) |
 
+Added after the DS gate (F2) and TD9 — a source's own repeats are counted
+apart from papers an earlier source found:
+
+| new | already found | repeated | Line |
+|---|---|---|---|
+| N | 0 | R | `PubMed: N new, R repeated within PubMed` |
+| N | A | R | `PubMed: N new, A already found by an earlier source, R repeated within PubMed` |
+
 - bioRxiv/medRxiv keeps its own fuller line, which already names repeats.
 
 ## 2. Acceptance criteria and tests

@@ -1046,16 +1046,37 @@ def test_ds2_own_repeats_are_not_an_earlier_source():
 
 
 def test_ds2_counts_are_not_shared_between_concurrent_searches():
-    """DS gate F1: the orchestrator is shared and runs searches two at a time.
-    The counts live in each search call, not on the orchestrator."""
-    import inspect
-    from src.sources import orchestrator as o
+    """DS gate F1 / TD10: the orchestrator is shared and runs searches two at
+    a time. Two searches run in parallel threads, each pausing mid-search so
+    they overlap, each with a different overlap; each gets its own line, and
+    no search leaves state on the orchestrator."""
+    import threading
+    gate = threading.Barrier(2, timeout=5)
+
+    class _Paused(_SharedDoiAdapter):
+        def search(self, query, page=1, page_size=50, **_):
+            if page == 1:
+                gate.wait()            # both searches are inside a source now
+            return super().search(query, page, page_size)
+
     orch = _orch_with({"europepmc": _SharedDoiAdapter("europepmc", total=30),
-                       "pubmed": _SharedDoiAdapter("pubmed", total=30)})
-    orch.search({"days_back": 7, "text_groups": [{"both": "x"}]},
-                {"all": True, "selected": []}, max_results=200)
-    assert not [k for k in vars(orch) if "duplicate" in k or "already" in k], vars(orch).keys()
-    assert "self._last_duplicates" not in inspect.getsource(o)
+                       "pubmed": _Paused("pubmed", total=30)})
+    before = set(vars(orch))
+    out = {}
+
+    def run(name, selected):
+        st = []
+        orch.search({"days_back": 7, "text_groups": [{"both": "x"}]},
+                    {"all": False, "selected": selected}, max_results=200,
+                    on_status=st.append)
+        out[name] = [s for s in st if s.startswith("PubMed:") and "reading" not in s]
+
+    a = threading.Thread(target=run, args=("both", ["europepmc", "pubmed"]))
+    b = threading.Thread(target=run, args=("alone", ["pubmed"]))
+    a.start(); b.start(); a.join(10); b.join(10)
+    assert out["both"] == ["PubMed: 30 papers read, all already found by an earlier source"], out
+    assert out["alone"] == ["PubMed: 30 fetched"], out
+    assert set(vars(orch)) == before, set(vars(orch)) - before
 
 
 def test_ds3_local_filter_source_keeps_one_final_line():
@@ -1067,3 +1088,26 @@ def test_ds3_local_filter_source_keeps_one_final_line():
     finals = [s for s in statuses if s.startswith("bioRxiv / medRxiv:")
               and ("fetched" in s or "match the filter" in s)]
     assert finals == ["bioRxiv / medRxiv: 90 of 90 papers read, 9 match the filter"], finals
+
+
+def test_td8_old_name_still_works():
+    orch = _orch_with({"europepmc": object(), "pubmed": object()})
+    sel = {"all": False, "selected": ["pubmed"]}
+    assert orch.resolve_active_sources(sel) == orch._resolve_active_sources(sel) == ["pubmed"]
+
+
+# ── TD9/TD10 (docs/implementation_plan_2026-10-07_gate_todos.md) ─────────────
+
+def test_td9_resend_after_merge_is_a_repeat():
+    """Europe PMC sends X; PubMed sends X twice: 1 already found, 1 repeated."""
+    class _TwiceAdapter(_SharedDoiAdapter):
+        def search(self, query, page=1, page_size=50, **_):
+            recs = super().search(query, page, page_size)
+            return recs + recs
+    statuses = []
+    _orch_with({"europepmc": _SharedDoiAdapter("europepmc", total=1),
+                "pubmed": _TwiceAdapter("pubmed", total=1)}).search(
+        {"days_back": 7, "text_groups": [{"both": "x"}]}, {"all": True, "selected": []},
+        max_results=200, on_status=statuses.append)
+    assert ("PubMed: 0 new, 1 already found by an earlier source, 1 repeated within PubMed"
+            in statuses), statuses

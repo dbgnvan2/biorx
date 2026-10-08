@@ -227,7 +227,7 @@ class SourceOrchestrator:
         if source_selection is None:
             source_selection = {"all": True, "selected": []}
 
-        active = self._resolve_active_sources(source_selection)
+        active = self.resolve_active_sources(source_selection)
         if not active:
             logger.warning("No active sources — restoring All Sources")
             active = list(self._search_adapters.keys())
@@ -325,8 +325,9 @@ class SourceOrchestrator:
 
     # ── Source routing ────────────────────────────────────────────────────────
 
-    def _resolve_active_sources(self, selection: Dict[str, Any]) -> List[str]:
-        """Return ordered list of source names to query."""
+    def resolve_active_sources(self, selection: Dict[str, Any]) -> List[str]:
+        """Return ordered list of source names to query. Public: the search
+        route and the monitor ask which sources will run (TD8)."""
         if selection.get("all", True):
             return list(self._search_adapters.keys())
         selected = selection.get("selected", [])
@@ -335,6 +336,9 @@ class SourceOrchestrator:
             # Safety: never allow zero sources
             return list(self._search_adapters.keys())
         return active
+
+    # The old private name, kept for one release (TD8).
+    _resolve_active_sources = resolve_active_sources
 
     def _build_query(self, source_name: str, filter_dict: Dict[str, Any]) -> str:
         """Convert filter_dict into a source-specific query string."""
@@ -417,6 +421,8 @@ class SourceOrchestrator:
         not_matching = 0
         duplicates = 0       # matched, but a paper already read (another version)
         already_found = 0    # duplicates of a paper another source returned (DS)
+        sent_here: set = set()   # records this source already sent (TD9; a merge
+                                 # updates the record in place, so identity holds)
         limited_by_pages = False
         seen_raw  = 0        # records the source sent, duplicates included
         src_total = 0
@@ -511,11 +517,16 @@ class SourceOrchestrator:
                         # the page's result count matches the unique set that is
                         # actually saved. Counted, so "N read" adds up.
                         duplicates += 1
-                        # The merged record lists every source that sent it;
-                        # one this record did not come from found it first.
-                        if any(h.source not in own for h in canonical.source_hits):
+                        # Sent before by this source: a repeat, whatever else
+                        # merged into it since (TD9). Otherwise, the merged
+                        # record lists a source this record did not come from,
+                        # which found it first.
+                        if (id(canonical) not in sent_here
+                                and any(h.source not in own for h in canonical.source_hits)):
                             already_found += 1
+                        sent_here.add(id(canonical))
                         continue
+                    sent_here.add(id(canonical))
                     batch.append(canonical)
                     fetched += 1
                 except Exception as e:

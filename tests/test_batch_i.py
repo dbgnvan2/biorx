@@ -410,7 +410,9 @@ def test_i_biorxiv_medrxiv_retries_on_5xx(monkeypatch):
             return resp
         return good_resp
 
-    adapter = BiorxivMedrxivAdapter(sources_config={"biorxiv_medrxiv": {"servers": ["biorxiv"]}})
+    # The real config shape (TD6).
+    adapter = BiorxivMedrxivAdapter(
+        sources_config={"publication_sources": {"biorxiv_medrxiv": {"servers": ["biorxiv"]}}})
     adapter._api = MagicMock()
     adapter._api.search_by_date_range.side_effect = fake_search_by_date_range
     adapter._api.parse_papers.return_value = []

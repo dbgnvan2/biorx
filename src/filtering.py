@@ -20,7 +20,7 @@ import re
 from typing import Any, Dict, List
 
 from src import filter_vocabulary as vocab
-from src.search_terms import and_parts
+from src.search_terms import and_parts, normalise_text
 
 logger = logging.getLogger(__name__)
 
@@ -115,17 +115,25 @@ def split_terms(s: str) -> List[str]:
     return [t.strip() for t in (s or "").split(",") if and_parts(t)]
 
 
-def term_matches(term: str, text: str) -> bool:
-    """A term against lowercase text: every AND part must match.
+def term_matches(term: str, *fields: str) -> bool:
+    """A term against one or more fields: every AND part must match, each
+    part within one field (different parts may be in different fields).
+
+    Text and term are normalised first (lowercase, hyphens as spaces, TD4).
+    A phrase does not match across two fields (TD5: title "…cortisol" +
+    abstract "Sleep…" is not "cortisol sleep").
 
     Purpose: "cooperati* AND survival" requires both words; a term without
              AND matches as before.
-    Spec:    docs/implementation_plan_2026-10-07_and_terms.md#AND2
+    Spec:    docs/implementation_plan_2026-10-07_and_terms.md#AND2,
+             docs/implementation_plan_2026-10-07_gate_todos.md#TD4, #TD5
     Tests:   tests/test_filtering.py::test_and2_all_parts_must_match,
-             tests/test_filtering.py::test_and2_comma_still_ors_and_terms
+             tests/test_filtering.py::test_td4_hyphen_matches_space,
+             tests/test_filtering.py::test_td5_phrase_does_not_span_title_and_abstract
     """
-    parts = and_parts(term)
-    return bool(parts) and all(match_term(p.lower(), text) for p in parts)
+    parts = [normalise_text(p) for p in and_parts(term)]
+    texts = [normalise_text(f) for f in fields]
+    return bool(parts) and all(any(match_term(p, t) for t in texts) for p in parts)
 
 
 def normalize_authors(value: Any) -> List[str]:
@@ -196,13 +204,30 @@ def text_group_matches(paper: Dict[str, Any], group: Dict[str, str]) -> bool:
     abstract_terms = split_terms(group.get("abstract", ""))
     both_terms     = split_terms(group.get("both",     ""))
 
-    if title_terms    and not any(term_matches(t, title)              for t in title_terms):
+    if title_terms    and not any(term_matches(t, title)           for t in title_terms):
         return False
-    if abstract_terms and not any(term_matches(t, abstract)           for t in abstract_terms):
+    if abstract_terms and not any(term_matches(t, abstract)        for t in abstract_terms):
         return False
-    if both_terms     and not any(term_matches(t, f"{title} {abstract}") for t in both_terms):
+    if both_terms     and not any(term_matches(t, title, abstract) for t in both_terms):
         return False
     return True
+
+
+def fixed_dates(filter_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """The filter with its date window written out once (start_date/end_date),
+    so every source and the bioRxiv/medRxiv note use the same dates even if
+    the search runs past midnight (TD7).
+
+    Purpose: One date window per search.
+    Spec:    docs/implementation_plan_2026-10-07_gate_todos.md#TD7
+    Tests:   tests/web/test_searches_routes.py::test_td7_dates_fixed_once
+    """
+    from src.sources.query_builder import get_date_range
+    # Legacy keys (date_from/date_to) first, or their dates would be replaced
+    # by days_back's window (caught by test_b13_legacy_filter_normalised).
+    filter_dict = normalise_filter(filter_dict)
+    start, end = get_date_range(filter_dict)
+    return {**filter_dict, "start_date": start, "end_date": end}
 
 
 def within_matches(paper: Dict[str, Any], terms: List[str]) -> bool:
@@ -215,10 +240,10 @@ def within_matches(paper: Dict[str, Any], terms: List[str]) -> bool:
     Tests:   tests/test_filtering.py::test_sw1_every_term_must_match,
              tests/test_filtering.py::test_sw1_only_title_and_abstract_count
     """
-    text = f"{(paper.get('title') or '').lower()} {(paper.get('abstract') or '').lower()}"
+    title, abstract = paper.get("title") or "", paper.get("abstract") or ""
     for term in terms:
         alternatives = split_terms(term)
-        if alternatives and not any(term_matches(t, text) for t in alternatives):
+        if alternatives and not any(term_matches(t, title, abstract) for t in alternatives):
             return False
     return True
 

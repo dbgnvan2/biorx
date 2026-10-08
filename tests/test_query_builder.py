@@ -417,7 +417,8 @@ def test_and3_a_term_that_is_only_and_is_ignored():
 
 
 @pytest.mark.parametrize("group, expected", [
-    ({"both": "cooperati* AND survival"}, "(all:cooperati AND all:survival)"),
+    # TD3: the wildcard part is left out when another part can narrow arXiv.
+    ({"both": "cooperati* AND survival"}, "all:survival"),
     ({"title": "kin selection AND survival"}, '(ti:"kin selection" AND ti:survival)'),
     ({"abstract": "a AND b, c"}, "((abs:a AND abs:b) OR abs:c)"),
 ])
@@ -483,3 +484,43 @@ def test_ta3_both_terms_never_bare():
     stripped = _re.sub(r'(TITLE_ABS|TITLE|ABSTRACT):("[^"]*"|\S+?)(?=[\s)])', "", q)
     leftover = [w for w in _re.findall(r"[A-Za-z*\"]+", stripped) if w not in ("AND", "OR")]
     assert leftover == [], (q, leftover)
+
+
+
+# ── TD1/TD3 (docs/implementation_plan_2026-10-07_gate_todos.md) ──────────────
+
+@pytest.mark.parametrize("both, expected", [
+    ("COVID-19: outcomes", '(TITLE_ABS:"COVID-19: outcomes")'),
+    ("COVID-19", '(TITLE_ABS:"COVID-19")'),
+    ("OR", '(TITLE_ABS:"OR")'),
+    ("(x)", '(TITLE_ABS:"(x)")'),
+    ("adolescen*", "(TITLE_ABS:adolescen*)"),
+    ("kin select*", "((TITLE_ABS:kin AND TITLE_ABS:select*))"),
+    ('say "hi"', '(TITLE_ABS:"say \\"hi\\"")'),
+])
+def test_td1_parts_are_read_as_words(both, expected):
+    assert _text(build_europepmc_query(_q([{"title": "", "abstract": "", "both": both}]))) == expected
+
+
+def test_td1_injection_stays_inside_one_clause():
+    """Adversarial (P7): a term written as query syntax must not widen the
+    search. Every token outside quotes is a field-prefixed clause or AND/OR."""
+    import re as _re
+    q = _text(build_europepmc_query(_q([{"title": "", "abstract": "",
+                                          "both": "x) OR (TITLE_ABS:*"}])))
+    outside = _re.sub(r'"(?:[^"\\]|\\.)*"', "Q", q).replace("TITLE_ABS:", "")
+    tokens = _re.findall(r"[^\s()]+", outside)
+    # Outside quotes: only quoted words (Q) joined by AND — no bare OR, ")", ":".
+    assert tokens and all(t in ("Q", "AND") for t in tokens), (q, tokens)
+
+
+def test_td3_arxiv_keeps_wildcard():
+    q = build_arxiv_query(_q([{"title": "", "abstract": "", "both": "cooperati*"}]))
+    assert q.startswith("(all:cooperati*) AND submittedDate:")
+
+
+def test_td3_arxiv_and_term_drops_wildcard_parts_when_others_remain():
+    q = build_arxiv_query(_q([{"title": "", "abstract": "", "both": "cooperati* AND survival"}]))
+    assert q.startswith("(all:survival) AND submittedDate:")
+    q = build_arxiv_query(_q([{"title": "", "abstract": "", "both": "cooperati* AND surviv*"}]))
+    assert q.startswith("((all:cooperati* AND all:surviv*)) AND submittedDate:")

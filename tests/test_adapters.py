@@ -429,7 +429,10 @@ def test_b7_medrxiv_queried():
 
 
 def test_b7_servers_configurable():
-    adapter, calls = _biorxiv_adapter({}, cfg={"biorxiv_medrxiv": {"servers": ["medrxiv"]}})
+    # The real config shape (TD6: the old test used a top-level key, the same
+    # wrong shape the adapter read, so the bug was not caught).
+    adapter, calls = _biorxiv_adapter(
+        {}, cfg={"publication_sources": {"biorxiv_medrxiv": {"servers": ["medrxiv"]}}})
     adapter.search("x", filter_dict={"days_back": 7})
     assert {c[0] for c in calls} == {"medrxiv"}
 
@@ -597,3 +600,28 @@ def test_br9_pubmed_label_without_a_journal():
     assert a.normalize({"title": "T", "pmid": "1"}).journal_or_server == "PubMed"
     rec = a.normalize({"title": "T", "pmid": "1", "journalTitle": "Lancet"})
     assert rec.journal_or_server == "Lancet (PubMed)"
+
+
+def test_td7_window_kept_across_pages():
+    """Midnight between page 1 and page 2 must not move the window."""
+    from datetime import date
+    full = [{"doi": f"10.1101/b{i}", "title": f"B{i}", "version": "1"} for i in range(30)]
+    adapter, calls = _biorxiv_adapter({("biorxiv", 0): full, ("biorxiv", 30): full[:5]},
+                                      cfg=BW_CFG)
+    fd = {"days_back": 0, "start_date": "2026-01-01", "end_date": "2026-10-07"}
+    with patch("src.sources.biorxiv_medrxiv._today", return_value=date(2026, 10, 7)):
+        adapter.search("x", page=1, filter_dict=fd)
+    with patch("src.sources.biorxiv_medrxiv._today", return_value=date(2026, 12, 7)):
+        adapter.search("x", page=2, filter_dict=fd)     # 61 days later: would be SKIP
+    biorxiv = [c for c in calls if c[0] == "biorxiv"]
+    assert [c[3] for c in biorxiv] == [0, 30]
+    assert {c[1:3] for c in biorxiv} == {("2026-09-17", "2026-10-07")}
+
+
+def test_td6_servers_read_from_the_shipped_config_shape():
+    from src.sources.config import load_sources_config
+    cfg = load_sources_config()
+    cfg["publication_sources"]["biorxiv_medrxiv"]["servers"] = ["biorxiv"]
+    adapter, calls = _biorxiv_adapter({}, cfg=cfg)
+    adapter.search("x", filter_dict={"days_back": 7})
+    assert {c[0] for c in calls} == {"biorxiv"}

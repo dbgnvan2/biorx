@@ -599,7 +599,7 @@ def test_sw6_real_scale_is_fast(ctx, signed_in):
 def _bw_search(ctx, client, start, end, active):
     from datetime import date
     ctx.orchestrator = _fake_orchestrator(records=[])
-    ctx.orchestrator._resolve_active_sources = lambda selection: list(active)
+    ctx.orchestrator.resolve_active_sources = lambda selection: list(active)
     fd = {**FILTER, "days_back": 0, "start_date": start, "end_date": end}
     job_id = client.post("/api/searches", json={"filter": fd}).json()["job_id"]
     return _await_status(client, job_id)
@@ -629,3 +629,20 @@ def test_bw5_short_recent_range_names_the_limit(ctx, signed_in):
     body = _bw_search(ctx, signed_in, (end - timedelta(days=7)).isoformat(), end.isoformat(),
                       ["europepmc", "biorxiv_medrxiv"])
     assert len(body["notes"]) == 1 and "every paper in the range is read" in body["notes"][0]
+
+
+# ── TD7: one date window per search ───────────────────────────────────────────
+
+def test_td7_dates_fixed_once(ctx, signed_in):
+    """The orchestrator gets explicit start/end dates, the same ones the note
+    was built from, even for a days_back filter."""
+    from datetime import date, timedelta
+    ctx.orchestrator = _fake_orchestrator(records=[])
+    ctx.orchestrator.resolve_active_sources = lambda selection: ["biorxiv_medrxiv"]
+    job_id = signed_in.post("/api/searches", json={"filter": {**FILTER, "days_back": 30}}).json()["job_id"]
+    body = _await_status(signed_in, job_id)
+    fd = ctx.orchestrator.search.call_args.kwargs["filter_dict"]
+    today = date.today()
+    assert fd["end_date"] == today.isoformat()
+    assert fd["start_date"] == (today - timedelta(days=30)).isoformat()
+    assert "last 21 days" in body["notes"][0]          # 30 days > 21: the note used these dates

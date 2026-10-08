@@ -44,34 +44,31 @@ def _filter_dict(**kwargs):
     return base
 
 
-# ── arXiv wildcard stripping ──────────────────────────────────────────────────
+# ── arXiv wildcards (replaced 2026-10-07, TD3) ───────────────────────────────
+# These tests used to require the * to be stripped, on the claim that arXiv
+# returns zero results for it. Measured 2026-10-07 (last year): all:cooperati*
+# 50 vs stripped 0; all:adolescen* 0 vs 0; ti:stress* 583 vs 572. Stripping
+# was never better, so the wildcard is now sent
+# (docs/implementation_plan_2026-10-07_gate_todos.md#TD3).
 
-def test_d_arxiv_query_strips_wildcards():
-    """
-    arXiv has no wildcard operator; trailing * must be removed before the
-    query is sent, or arXiv silently returns zero results.
-    """
+def test_d_arxiv_query_keeps_wildcards():
     from src.sources.query_builder import build_arxiv_query
     q = build_arxiv_query({
         "text_groups": [{"title": "", "abstract": "", "both": "adolescen*"}],
         "days_back": 7,
         "authors": [],
     })
-    assert "*" not in q, f"wildcard should be stripped, got: {q}"
-    assert "adolescen" in q, f"base term should remain, got: {q}"
+    assert "all:adolescen*" in q, q
 
 
-def test_d_arxiv_query_strips_wildcards_in_title_and_abstract():
-    """Wildcard stripping applies to all three fields."""
+def test_d_arxiv_query_keeps_wildcards_in_title_and_abstract():
     from src.sources.query_builder import build_arxiv_query
     q = build_arxiv_query({
         "text_groups": [{"title": "stress*", "abstract": "immun*", "both": ""}],
         "days_back": 7,
         "authors": [],
     })
-    assert "*" not in q
-    assert "stress" in q
-    assert "immun" in q
+    assert "ti:stress*" in q and "abs:immun*" in q, q
 
 
 # ── arXiv version → CanonicalRecord ──────────────────────────────────────────

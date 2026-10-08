@@ -141,11 +141,14 @@ def run_search(
         if enrich_problems is not None:
             enrich_problems.append(line)
 
+    # TD7: one date window for every source and the note.
+    from src.filtering import fixed_dates
+    filter_dict = fixed_dates(filter_dict)
     # BW5: say how bioRxiv/medRxiv is read for this range (same rule as the adapter).
     from datetime import date
     from src.sources.biorxiv_window import biorxiv_notes
     for note in biorxiv_notes(filter_dict,
-                              orchestrator._resolve_active_sources(source_selection or {}),
+                              orchestrator.resolve_active_sources(source_selection or {}),
                               getattr(orchestrator, "config", None), date.today()):
         logger.info("[%s] %s", filter_name, note)
 

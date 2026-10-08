@@ -3,46 +3,6 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
-## Duplicate status re-gate (`docs/cycles/2026-10-07_duplicate-status-regate-qa-gate.md`) — APPROVED
-
-- `test_ds2_counts_are_not_shared_between_concurrent_searches` partly checks
-  source text (`inspect.getsource`); replace with a two-thread run.
-- A source re-sending a paper it sent earlier, after another source merged
-  into it, is counted as "already found by an earlier source".
-- The DS1 table in the plan lists four lines; there are now six (repeats).
-
-## bioRxiv/medRxiv window (`docs/implementation_plan_2026-10-07_biorxiv_window.md`)
-
-- `BiorxivMedrxivAdapter._servers()` reads `biorxiv_medrxiv.servers` from the
-  config's top level, not `publication_sources`, so the setting is never read.
-- Gate L1 (`docs/cycles/2026-10-07_biorxiv-window-qa-gate.md`): the job note
-  uses today's date when the search starts; the adapter checks again as it
-  reads. A search that runs across midnight could show a note one day off.
-- Gate L2: the search route and monitor call
-  `orchestrator._resolve_active_sources`, a private method; make it public.
-
-## Europe PMC TITLE_ABS (`docs/implementation_plan_2026-10-07_title_abs.md`)
-
-- The local filter matches a phrase as written, so "kin selection" does not
-  match "kin-selection"; Europe PMC does. Found in the TA3 live check (4 of 5
-  kept). Treating hyphens as spaces in phrase matching would close it.
-
-## Search-within gate (`docs/cycles/2026-10-07_search-within-qa-gate.md`) — APPROVED
-
-- L1, L2, L3, L5 fixed in the same batch. L4 not fixed: title and abstract
-  are joined with a space before matching, so a phrase can match across the
-  join ("…cortisol" + "Sleep…" = "cortisol sleep"). Same as the filter's
-  Title-or-abstract box has always done; fix both together if it matters.
-
-## AND terms gate (`docs/cycles/2026-10-07_and-terms-qa-gate.md`) — APPROVED
-
-- `_lucene_term` escapes only `"`; a part such as `OR`, `NOT`, or one with
-  `:` `(` `)` reaches Europe PMC as query syntax while the local filter reads
-  it literally. Pre-existing; Lucene-escape reserved words and characters in
-  the next query-builder change.
-- `src/search_terms.is_and_term` has no callers; delete it or use it.
-- arXiv has no wildcards: `cooperati*` is sent as `cooperati` and finds 0 there.
-
 ## From the browser run (`docs/cycles/2026-09-29_browser-run.md`)
 
 - All findings fixed (see the report). A search including bioRxiv/medRxiv

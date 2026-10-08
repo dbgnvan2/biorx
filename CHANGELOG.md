@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-10-07 — today's gate follow-ups (TD1–TD11)
+
+From `docs/implementation_plan_2026-10-07_gate_todos.md`.
+
+### Fixed
+- Punctuation and hyphens are matched as spaces, as Europe PMC matches them:
+  "kin selection" matches "kin-selection", "COVID-19: outcomes" matches
+  "COVID-19 outcomes" (live: 0 of 200 kept → 200 of 200).
+- A phrase no longer matches across the end of the title and the start of the
+  abstract; separate AND parts may still be in different fields.
+- Terms containing query syntax (`:`, brackets, a part that is just `OR`) are
+  quoted for Europe PMC and arXiv, so they are searched as words. A phrase
+  ending in `*` is sent as its words with the wildcard on the last.
+- arXiv gets the wildcard instead of a stripped non-word (`cooperati*`: 50
+  results instead of 0); inside an AND term, wildcard parts are left out of
+  the arXiv query when another part can narrow it.
+- The bioRxiv/medRxiv `servers:` setting is read (it was looked for in the
+  wrong place).
+- Each search fixes its date window once, so every source and the
+  bioRxiv/medRxiv note use the same dates.
+- A source re-sending its own paper counts as a repeat even after another
+  source's copy merged with it.
+
+
 ## 2026-10-07 — sources whose papers were already found say so (DS1–DS4)
 
 From `docs/implementation_plan_2026-10-07_duplicate_status.md`.

@@ -64,7 +64,10 @@ class BiorxivMedrxivAdapter:
         return type(self)(timeout=self.timeout, sources_config=self.sources_config)
 
     def _servers(self) -> List[str]:
-        cfg = (self.sources_config.get("biorxiv_medrxiv") or {})
+        # Under publication_sources, the shape the orchestrator passes (TD6:
+        # read at the top level, the setting was never seen).
+        cfg = ((self.sources_config.get("publication_sources") or {})
+               .get("biorxiv_medrxiv") or {})
         servers = cfg.get("servers") or list(DEFAULT_SERVERS)
         return [s for s in servers if s in DEFAULT_SERVERS]
 
@@ -96,8 +99,12 @@ class BiorxivMedrxivAdapter:
         # BW1–BW3: a range ending long ago is not read (Europe PMC has those
         # preprints, and this API reads oldest first); a long recent range is
         # read for its newest days only. The web route shows the same rule's note.
-        window = biorxiv_direct_window(start_date, end_date, _today(),
-                                       self._max_direct_days, self._lag_days)
+        # Decided on page 1 and kept for the search, so a search running past
+        # midnight cannot move its window between pages (TD7).
+        if page == 1 or getattr(self, "_window", None) is None:
+            self._window = biorxiv_direct_window(start_date, end_date, _today(),
+                                                 self._max_direct_days, self._lag_days)
+        window = self._window
         if window.mode == SKIP:
             self.last_page_size = 0
             self.last_total = 0

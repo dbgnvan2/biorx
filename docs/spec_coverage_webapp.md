@@ -140,6 +140,17 @@ an existing filter opens with its own sources, keywords and days.
 | DS2 overlap named (full and partial) | `tests/test_orchestrator.py::test_ds2_overlap_is_named` | done |
 | DS3 records/counts unchanged | full suite | done |
 | DS4 drift baseline | `tests/web/test_no_retrieval_drift.py` | done |
+| TD1 query syntax quoted | `tests/test_query_builder.py::test_td1_parts_are_read_as_words` (7), `test_td1_injection_stays_inside_one_clause`; live `TITLE_ABS:"COVID-19: outcomes"` 294 hits, accepted | done |
+| TD2 unused helper removed | `src/search_terms.py` (no `is_and_term`) | done |
+| TD3 arXiv wildcards | `test_query_builder.py::test_td3_*` (2); `tests/test_batch_d.py::test_d_arxiv_query_keeps_wildcards*` (replaced the stripping tests, with live counts) | done |
+| TD4 punctuation/hyphens as spaces | `tests/test_filtering.py::test_td4_hyphen_matches_space` (10 cases); live "kin selection" 5/5 kept, "COVID-19: outcomes" 200/200 | done |
+| TD5 phrase within one field | `test_filtering.py::test_td5_phrase_does_not_span_title_and_abstract`; Discover `test_td4_td5_discover_counts_follow_the_filter` | done |
+| TD6 servers setting read | `tests/test_adapters.py::test_td6_servers_read_from_the_shipped_config_shape`, `test_b7_servers_configurable`, `tests/test_batch_i.py::test_i_biorxiv_medrxiv_retries_on_5xx` (config shape fixed) | done |
+| TD7 one date window per search | `tests/web/test_searches_routes.py::test_td7_dates_fixed_once`, `tests/test_adapters.py::test_td7_window_kept_across_pages`, `tests/test_filtering.py::test_td7_fixed_dates_keeps_legacy_and_explicit_ranges` | done |
+| TD8 public resolve_active_sources | `tests/test_orchestrator.py::test_td8_old_name_still_works`; BW5 tests use the public name | done |
+| TD9 re-send counted as repeat | `test_orchestrator.py::test_td9_resend_after_merge_is_a_repeat` | done |
+| TD10 real concurrency test | `test_orchestrator.py::test_ds2_counts_are_not_shared_between_concurrent_searches` (two threads, barrier; mutation-checked) | done |
+| TD11 DS table | `docs/implementation_plan_2026-10-07_duplicate_status.md` | done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |

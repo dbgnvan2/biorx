@@ -347,3 +347,45 @@ def test_sw1_no_terms_matches_everything_and_empty_terms_are_ignored():
     p = {"title": "x", "abstract": ""}
     assert within_matches(p, [])
     assert within_matches(p, ["", "  ", "AND"])
+
+
+# ── TD4/TD5 (docs/implementation_plan_2026-10-07_gate_todos.md) ──────────────
+
+@pytest.mark.parametrize("term, title, expected", [
+    ("kin selection", "Evidence for kin-selection in sharks", True),
+    ("kin-selection", "Kin selection revisited", True),
+    ("kin selection", "Kin‑selection (non-breaking hyphen)", True),
+    ("COVID-19", "Outcomes after COVID-19", True),
+    ("covid 19", "Outcomes after COVID-19", True),
+    ("CD4+", "CD4+ T cells", True),
+    ("COVID-19: outcomes", "COVID-19 outcomes in adults", True),   # punctuation as space
+    ("covid 19 outcomes", "COVID-19: outcomes", True),
+    ("long-term", "A longterm study", False),            # hyphen is a space, not nothing
+    ("kin selection", "Selection of kin", False),
+])
+def test_td4_hyphen_matches_space(term, title, expected):
+    assert text_group_matches({"title": title, "abstract": ""},
+                              {"title": "", "abstract": "", "both": term}) is expected
+
+
+def test_td5_phrase_does_not_span_title_and_abstract():
+    """Adversarial (P7): the phrase appears only across the join."""
+    p = {"title": "Morning cortisol", "abstract": "Sleep was measured."}
+    g = {"title": "", "abstract": "", "both": "cortisol sleep"}
+    assert not text_group_matches(p, g)
+    assert not within_matches(p, ["cortisol sleep"])
+    # Separate AND parts may still be in different fields.
+    assert text_group_matches(p, {"title": "", "abstract": "", "both": "cortisol AND sleep"})
+    assert within_matches(p, ["cortisol AND sleep"])
+
+
+def test_td7_fixed_dates_keeps_legacy_and_explicit_ranges():
+    from datetime import date, timedelta
+    from src.filtering import fixed_dates
+    assert fixed_dates({"date_from": "2020-01-01", "date_to": "2020-12-31"})[
+        "start_date"] == "2020-01-01"
+    fd = fixed_dates({"start_date": "2021-03-01", "end_date": "2021-04-01", "days_back": 7})
+    assert (fd["start_date"], fd["end_date"]) == ("2021-03-01", "2021-04-01")
+    fd = fixed_dates({"days_back": 10})
+    assert fd["end_date"] == date.today().isoformat()
+    assert fd["start_date"] == (date.today() - timedelta(days=10)).isoformat()

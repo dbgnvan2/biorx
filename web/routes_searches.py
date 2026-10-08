@@ -23,7 +23,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from src import user_store
-from src.filtering import filter_papers, normalise_filter, within_matches, without_license
+from src.filtering import (filter_papers, fixed_dates, normalise_filter, within_matches,
+                           without_license)
 from src.filters_store import EMPTY_FILTER_MESSAGE, filter_has_text
 from src.jobs import Job, JobLookup
 from src.sources.biorxiv_window import biorxiv_notes
@@ -111,7 +112,7 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
     week when a source was simply unreachable (learnings P2).
     """
     # The query builders read the canonical shape too, not only filter_papers.
-    filter_dict = normalise_filter(filter_dict)
+    filter_dict = fixed_dates(normalise_filter(filter_dict))
     # Enrichment supplies the licence for many papers, so the licence is
     # checked once enrichment has run, not as pages arrive (review B5).
     pre_enrichment = without_license(filter_dict)
@@ -154,7 +155,7 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
         # BW5: how bioRxiv/medRxiv will be read for this range, from the rule
         # the adapter follows, before the search starts.
         job.notes.extend(biorxiv_notes(
-            filter_dict, orchestrator._resolve_active_sources(source_selection),
+            filter_dict, orchestrator.resolve_active_sources(source_selection),
             ctx.sources_config, date.today()))
         try:
             orchestrator.search(

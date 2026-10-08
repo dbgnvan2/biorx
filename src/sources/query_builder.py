@@ -38,13 +38,54 @@ def _has_text(group: Dict[str, str]) -> bool:
     return any(_split_terms(group.get(k) or "") for k in ("title", "abstract", "both"))
 
 
+# Characters Lucene (Europe PMC) and arXiv read as query syntax, and the
+# operator words. A part containing any of them is quoted (TD1).
+_QUERY_SYNTAX = set(':()[]{}^~?\\/+-!&|"*')
+_OPERATORS = {"AND", "OR", "NOT", "ANDNOT"}
+
+
+def _needs_quotes(word: str) -> bool:
+    """True when a part must be quoted to be read as words, not syntax."""
+    return (" " in word or word in _OPERATORS
+            or any(c in _QUERY_SYNTAX for c in word))
+
+
+def _quoted(text: str) -> str:
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _term_clause(term: str, field: str = "") -> str:
+    """One search part as field:value, read as words.
+
+    Purpose: A part such as "COVID-19: outcomes" or "OR" is searched as words,
+             not parsed as query syntax (TD1). A trailing * stays a wildcard.
+    Spec:    docs/implementation_plan_2026-10-07_gate_todos.md#TD1
+    Tests:   tests/test_query_builder.py::test_td1_parts_are_read_as_words,
+             tests/test_query_builder.py::test_td1_injection_stays_inside_one_clause
+
+    A phrase with a trailing * (e.g. "kin select*") cannot be sent as a
+    quoted wildcard (Europe PMC finds 0 either way), so its words are sent as
+    separate parts with the wildcard on the last: a superset of the phrase,
+    which the local filter then checks.
+    """
+    pre = f"{field}:" if field else ""
+    if term.endswith("*"):
+        stem = term[:-1]
+        if not _needs_quotes(stem):
+            return f"{pre}{stem}*"
+        words = stem.split()
+        if len(words) > 1:
+            *rest, last = words
+            parts = [_term_clause(w, field) for w in rest] + [_term_clause(last + "*", field)]
+            return "(" + " AND ".join(parts) + ")"
+        logger.debug("query: %r cannot keep its wildcard; searched as written", term)
+        return f"{pre}{_quoted(stem)}"
+    return f"{pre}{_quoted(term)}" if _needs_quotes(term) else f"{pre}{term}"
+
+
 def _lucene_term(term: str, field: str = "") -> str:
     """Wrap a single term with an optional Lucene field prefix."""
-    # Lucene-escape special chars except * (wildcard) and trailing *
-    safe = term.replace('"', '\\"')
-    if field:
-        return f'{field}:"{safe}"' if " " in safe.rstrip("*") else f"{field}:{safe}"
-    return f'"{safe}"' if " " in safe.rstrip("*") else safe
+    return _term_clause(term, field)
 
 
 def _lucene_clause(term: str, field: str = "") -> str:
@@ -318,20 +359,19 @@ def build_arxiv_query(filter_dict: Dict[str, Any]) -> str:
     return " AND ".join(parts)
 
 
-def _strip_arxiv_wildcard(term: str) -> str:
-    """arXiv has no wildcard operator; strip trailing * and log when removed."""
-    clean = term.rstrip("*")
-    if clean != term:
-        logger.debug("arXiv query: stripped wildcard from %r → %r", term, clean)
-    return clean
-
-
 def _arxiv_clause(term: str, prefix: str) -> str:
     """One comma-separated term for arXiv: ti:x, or (ti:a AND ti:b) for an
     AND term; wildcards stripped per part (AND4)."""
-    parts = [_strip_arxiv_wildcard(p) for p in and_parts(term)]
-    parts = [p for p in parts if p]
-    clauses = [f'{prefix}:"{p}"' if " " in p else f"{prefix}:{p}" for p in parts]
+    parts = [p for p in and_parts(term) if p.rstrip("*")]
+    # arXiv's own wildcard is partial (TD3, live 2026-10-07: all:cooperati* 50,
+    # all:cooperation 3,273), so inside an AND term a wildcard part is left
+    # out when another part can narrow the query; the local filter checks
+    # every part. Alone, the wildcard is sent as written (stripped it was a
+    # non-word that found nothing).
+    plain = [p for p in parts if not p.endswith("*")]
+    if plain and len(plain) < len(parts):
+        parts = plain
+    clauses = [_term_clause(p, prefix) for p in parts]
     if not clauses:
         return ""
     return clauses[0] if len(clauses) == 1 else "(" + " AND ".join(clauses) + ")"

@@ -26,6 +26,20 @@ def and_parts(term: str) -> List[str]:
     return [p.strip() for p in _AND.split(term or "") if p.strip()]
 
 
-def is_and_term(term: str) -> bool:
-    """True when the term has more than one part."""
-    return len(and_parts(term)) > 1
+# Punctuation, hyphens included, is matched as a space, so "kin selection"
+# matches "kin-selection" and "COVID-19: outcomes" matches "COVID-19
+# outcomes", as Europe PMC matches them (TD4; the colon case was found in the
+# TD live check: 294 Europe PMC hits, 0 kept). "*" is kept for wildcards.
+_PUNCTUATION = re.compile(r"[^\w\s*]")
+_SPACES = re.compile(r"\s+")
+
+
+def normalise_text(text: str) -> str:
+    """Lowercase, punctuation (hyphens included) as spaces, runs of spaces as
+    one — applied to both the text and the term before matching.
+
+    Purpose: "kin selection" matches "kin-selection" (TD4).
+    Spec:    docs/implementation_plan_2026-10-07_gate_todos.md#TD4
+    Tests:   tests/test_filtering.py::test_td4_hyphen_matches_space
+    """
+    return _SPACES.sub(" ", _PUNCTUATION.sub(" ", (text or "").lower())).strip()

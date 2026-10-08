@@ -1,7 +1,18 @@
 # Implementation plan — today's gate TODO items (2026-10-07, TD1–TD11)
 
 **Request:** "fix the TODO items from today's gates".
-**Status:** PLAN — awaiting owner approval. No code written.
+**Status:** APPROVED 2026-10-07; built. TD1–TD11 done.
+**Changes from the plan, from the live checks:**
+- TD4 covers all punctuation, not only hyphens: `COVID-19: outcomes` kept 0
+  of 200 Europe PMC records (abstracts say "COVID-19 outcomes"); now 200.
+- TD1: a phrase ending in `*` is sent as its words with the wildcard on the
+  last (`kin AND select*`), not as a quoted phrase without the `*`: Europe PMC
+  finds 0 for `"kin select*"` and for `"kin select"`.
+- TD3 replaced two older tests (`tests/test_batch_d.py`) that required the
+  arXiv wildcard to be stripped; live counts showed stripping never helped.
+- TD7: `fixed_dates` lives in `src/filtering.py` (the monitor must not import
+  the web app) and converts legacy `date_from`/`date_to` first — a bug the
+  existing `test_b13_legacy_filter_normalised` caught during the build.
 **Touches protected retrieval code:** `src/sources/query_builder.py` (TD1, TD3),
 `src/sources/orchestrator.py` (TD8, TD9), `src/sources/biorxiv_medrxiv.py`
 (TD6, TD7) — W1.a, flagged here; drift baseline advanced once for the batch.

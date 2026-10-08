@@ -771,3 +771,10 @@ def test_ta4_check_counts_titles_and_abstracts():
                          or FakeResp(body={"hitCount": 5}), 1)
     assert 'TITLE_ABS:"kin selection"' in sent[0]
     assert ' "kin selection"' not in sent[0].replace('TITLE_ABS:"kin selection"', "")
+
+
+def test_td4_td5_discover_counts_follow_the_filter():
+    papers = [{"title": "Evidence for kin-selection in sharks", "abstract": ""},
+              {"title": "Morning cortisol", "abstract": "Sleep was measured."}]
+    hits = count_term_hits(["kin selection", "cortisol sleep", "cortisol AND sleep"], papers)
+    assert hits == {"kin selection": 1, "cortisol sleep": 0, "cortisol AND sleep": 1}
