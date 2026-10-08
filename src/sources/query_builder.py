@@ -17,6 +17,7 @@ Wildcard: term ending in '*' = prefix match (works natively in Europe PMC Lucene
 """
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
@@ -73,13 +74,17 @@ def _term_clause(term: str, field: str = "") -> str:
         stem = term[:-1]
         if not _needs_quotes(stem):
             return f"{pre}{stem}*"
-        words = stem.split()
-        if len(words) > 1:
-            *rest, last = words
-            parts = [_term_clause(w, field) for w in rest] + [_term_clause(last + "*", field)]
-            return "(" + " AND ".join(parts) + ")"
-        logger.debug("query: %r cannot keep its wildcard; searched as written", term)
-        return f"{pre}{_quoted(stem)}"
+        # Split where the local filter splits (spaces and punctuation, TD4),
+        # so "COVID-1*" is sent as COVID AND 1*, not the exact word "COVID-1"
+        # (HW1). With the trailing punctuation gone ("SARS-CoV-*") there is
+        # no word left to prefix, and the words alone are sent.
+        words = [w for w in re.split(r"[^\w]+", stem) if w]
+        if not words:
+            return f"{pre}{_quoted(stem)}"
+        trailing_cut = not stem[-1:].isalnum() and not stem.endswith("_")
+        parts = [_term_clause(w, field) for w in words[:-1]]
+        parts.append(_term_clause(words[-1] if trailing_cut else words[-1] + "*", field))
+        return parts[0] if len(parts) == 1 else "(" + " AND ".join(parts) + ")"
     return f"{pre}{_quoted(term)}" if _needs_quotes(term) else f"{pre}{term}"
 
 

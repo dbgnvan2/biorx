@@ -151,6 +151,9 @@ an existing filter opens with its own sources, keywords and days.
 | TD9 re-send counted as repeat | `test_orchestrator.py::test_td9_resend_after_merge_is_a_repeat` | done |
 | TD10 real concurrency test | `test_orchestrator.py::test_ds2_counts_are_not_shared_between_concurrent_searches` (two threads, barrier; mutation-checked) | done |
 | TD11 DS table | `docs/implementation_plan_2026-10-07_duplicate_status.md` | done |
+| HW1 hyphenated wildcard split | `tests/test_query_builder.py::test_hw1_hyphenated_wildcard_is_split` (5), `test_hw1_arxiv_splits_the_same_way` | done |
+| HW2 query is a superset of the filter | `test_query_builder.py::test_hw2_query_is_a_superset_of_the_filter` (2) | done |
+| HW3 live | `COVID-1*` 30 days: 0 → 1,229 hits, 195/200 kept; `kin-select*` 0 → 3 (2026-10-07) | done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |

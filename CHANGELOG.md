@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-07 — wildcard on a hyphenated word (HW1–HW3)
+
+### Fixed
+- `COVID-1*` was sent to Europe PMC as the exact word "COVID-1" (0 results).
+  A wildcard word is now split where the app's own matching splits it
+  (spaces and punctuation): `COVID-1*` → `COVID AND 1*`. Live, 30 days: 0 →
+  1,229 Europe PMC hits, 195 of the first 200 kept by the filter.
+  (`docs/implementation_plan_2026-10-07_hyphen_wildcard.md`)
+
+
 ## 2026-10-07 — today's gate follow-ups (TD1–TD11)
 
 From `docs/implementation_plan_2026-10-07_gate_todos.md`.

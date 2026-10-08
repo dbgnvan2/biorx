@@ -508,10 +508,13 @@ def test_td1_injection_stays_inside_one_clause():
     import re as _re
     q = _text(build_europepmc_query(_q([{"title": "", "abstract": "",
                                           "both": "x) OR (TITLE_ABS:*"}])))
-    outside = _re.sub(r'"(?:[^"\\]|\\.)*"', "Q", q).replace("TITLE_ABS:", "")
-    tokens = _re.findall(r"[^\s()]+", outside)
-    # Outside quotes: only quoted words (Q) joined by AND — no bare OR, ")", ":".
-    assert tokens and all(t in ("Q", "AND") for t in tokens), (q, tokens)
+    quoted_out = _re.sub(r'"(?:[^"\\]|\\.)*"', "Q", q)
+    values = _re.findall(r"TITLE_ABS:(Q|\w+\*?)", quoted_out)
+    rest = _re.sub(r"TITLE_ABS:(Q|\w+\*?)", "", quoted_out)
+    # Every clause is TITLE_ABS: + a quoted text or one plain word, never an
+    # operator word; between clauses only AND and brackets.
+    assert values and not [v for v in values if v in ("AND", "OR", "NOT")], (q, values)
+    assert set(_re.findall(r"[^\s()]+", rest)) <= {"AND"}, (q, rest)
 
 
 def test_td3_arxiv_keeps_wildcard():
@@ -524,3 +527,44 @@ def test_td3_arxiv_and_term_drops_wildcard_parts_when_others_remain():
     assert q.startswith("(all:survival) AND submittedDate:")
     q = build_arxiv_query(_q([{"title": "", "abstract": "", "both": "cooperati* AND surviv*"}]))
     assert q.startswith("((all:cooperati* AND all:surviv*)) AND submittedDate:")
+
+
+# ── HW1/HW2: wildcard on a hyphenated word ────────────────────────────────────
+# docs/implementation_plan_2026-10-07_hyphen_wildcard.md
+
+@pytest.mark.parametrize("both, expected", [
+    ("COVID-1*", "((TITLE_ABS:COVID AND TITLE_ABS:1*))"),
+    ("kin-select*", "((TITLE_ABS:kin AND TITLE_ABS:select*))"),
+    ("SARS-CoV-*", "((TITLE_ABS:SARS AND TITLE_ABS:CoV))"),     # nothing left to prefix
+    ("adolescen*", "(TITLE_ABS:adolescen*)"),
+    ("kin select*", "((TITLE_ABS:kin AND TITLE_ABS:select*))"),
+])
+def test_hw1_hyphenated_wildcard_is_split(both, expected):
+    assert _text(build_europepmc_query(_q([{"title": "", "abstract": "", "both": both}]))) == expected
+
+
+def test_hw1_arxiv_splits_the_same_way():
+    q = build_arxiv_query(_q([{"title": "", "abstract": "", "both": "COVID-1*"}]))
+    assert q.startswith("((all:COVID AND all:1*)) AND submittedDate:"), q
+
+
+@pytest.mark.parametrize("term, titles", [
+    ("COVID-1*", ["Outcomes after COVID-19", "COVID 1 year on", "covid-19 and sleep"]),
+    ("kin-select*", ["Kin selection in sharks", "kin-selected traits"]),
+])
+def test_hw2_query_is_a_superset_of_the_filter(term, titles):
+    """Every title the local filter keeps contains every word the query sends
+    (wildcard words as prefixes), so no kept paper is missed by the query."""
+    import re as _re
+    from src.filtering import text_group_matches
+    from src.search_terms import normalise_text
+    q = _text(build_europepmc_query(_q([{"title": "", "abstract": "", "both": term}])))
+    sent = _re.findall(r"TITLE_ABS:(\S+?)(?=[\s)])", q)
+    for title in titles:
+        assert text_group_matches({"title": title, "abstract": ""},
+                                  {"title": "", "abstract": "", "both": term}), title
+        words = normalise_text(title).split()
+        for w in sent:
+            w = w.lower()
+            ok = any(x.startswith(w[:-1]) for x in words) if w.endswith("*") else w in words
+            assert ok, (term, title, w)

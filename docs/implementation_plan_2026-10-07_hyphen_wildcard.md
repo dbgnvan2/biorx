@@ -3,7 +3,12 @@
 **Request:** "fix the hyphenated wildcard TODO too".
 **Source:** `TODO.md`, gate follow-ups gate L1
 (`docs/cycles/2026-10-07_gate-todos-qa-gate.md`).
-**Status:** PLAN — awaiting owner approval. No code written.
+**Status:** APPROVED 2026-10-07; built. HW1–HW3 done.
+**During the build:** `test_td1_injection_stays_inside_one_clause` was
+rewritten: splitting on punctuation turns the injected text into plain
+field-prefixed words (`TITLE_ABS:x`), which the old rule (quoted words only)
+rejected. The new rule — every clause is the field plus a quoted text or one
+non-operator word, joined only by AND — still fails when quoting is removed.
 **Touches protected retrieval code:** `src/sources/query_builder.py` (W1.a).
 
 ## 0. Today
