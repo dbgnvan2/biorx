@@ -10,6 +10,14 @@
   HW change (it now terminates instead of recursing). Rare input; leave unless
   it comes up.
 
+## Limits and warnings gate (`docs/cycles/2026-10-08_limits-and-warnings-qa-gate.md`) — APPROVED
+
+- F1: `src/search_limits.search_limits` and `src/limit_summary._osf_narrowed`
+  call `int()` on config values; a blank or non-numeric
+  `search.default_max_results` / `osf.max_title_terms` would make searches
+  fail instead of falling back. Read them defensively (as `osf.py` does) and
+  test a null value.
+
 ## From the browser run (`docs/cycles/2026-09-29_browser-run.md`)
 
 - All findings fixed (see the report). A search including bioRxiv/medRxiv
