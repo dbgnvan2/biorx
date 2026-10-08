@@ -435,3 +435,41 @@ def test_ay2_non_bool_all_years_warns_not_silent(caplog):
     assert date_window(fd)["all_years"] is False
     assert "all_years" not in fd
     assert any("all_years" in r.getMessage() for r in caplog.records)
+
+
+# ── KW5/KW6: the title-or-abstract box matches the authors' keywords ─────────
+# docs/implementation_plan_2026-10-08_author_keywords.md
+
+_IFS = {"text_groups": [{"title": "", "abstract": "", "both": "internal family systems"}]}
+
+
+def test_kw5_keyword_match_kept():
+    p = {"title": "Approaches to ketamine-assisted couple therapy", "abstract": "Couples.",
+         "keywords": ["Ketamine", "Internal Family Systems Therapy"]}
+    assert filter_papers([p], _IFS) == [p]
+    # AND parts may be in different fields, as for title and abstract.
+    assert text_group_matches(p, {"both": "ketamine AND internal family systems"})
+    assert text_group_matches({**p, "keywords": "Internal Family Systems"}, {"both": "internal famil*"})
+
+
+def test_kw5_within_uses_keywords():
+    p = {"title": "Sleep in toddlers", "abstract": "Actigraphy.", "keywords": ["Cortisol"]}
+    assert within_matches(p, ["cortisol"])
+
+
+def test_kw6_phrase_does_not_span_two_keywords():
+    """Adversarial (P7): 'family systems' is not in one keyword."""
+    p = {"title": "x", "abstract": "y", "keywords": ["internal family", "systems theory"]}
+    assert not text_group_matches(p, {"both": "family systems"})
+    assert not within_matches(p, ["family systems"])
+
+
+def test_kw6_title_box_ignores_keywords_and_no_keywords_is_unchanged():
+    p = {"title": "x", "abstract": "y", "keywords": ["Internal Family Systems"]}
+    assert not text_group_matches(p, {"title": "internal family systems"})
+    assert not text_group_matches(p, {"abstract": "internal family systems"})
+    for kw in (None, [], "", [None, 3]):
+        assert not text_group_matches({"title": "x", "abstract": "y", "keywords": kw},
+                                      {"both": "internal family systems"})
+        assert text_group_matches({"title": "Internal family systems", "abstract": "",
+                                   "keywords": kw}, {"both": "internal family systems"})

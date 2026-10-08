@@ -3359,7 +3359,7 @@ def test_dt9e_chip_shows_live_count():
     chips = {c["term"]: c for c in got["chips"]}
     good = chips["cooperative breeding"]
     assert "1,147 in Europe PMC" in good["text"] and "of 30" not in good["text"]
-    assert ("finds 1,147 papers in Europe PMC with it in the title or abstract "
+    assert ("finds 1,147 papers in Europe PMC with it in the title, abstract or keywords "
             "in the last 90 days") in good["title"]
     assert "4 of the 30 sampled papers" in good["title"]          # sample count kept, in the tooltip
     assert good["label"] == "cooperative breeding, 1,147 in Europe PMC"
@@ -3381,7 +3381,7 @@ def test_dt9e_dropped_terms_are_listed():
 def test_dt9c2_page_says_when_every_term_was_dropped():
     got = _render('renderDiscoverChips([], {days_back: 90, live_hits: {}, '
                   'dropped: [{term: "x y z"}, {term: "p q r"}]});')
-    assert got["only"].startswith("No suggested term is in the title or abstract of any "
+    assert got["only"].startswith("No suggested term is in the title, abstract or keywords of any "
                                   "Europe PMC paper in the last 90 days: x y z; p q r.")
 
 
@@ -3889,3 +3889,26 @@ def test_ay5_manual_filter_all_years():
     assert got[0]["all_years"] is True
     assert "days_back" not in got[0] and "start_date" not in got[0]
     assert "all_years" not in got[1] and got[1]["days_back"] == 30
+
+
+# ── KW8: the page names keywords, and shows them in the detail view ──────────
+# docs/implementation_plan_2026-10-08_author_keywords.md#KW8
+
+def test_kw8_keywords_text():
+    got = _node_eval([_js_block(r"function keywordsText\(paper\) \{.*?\n\}")], """[
+      keywordsText({keywords: ["Ketamine", "Internal Family Systems Therapy"]}),
+      keywordsText({keywords: []}), keywordsText({}), keywordsText(null),
+      keywordsText({keywords: "x"}), keywordsText({keywords: ["", " ", 3, "a"]})]""")
+    assert got == ["Keywords: Ketamine; Internal Family Systems Therapy", "", "", "", "",
+                   "Keywords: a"]
+
+
+def test_kw8_modal_and_labels():
+    code = _js_without_comments()
+    modal = re.search(r"async function openModal\(.*?\n\}", code, re.DOTALL).group(0)
+    assert '$("modal-keywords").textContent = keywords;' in modal
+    assert '$("modal-keywords").classList.toggle("hidden", !keywords);' in modal
+    html = INDEX.read_text()
+    assert "Words in title, abstract or keywords" in html
+    assert '["both", "Title, abstract or keywords words"]' in code
+    assert "title or abstract" not in html.lower()

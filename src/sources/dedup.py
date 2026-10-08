@@ -14,6 +14,7 @@ Merge precedence (when two records represent the same work):
   - best_oa_url:    Unpaywall preferred
   - license:        Unpaywall or PMC preferred
   - is_preprint:    preserve explicitly (don't override True with inferred False)
+  - keywords:       union, first-seen order, case-insensitive duplicates dropped
   - source_hits:    append all
   - trust_weight:   take maximum
 """
@@ -104,6 +105,23 @@ def _merge_source_priority(a: CanonicalRecord, b: CanonicalRecord, field: str) -
     return b_val or a_val
 
 
+def merged_keywords(first: Optional[List[str]], second: Optional[List[str]]) -> List[str]:
+    """Both lists' keywords in first-seen order, each once (ignoring case).
+
+    Purpose: A merged paper keeps every source's keywords.
+    Spec:    docs/implementation_plan_2026-10-08_author_keywords.md#KW3
+    Tests:   tests/test_dedup.py::test_kw3_keywords_merged
+    """
+    out: List[str] = []
+    seen = set()
+    for k in list(first or []) + list(second or []):
+        key = k.strip().lower() if isinstance(k, str) else ""
+        if key and key not in seen:
+            seen.add(key)
+            out.append(k)
+    return out
+
+
 def _merge(existing: CanonicalRecord, incoming: CanonicalRecord) -> CanonicalRecord:
     """
     Merge incoming record into existing, returning the merged result.
@@ -115,6 +133,10 @@ def _merge(existing: CanonicalRecord, incoming: CanonicalRecord) -> CanonicalRec
     # Abstract: prefer longer non-empty
     if len(incoming.abstract or "") > len(existing.abstract or ""):
         existing.abstract = incoming.abstract
+
+    # Keywords: every source's, once each (KW3) — the filter matches them, so
+    # keeping only the first source's would depend on which source ran first.
+    existing.keywords = merged_keywords(existing.keywords, incoming.keywords)
 
     # Fill missing identifiers
     if not existing.doi   and incoming.doi:   existing.doi   = incoming.doi

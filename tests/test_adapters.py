@@ -625,3 +625,34 @@ def test_td6_servers_read_from_the_shipped_config_shape():
     adapter, calls = _biorxiv_adapter({}, cfg=cfg)
     adapter.search("x", filter_dict={"days_back": 7})
     assert {c[0] for c in calls} == {"biorxiv"}
+
+
+# ── KW1/KW2: keywords reach the filter, all of them ──────────────────────────
+# docs/implementation_plan_2026-10-08_author_keywords.md
+
+def test_kw1_keywords_in_the_dict():
+    from src.sources.europepmc import EuropePmcAdapter
+    from src.sources.schema import CanonicalRecord
+    rec = EuropePmcAdapter().normalize({**EPMC_FIXTURE, "keywordList": {
+        "keyword": ["Internal Family Systems", "parts work"]}})
+    d = rec.to_dict()
+    assert d["keywords"] == ["Internal Family Systems", "parts work"]
+    assert CanonicalRecord.from_dict(d).keywords == ["Internal Family Systems", "parts work"]
+
+
+def test_kw2_all_keywords_kept():
+    """Real scale (P9): 25 keywords, past the old cap of 10; a match on the
+    25th is kept by the filter. Same for OSF tags."""
+    from src.filtering import filter_papers
+    from src.sources.europepmc import EuropePmcAdapter
+    from src.sources.psyarxiv import PsyArxivAdapter
+    words = [f"topic {i}" for i in range(24)] + ["Internal Family Systems"]
+    group = {"text_groups": [{"title": "", "abstract": "", "both": "internal family systems"}]}
+    epmc = EuropePmcAdapter().normalize({**EPMC_FIXTURE, "title": "Parts", "abstractText": "x",
+                                         "keywordList": {"keyword": words + ["", None]}})
+    attrs = {**PSYARXIV_FIXTURE["attributes"], "title": "Parts", "description": "x",
+             "tags": words}
+    osf = PsyArxivAdapter().normalize({**PSYARXIV_FIXTURE, "attributes": attrs})
+    for rec in (epmc, osf):
+        assert rec.keywords == words
+        assert filter_papers([rec.to_dict()], group), rec.source_hits[0].source

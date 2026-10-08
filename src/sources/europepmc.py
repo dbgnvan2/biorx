@@ -351,7 +351,9 @@ class EuropePmcAdapter:
             license=license_,
             oa_status=oa_status,
             subjects=subjects[:5],
-            keywords=list(keywords)[:10],
+            # Every keyword: the filter matches them, so a cut one would drop
+            # a paper Europe PMC returned for it (KW2).
+            keywords=[k for k in keywords if isinstance(k, str) and k.strip()],
             source_hits=[SourceHit(
                 source=self.source_name,
                 source_record_id=raw.get("id", doi or pmid),

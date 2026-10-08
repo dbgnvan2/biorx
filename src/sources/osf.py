@@ -252,7 +252,8 @@ class OsfPreprintAdapter:
             license=license_name,
             oa_status="open",  # OSF preprint servers are open access
             subjects=subjects[:5],
-            keywords=list(tags)[:10],
+            # Every tag: the filter matches them (KW2).
+            keywords=[t for t in tags if isinstance(t, str) and t.strip()],
             source_hits=[SourceHit(
                 source=self.source_name,
                 source_record_id=osf_id,

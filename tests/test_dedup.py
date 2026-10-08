@@ -253,3 +253,22 @@ def test_t11_same_title_other_first_author_not_merged():
     d.add(a.normalize({"arxiv_id_full": "2401.00002v1", "title": "Agents",
                        "authors": ["Ana de Souza"], "published": "2024-01-02"}))
     assert len(d) == 2
+
+
+# ── KW3: a merged paper keeps every source's keywords ────────────────────────
+# docs/implementation_plan_2026-10-08_author_keywords.md#KW3
+
+@pytest.mark.parametrize("first", ["biorxiv_medrxiv", "europepmc"])
+def test_kw3_keywords_merged(first):
+    epmc = _make(doi="10.1/x", source="europepmc")
+    epmc.keywords = ["Internal Family Systems", "parts"]
+    bio = _make(doi="10.1/x", source="biorxiv_medrxiv")
+    bio.keywords = []
+    other = _make(doi="10.1/x", source="pubmed")
+    other.keywords = ["internal family systems", "self-leadership"]
+    d = Deduplicator()
+    order = [bio, epmc] if first == "biorxiv_medrxiv" else [epmc, bio]
+    for r in order + [other]:
+        d.add(r)
+    (merged,) = d.results()
+    assert merged.keywords == ["Internal Family Systems", "parts", "self-leadership"]

@@ -856,3 +856,32 @@ def test_ay4_all_years_saved_and_read_back(ctx, signed_in):
     ctx.orchestrator = _fake_orchestrator(records=[])
     job_id = signed_in.post(f"/api/filters/{fid}/test").json()["job_id"]
     assert _await_status(signed_in, job_id)["date_window"]["all_years"] is True
+
+
+# ── KW9: a keyword-only paper survives the route ─────────────────────────────
+# docs/implementation_plan_2026-10-08_author_keywords.md#KW9
+
+def _keyword_only_record():
+    r = _record("Approaches to ketamine-assisted couple therapy", abstract="Couples and ketamine.")
+    r.keywords = ["Ketamine", "Internal Family Systems Therapy"]
+    return r
+
+
+def test_kw9_keyword_only_paper_kept(ctx, signed_in):
+    ifs = {**FILTER, "text_groups": [{"title": "", "abstract": "", "both": "internal family systems"}]}
+    ctx.orchestrator = _fake_orchestrator(records=[_keyword_only_record()])
+    job_id = signed_in.post("/api/searches", json={"filter": ifs}).json()["job_id"]
+    _await_status(signed_in, job_id)
+    page = signed_in.get(f"/api/searches/{job_id}/results").json()
+    assert [p["title"] for p in page["results"]] == ["Approaches to ketamine-assisted couple therapy"]
+    assert page["results"][0]["keywords"] == ["Ketamine", "Internal Family Systems Therapy"]
+    # Search within uses keywords too.
+    page = signed_in.get(f"/api/searches/{job_id}/results", params={"within": "ketamine AND therapy"}).json()
+    assert page["total"] == 1
+    page = signed_in.get(f"/api/searches/{job_id}/results", params={"within": "family therapy"}).json()
+    assert page["total"] == 0                            # not a phrase in any one field
+    # A saved filter run keeps it as well.
+    fid = signed_in.post("/api/filters", json={"name": "IFS", "filter": ifs}).json()["id"]
+    ctx.orchestrator = _fake_orchestrator(records=[_keyword_only_record()])
+    job_id = signed_in.post(f"/api/filters/{fid}/test").json()["job_id"]
+    assert _await_status(signed_in, job_id)["matched"] == 1

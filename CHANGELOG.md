@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-08 — the title-or-abstract box also matches the authors' keywords (KW)
+
+From `docs/implementation_plan_2026-10-08_author_keywords.md`.
+
+### Changed
+- "Words in title or abstract" is now "Words in title, abstract or
+  keywords". This box and Search within these results now match:
+  - for Europe PMC and PubMed, the authors' keywords;
+  - for PsyArXiv and SocArXiv, the authors' tags.
+  The separate Title and Abstract boxes are unchanged. PubMed's own
+  Title/Abstract search works the same way. For `internal family systems`,
+  Europe PMC as PubMed now finds 24, the same as PubMed (was 21).
+- Saved filters find more papers (about +2% for `loneliness`, +8% for
+  `cooperati*`).
+- The paper detail view lists the paper's keywords.
+
+### Fixed
+- Only the first 10 keywords or tags were kept, and a paper found by two
+  sources kept only the first source's keywords.
+
 ## 2026-10-08 — the dates searched are shown; an All years choice (DW, AY)
 
 From `docs/implementation_plan_2026-10-08_date_window.md`.

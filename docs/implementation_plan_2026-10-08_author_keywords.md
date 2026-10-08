@@ -1,7 +1,20 @@
 # Implementation plan — match author keywords in the "title or abstract" box (2026-10-08, KW1–KW10)
 
 **Request:** "plan the author keywords change".
-**Status:** PLAN — awaiting approval.
+**Status:** APPROVED 2026-10-08; built. KW1–KW10 done (KW10 on a local
+server; production needs the owner signed in).
+**Live (2026-10-08, the real orchestrator):**
+- `internal family systems`, All years, Europe PMC + PubMed: 30 papers (Europe
+  PMC's 31, less one preprint merged with its published version), up from 27;
+- all three keyword-only PubMed papers are kept (34950063, 35002818,
+  42325314), and the detail view lists their keywords;
+- a nine-group query (2,336 characters) is accepted by Europe PMC (200).
+**Changes from the plan:**
+- Tests that pinned the old `TITLE_ABS`-only clause were updated to the new
+  clause in `tests/test_query_builder.py` (and3, ta1, ta3, td1, hw1, hw-gate-f1),
+  with each new string checked by eye. The injection test now allows the one
+  `OR` that joins the TITLE_ABS and KW forms.
+- Discover wording changed in `web/routes_discover.py` as well as on the page.
 **Touches protected retrieval code (W1.a, flagged):**
 - `src/sources/schema.py` (KW1)
 - `src/sources/europepmc.py` and `src/sources/osf.py` (KW2)

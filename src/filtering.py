@@ -190,6 +190,24 @@ def match_term(term: str, text: str) -> bool:
     return term in text
 
 
+def keyword_fields(paper: Dict[str, Any]) -> List[str]:
+    """The paper's keywords, each its own field, so a phrase cannot run from
+    the end of one keyword into the next (as TD5 keeps title and abstract
+    apart).
+
+    Purpose: The title-or-abstract box also matches the authors' keywords.
+    Spec:    docs/implementation_plan_2026-10-08_author_keywords.md#KW5, #KW6
+    Tests:   tests/test_filtering.py::test_kw5_keyword_match_kept,
+             tests/test_filtering.py::test_kw6_phrase_does_not_span_two_keywords
+    """
+    value = paper.get("keywords") or []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [k for k in value if isinstance(k, str) and k.strip()]
+
+
 def text_group_matches(paper: Dict[str, Any], group: Dict[str, str]) -> bool:
     """
     A group is a set of AND conditions.
@@ -197,6 +215,7 @@ def text_group_matches(paper: Dict[str, Any], group: Dict[str, str]) -> bool:
     A term with uppercase AND needs every part (AND within a term).
     Terms ending in '*' use prefix (begins-with) matching.
     All non-empty fields must match (AND between fields).
+    The "both" box matches the title, the abstract or any one keyword (KW5).
     """
     title    = (paper.get("title")    or "").lower()
     abstract = (paper.get("abstract") or "").lower()
@@ -209,7 +228,9 @@ def text_group_matches(paper: Dict[str, Any], group: Dict[str, str]) -> bool:
         return False
     if abstract_terms and not any(term_matches(t, abstract)        for t in abstract_terms):
         return False
-    if both_terms     and not any(term_matches(t, title, abstract) for t in both_terms):
+    keywords = keyword_fields(paper)
+    if both_terms     and not any(term_matches(t, title, abstract, *keywords)
+                                  for t in both_terms):
         return False
     return True
 
@@ -267,8 +288,9 @@ def date_window(filter_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def within_matches(paper: Dict[str, Any], terms: List[str]) -> bool:
-    """A paper against search-within terms: every term must match its title
-    or abstract (commas = alternatives, AND = all parts, as in any box).
+    """A paper against search-within terms: every term must match its title,
+    abstract or one of its keywords (commas = alternatives, AND = all parts,
+    as in the title-or-abstract box; KW5).
     Empty terms, and terms that are only "AND", are ignored.
 
     Purpose: Narrow a finished search's results without asking any source.
@@ -277,9 +299,11 @@ def within_matches(paper: Dict[str, Any], terms: List[str]) -> bool:
              tests/test_filtering.py::test_sw1_only_title_and_abstract_count
     """
     title, abstract = paper.get("title") or "", paper.get("abstract") or ""
+    keywords = keyword_fields(paper)                       # KW5, as the box
     for term in terms:
         alternatives = split_terms(term)
-        if alternatives and not any(term_matches(t, title, abstract) for t in alternatives):
+        if alternatives and not any(term_matches(t, title, abstract, *keywords)
+                                    for t in alternatives):
             return False
     return True
 

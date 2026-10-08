@@ -101,17 +101,27 @@ def _lucene_term(term: str, field: str = "") -> str:
     return _term_clause(term, field)
 
 
+def _title_abs_or_keyword(part: str) -> str:
+    """One part of a title-or-abstract term: in the title or abstract, or in
+    the authors' keywords, as PubMed's Title/Abstract search does (KW4)."""
+    return f"({_lucene_term(part, 'TITLE_ABS')} OR {_lucene_term(part, 'KW')})"
+
+
 def _lucene_clause(term: str, field: str = "") -> str:
     """One comma-separated term: a single term, or its AND parts in brackets.
 
-    Purpose: Send "a AND b" to Europe PMC as both words, not one phrase.
-    Spec:    docs/implementation_plan_2026-10-07_and_terms.md#AND3
-    Tests:   tests/test_query_builder.py::test_and3_europepmc_queries
+    Purpose: Send "a AND b" to Europe PMC as both words, not one phrase; a
+             title-or-abstract part also matches keywords.
+    Spec:    docs/implementation_plan_2026-10-07_and_terms.md#AND3,
+             docs/implementation_plan_2026-10-08_author_keywords.md#KW4
+    Tests:   tests/test_query_builder.py::test_and3_europepmc_queries,
+             tests/test_query_builder.py::test_kw4_title_abs_parts_also_search_keywords
     """
+    one = _title_abs_or_keyword if field == "TITLE_ABS" else (lambda p: _lucene_term(p, field))
     parts = and_parts(term)
     if len(parts) == 1:
-        return _lucene_term(parts[0], field)
-    return "(" + " AND ".join(_lucene_term(p, field) for p in parts) + ")"
+        return one(parts[0])
+    return "(" + " AND ".join(one(p) for p in parts) + ")"
 
 
 def _group_to_lucene(group: Dict[str, str]) -> str:
@@ -134,7 +144,8 @@ def _group_to_lucene(group: Dict[str, str]) -> str:
         # "both" = title or abstract. A bare term matched every field,
         # full text included, while the app keeps only title/abstract
         # matches: most of the records read were thrown away and real
-        # matches past Max results were never read (TA1).
+        # matches past Max results were never read (TA1). Each part also
+        # searches the authors' keywords (KW4).
         clauses = [_lucene_clause(t, "TITLE_ABS") for t in both_terms]
         parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
 

@@ -385,15 +385,20 @@ def _text(q):
 
 
 @pytest.mark.parametrize("group, expected", [
-    ({"both": "cooperati* AND survival"}, "((TITLE_ABS:cooperati* AND TITLE_ABS:survival))"),
-    ({"both": "a AND b AND c"}, "((TITLE_ABS:a AND TITLE_ABS:b AND TITLE_ABS:c))"),
+    ({"both": "cooperati* AND survival"},
+     "(((TITLE_ABS:cooperati* OR KW:cooperati*) AND (TITLE_ABS:survival OR KW:survival)))"),
+    ({"both": "a AND b AND c"},
+     "(((TITLE_ABS:a OR KW:a) AND (TITLE_ABS:b OR KW:b) AND (TITLE_ABS:c OR KW:c)))"),
     ({"title": "cooperati* AND survival"}, "((TITLE:cooperati* AND TITLE:survival))"),
     ({"abstract": "kin selection AND survival"},
      '((ABSTRACT:"kin selection" AND ABSTRACT:survival))'),
     ({"both": "cooperati* AND survival, kin selection"},
-     '(((TITLE_ABS:cooperati* AND TITLE_ABS:survival) OR TITLE_ABS:"kin selection"))'),
-    ({"both": "anxiety and depression"}, '(TITLE_ABS:"anxiety and depression")'),  # lowercase: phrase
-    ({"both": "cooperative species survival"}, '(TITLE_ABS:"cooperative species survival")'),
+     '((((TITLE_ABS:cooperati* OR KW:cooperati*) AND (TITLE_ABS:survival OR KW:survival)) '
+     'OR (TITLE_ABS:"kin selection" OR KW:"kin selection")))'),
+    ({"both": "anxiety and depression"},
+     '((TITLE_ABS:"anxiety and depression" OR KW:"anxiety and depression"))'),  # lowercase: phrase
+    ({"both": "cooperative species survival"},
+     '((TITLE_ABS:"cooperative species survival" OR KW:"cooperative species survival"))'),
 ])
 def test_and3_europepmc_queries(group, expected):
     g = {"title": "", "abstract": "", "both": "", **group}
@@ -405,7 +410,7 @@ def test_and3_europepmc_and_term_in_two_groups_and_two_fields():
         {"title": "stress AND cortisol", "abstract": "infant*", "both": ""},
         {"title": "", "abstract": "", "both": "sleep AND apnea"}])))
     assert q == ("((((TITLE:stress AND TITLE:cortisol)) AND (ABSTRACT:infant*)) OR "
-                 "((TITLE_ABS:sleep AND TITLE_ABS:apnea)))")
+                 "(((TITLE_ABS:sleep OR KW:sleep) AND (TITLE_ABS:apnea OR KW:apnea))))")
 
 
 def test_and3_a_term_that_is_only_and_is_ignored():
@@ -413,7 +418,7 @@ def test_and3_a_term_that_is_only_and_is_ignored():
     q = build_europepmc_query(_q([{"title": "", "abstract": "", "both": "AND"}]))
     assert "()" not in q and q.startswith("FIRST_PDATE")
     q = build_europepmc_query(_q([{"title": "", "abstract": "", "both": "AND, sleep"}]))
-    assert _text(q) == "(TITLE_ABS:sleep)"
+    assert _text(q) == "((TITLE_ABS:sleep OR KW:sleep))"
 
 
 @pytest.mark.parametrize("group, expected", [
@@ -458,11 +463,12 @@ def test_and5_psyarxiv_keywords_list_the_parts():
 # text too; the app keeps only title/abstract matches, after reading 200.
 
 @pytest.mark.parametrize("both, expected", [
-    ("loneliness", "(TITLE_ABS:loneliness)"),
-    ("kin selection", '(TITLE_ABS:"kin selection")'),
-    ("adolescen*", "(TITLE_ABS:adolescen*)"),
-    ("cooperati* AND survival", "((TITLE_ABS:cooperati* AND TITLE_ABS:survival))"),
-    ("sleep, apnea", "((TITLE_ABS:sleep OR TITLE_ABS:apnea))"),
+    ("loneliness", "((TITLE_ABS:loneliness OR KW:loneliness))"),
+    ("kin selection", '((TITLE_ABS:"kin selection" OR KW:"kin selection"))'),
+    ("adolescen*", "((TITLE_ABS:adolescen* OR KW:adolescen*))"),
+    ("cooperati* AND survival",
+     "(((TITLE_ABS:cooperati* OR KW:cooperati*) AND (TITLE_ABS:survival OR KW:survival)))"),
+    ("sleep, apnea", "(((TITLE_ABS:sleep OR KW:sleep) OR (TITLE_ABS:apnea OR KW:apnea)))"),
 ])
 def test_ta1_both_terms_use_title_abs(both, expected):
     q = build_europepmc_query(_q([{"title": "", "abstract": "", "both": both}]))
@@ -481,7 +487,7 @@ def test_ta3_both_terms_never_bare():
     q = _text(build_europepmc_query(_q([
         {"title": "", "abstract": "", "both": "cooperati* AND survival, kin selection, mice"},
         {"title": "x", "abstract": "", "both": "y AND z"}])))
-    stripped = _re.sub(r'(TITLE_ABS|TITLE|ABSTRACT):("[^"]*"|\S+?)(?=[\s)])', "", q)
+    stripped = _re.sub(r'(TITLE_ABS|TITLE|ABSTRACT|KW):("[^"]*"|\S+?)(?=[\s)])', "", q)
     leftover = [w for w in _re.findall(r"[A-Za-z*\"]+", stripped) if w not in ("AND", "OR")]
     assert leftover == [], (q, leftover)
 
@@ -490,13 +496,13 @@ def test_ta3_both_terms_never_bare():
 # ── TD1/TD3 (docs/implementation_plan_2026-10-07_gate_todos.md) ──────────────
 
 @pytest.mark.parametrize("both, expected", [
-    ("COVID-19: outcomes", '(TITLE_ABS:"COVID-19: outcomes")'),
-    ("COVID-19", '(TITLE_ABS:"COVID-19")'),
-    ("OR", '(TITLE_ABS:"OR")'),
-    ("(x)", '(TITLE_ABS:"(x)")'),
-    ("adolescen*", "(TITLE_ABS:adolescen*)"),
-    ("kin select*", "((TITLE_ABS:kin AND TITLE_ABS:select*))"),
-    ('say "hi"', '(TITLE_ABS:"say \\"hi\\"")'),
+    ("COVID-19: outcomes", '((TITLE_ABS:"COVID-19: outcomes" OR KW:"COVID-19: outcomes"))'),
+    ("COVID-19", '((TITLE_ABS:"COVID-19" OR KW:"COVID-19"))'),
+    ("OR", '((TITLE_ABS:"OR" OR KW:"OR"))'),
+    ("(x)", '((TITLE_ABS:"(x)" OR KW:"(x)"))'),
+    ("adolescen*", "((TITLE_ABS:adolescen* OR KW:adolescen*))"),
+    ("kin select*", "(((TITLE_ABS:kin AND TITLE_ABS:select*) OR (KW:kin AND KW:select*)))"),
+    ('say "hi"', '((TITLE_ABS:"say \\"hi\\"" OR KW:"say \\"hi\\""))'),
 ])
 def test_td1_parts_are_read_as_words(both, expected):
     assert _text(build_europepmc_query(_q([{"title": "", "abstract": "", "both": both}]))) == expected
@@ -509,12 +515,14 @@ def test_td1_injection_stays_inside_one_clause():
     q = _text(build_europepmc_query(_q([{"title": "", "abstract": "",
                                           "both": "x) OR (TITLE_ABS:*"}])))
     quoted_out = _re.sub(r'"(?:[^"\\]|\\.)*"', "Q", q)
-    values = _re.findall(r"TITLE_ABS:(Q|\w+\*?)", quoted_out)
-    rest = _re.sub(r"TITLE_ABS:(Q|\w+\*?)", "", quoted_out)
-    # Every clause is TITLE_ABS: + a quoted text or one plain word, never an
-    # operator word; between clauses only AND and brackets.
+    values = _re.findall(r"(?:TITLE_ABS|KW):(Q|\w+\*?)", quoted_out)
+    rest = _re.sub(r"(?:TITLE_ABS|KW):(Q|\w+\*?)", "", quoted_out)
+    # Every clause is TITLE_ABS: or KW: + a quoted text or one plain word,
+    # never an operator word; between clauses only AND, and the one OR that
+    # joins each part's TITLE_ABS and KW forms (KW4).
     assert values and not [v for v in values if v in ("AND", "OR", "NOT", "ANDNOT")], (q, values)
-    assert set(_re.findall(r"[^\s()]+", rest)) <= {"AND"}, (q, rest)
+    assert set(_re.findall(r"[^\s()]+", rest)) <= {"AND", "OR"}, (q, rest)
+    assert rest.count(" OR ") == 1, (q, rest)
 
 
 def test_td3_arxiv_keeps_wildcard():
@@ -533,11 +541,12 @@ def test_td3_arxiv_and_term_drops_wildcard_parts_when_others_remain():
 # docs/implementation_plan_2026-10-07_hyphen_wildcard.md
 
 @pytest.mark.parametrize("both, expected", [
-    ("COVID-1*", "((TITLE_ABS:COVID AND TITLE_ABS:1*))"),
-    ("kin-select*", "((TITLE_ABS:kin AND TITLE_ABS:select*))"),
-    ("SARS-CoV-*", "((TITLE_ABS:SARS AND TITLE_ABS:CoV))"),     # nothing left to prefix
-    ("adolescen*", "(TITLE_ABS:adolescen*)"),
-    ("kin select*", "((TITLE_ABS:kin AND TITLE_ABS:select*))"),
+    ("COVID-1*", "(((TITLE_ABS:COVID AND TITLE_ABS:1*) OR (KW:COVID AND KW:1*)))"),
+    ("kin-select*", "(((TITLE_ABS:kin AND TITLE_ABS:select*) OR (KW:kin AND KW:select*)))"),
+    ("SARS-CoV-*",                                              # nothing left to prefix
+     "(((TITLE_ABS:SARS AND TITLE_ABS:CoV) OR (KW:SARS AND KW:CoV)))"),
+    ("adolescen*", "((TITLE_ABS:adolescen* OR KW:adolescen*))"),
+    ("kin select*", "(((TITLE_ABS:kin AND TITLE_ABS:select*) OR (KW:kin AND KW:select*)))"),
 ])
 def test_hw1_hyphenated_wildcard_is_split(both, expected):
     assert _text(build_europepmc_query(_q([{"title": "", "abstract": "", "both": both}]))) == expected
@@ -572,13 +581,75 @@ def test_hw2_query_is_a_superset_of_the_filter(term, titles):
 
 
 @pytest.mark.parametrize("both, expected", [
-    ("OR*", '(TITLE_ABS:"OR")'),
-    ("AND*", '(TITLE_ABS:"AND")'),
-    ("ANDNOT*", '(TITLE_ABS:"ANDNOT")'),
-    ("cats OR*", '((TITLE_ABS:cats AND TITLE_ABS:"OR"))'),
-    ("x-NOT*", '((TITLE_ABS:x AND TITLE_ABS:"NOT"))'),
+    ("OR*", '((TITLE_ABS:"OR" OR KW:"OR"))'),
+    ("AND*", '((TITLE_ABS:"AND" OR KW:"AND"))'),
+    ("ANDNOT*", '((TITLE_ABS:"ANDNOT" OR KW:"ANDNOT"))'),
+    ("cats OR*", '(((TITLE_ABS:cats AND TITLE_ABS:"OR") OR (KW:cats AND KW:"OR")))'),
+    ("x-NOT*", '(((TITLE_ABS:x AND TITLE_ABS:"NOT") OR (KW:x AND KW:"NOT")))'),
 ])
 def test_hw_gate_f1_operator_wildcard_terminates(both, expected):
     """HW gate F1: these recursed forever (RecursionError) in both builders."""
     assert _text(build_europepmc_query(_q([{"title": "", "abstract": "", "both": both}]))) == expected
     build_arxiv_query(_q([{"title": "", "abstract": "", "both": both}]))   # must return
+
+
+# ── KW4/KW7: title-or-abstract parts also search the authors' keywords ───────
+# docs/implementation_plan_2026-10-08_author_keywords.md
+
+def test_kw4_title_abs_parts_also_search_keywords():
+    q = _text(build_europepmc_query(_q([{"title": "", "abstract": "",
+                                          "both": "internal family systems"}])))
+    assert q == '((TITLE_ABS:"internal family systems" OR KW:"internal family systems"))'
+    # Title and Abstract boxes, arXiv and OSF are unchanged.
+    q = _text(build_europepmc_query(_q([{"title": "stress", "abstract": "cortisol", "both": ""}])))
+    assert "KW:" not in q
+    assert "KW" not in build_arxiv_query(_q([{"title": "", "abstract": "", "both": "x"}]))
+    assert osf_title_terms({"days_back": 7, "text_groups": [{"title": "kin"}]}, 10) == ["kin"]
+
+
+def _matches_query(q, paper):
+    """A small model of Europe PMC for TITLE_ABS/KW clauses: a quoted value is
+    a phrase of whole words, a bare word a whole word, word* a word prefix.
+    KW is one field holding all keywords, as in Europe PMC."""
+    import re as _re
+    from src.search_terms import normalise_text
+    fields = {"TITLE_ABS": [paper["title"], paper["abstract"]],
+              "KW": [" ; ".join(paper.get("keywords") or [])]}
+
+    def clause(m):
+        field, value = m.group(1), m.group(2)
+        texts = [normalise_text(t).split() for t in fields[field]]
+        if value.startswith('"'):
+            want = normalise_text(value[1:-1].replace('\\"', '"')).split()
+            hit = any(want == w[i:i + len(want)] for w in texts for i in range(len(w)))
+        elif value.endswith("*"):
+            stem = value[:-1].lower()
+            hit = any(x.startswith(stem) for w in texts for x in w)
+        else:
+            hit = any(value.lower() in w for w in texts)
+        return " True " if hit else " False "
+
+    expr = _re.sub(r'(TITLE_ABS|KW):("(?:[^"\\]|\\.)*"|[^\s()]+)', clause, q)
+    expr = expr.replace(" AND ", " and ").replace(" OR ", " or ")
+    return eval(expr, {"__builtins__": {}})      # only True/False/and/or/brackets left
+
+
+@pytest.mark.parametrize("term", ["internal family systems", "internal famil*",
+                                  "ketamine AND internal family systems", "COVID-1*",
+                                  "kin select*", "parts, self-leadership"])
+def test_kw7_query_is_a_superset_of_the_filter(term):
+    from src.filtering import text_group_matches
+    papers = [
+        {"title": "Couple therapy", "abstract": "Ketamine.", "keywords": ["Internal Family Systems"]},
+        {"title": "Internal family systems for teens", "abstract": "", "keywords": []},
+        {"title": "x", "abstract": "y", "keywords": ["ketamine", "internal family systems therapy"]},
+        {"title": "x", "abstract": "y", "keywords": ["COVID-19", "kin selection"]},
+        {"title": "Self-leadership", "abstract": "", "keywords": ["parts work"]},
+        {"title": "x", "abstract": "y", "keywords": ["internal family", "systems theory"]},
+    ]
+    group = {"title": "", "abstract": "", "both": term}
+    q = _text(build_europepmc_query(_q([group])))
+    kept = [p for p in papers if text_group_matches(p, group)]
+    assert kept, term                                  # the case exercises something
+    for p in kept:
+        assert _matches_query(q, p), (term, p, q)

@@ -601,7 +601,7 @@ def test_dt9c_zero_hit_phrase_is_not_offered(signed_in, ctx):
     assert [d["term"] for d in r["dropped"]] == ["cooperative species survival",
                                                   "kin selection survival"]
     assert r["dropped"][0]["reason"] == \
-        "0 papers in Europe PMC with it in the title or abstract, last 90 days"
+        "0 papers in Europe PMC with it in the title, abstract or keywords, last 90 days"
 
 
 def test_dt9b_zero_terms_are_replaced_once(signed_in, ctx):

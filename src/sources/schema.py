@@ -85,6 +85,8 @@ class CanonicalRecord:
             "pmid":                           self.pmid,
             "pmcid":                          self.pmcid,
             "category":                       self.subjects[0] if self.subjects else "",
+            # The authors' keywords: the title-or-abstract box matches them (KW1).
+            "keywords":                       list(self.keywords or []),
             "journal_or_server":              self.journal_or_server,
             "url":                            self.source_url,
             "source_url":                     self.source_url,

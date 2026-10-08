@@ -178,6 +178,16 @@ an existing filter opens with its own sources, keywords and days.
 | AY5 Search tab sends all_years | `test_frontend_wiring.py::test_ay5_manual_filter_all_years` (mutation-checked) | done |
 | AY6 every source gets the window | `test_searches_routes.py::test_ay6_all_sources_get_the_window` (real orchestrator; mutation-checked) | done |
 | AY7 live | local server 2026-10-08, `internal family systems`, All years, Europe PMC + PubMed: "Results — 27 matching · Searched all years (to 2026-10-08)" (Europe PMC's 28 less one preprint merged with its published version); production needs the owner signed in | done (local) |
+| KW1 keywords in the record dict | `tests/test_adapters.py::test_kw1_keywords_in_the_dict` (mutation-checked) | done |
+| KW2 every keyword kept | `test_adapters.py::test_kw2_all_keywords_kept` (25 keywords; mutation-checked for both adapters) | done |
+| KW3 keywords merged | `tests/test_dedup.py::test_kw3_keywords_merged` (both orders; mutation-checked) | done |
+| KW4 query searches KW | `tests/test_query_builder.py::test_kw4_title_abs_parts_also_search_keywords`; pinned clause tests updated | done |
+| KW5 filter and search-within match keywords | `tests/test_filtering.py::test_kw5_*` (2; mutation-checked) | done |
+| KW6 adversarial | `test_filtering.py::test_kw6_*` (2; mutation-checked: keywords joined into one field fails) | done |
+| KW7 query superset of the filter | `test_query_builder.py::test_kw7_query_is_a_superset_of_the_filter` (6; mutation-checked) | done |
+| KW8 page | `tests/web/test_frontend_wiring.py::test_kw8_*` (2; mutation-checked) | done |
+| KW9 route | `tests/web/test_searches_routes.py::test_kw9_keyword_only_paper_kept` | done |
+| KW10 live | real orchestrator and local browser 2026-10-08: 30 papers, the 3 keyword-only PubMed papers kept, Keywords line shown | done (local) |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |

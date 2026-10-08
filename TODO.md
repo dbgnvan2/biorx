@@ -26,10 +26,6 @@
 - [ ] **L2** `_ALL_YEARS_FALLBACK` / `_HINT_FALLBACK` in `src/search_limits.py`
   repeat the values in `sources_config.yaml` (same pattern as `_FALLBACK`).
   Note them as frozen defaults or derive them.
-- [ ] **Not in this batch (owner decision):** PubMed's Title/Abstract also
-  matches author keywords; the app does not (3 of PubMed's 18 2016–2026
-  `internal family systems` papers). Needs its own plan; touches the
-  protected Europe PMC query.
 
 ## From the browser run (`docs/cycles/2026-09-29_browser-run.md`)
 

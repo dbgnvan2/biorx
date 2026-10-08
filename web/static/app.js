@@ -1795,10 +1795,21 @@ async function saveSummariesPdf() {
 
 /* ── Paper detail modal ──────────────────────────────────────────────────── */
 
+/* KW8: "Keywords: a; b" for the detail view, so a match that is only in the
+   authors' keywords can be seen; "" when there are none. Pure. */
+function keywordsText(paper) {
+  const kw = Array.isArray(paper && paper.keywords)
+    ? paper.keywords.filter(k => typeof k === "string" && k.trim()) : [];
+  return kw.length ? `Keywords: ${kw.join("; ")}` : "";
+}
+
 async function openModal(paper, { lookup = true } = {}) {
   state.modalPaper = paperKey(paper);
   $("modal-title").textContent = paper.title || "(untitled)";
   $("modal-abstract").textContent = paper.abstract || "(no abstract)";
+  const keywords = keywordsText(paper);                   // KW8
+  $("modal-keywords").textContent = keywords;
+  $("modal-keywords").classList.toggle("hidden", !keywords);
   $("modal-summary").textContent = "";
   $("modal-summary-meta").textContent = "";
   const pdfHref = safeUrl(paper.pdf_url || paper.best_oa_url);
@@ -1925,7 +1936,7 @@ function selectFilter(filterId) {
 const TEXT_GROUP_FIELDS = [
   ["title", "Title words"],
   ["abstract", "Abstract words"],
-  ["both", "Title or abstract words"],
+  ["both", "Title, abstract or keywords words"],
 ];
 
 function normaliseTextGroup(g) {
@@ -2333,7 +2344,7 @@ function liveCount(term, info) {
   const n = Number(live[term]);
   return { checked: true, n, text: `${n.toLocaleString("en-US")} in Europe PMC`,
            title: `A search for this term finds ${n.toLocaleString("en-US")} ` +
-                  `papers in Europe PMC with it in the title or abstract${days}.` };
+                  `papers in Europe PMC with it in the title, abstract or keywords${days}.` };
 }
 
 /* The names of the terms that were not offered, for the line under the
@@ -2348,7 +2359,7 @@ function renderDiscoverChips(terms, info) {
   if (!terms.length) {
     const dropped = droppedTermsText(info);
     container.textContent = dropped
-      ? `No suggested term is in the title or abstract of any Europe PMC paper` +
+      ? `No suggested term is in the title, abstract or keywords of any Europe PMC paper` +
         `${info.days_back ? ` in the last ${info.days_back} days` : ""}: ${dropped}. ` +
         `Try a shorter description or different words.`
       : "No terms suggested.";

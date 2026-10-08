@@ -161,7 +161,7 @@ def _run_discover(ctx: AppContext, user_id: str, body: DiscoverRequest, resolved
                     logger.warning("Discover: replacement round failed: %s", e)
                 live.update(check_terms(new_terms, count, settings.check_delay_s, progress))
 
-            reason = (f"0 papers in Europe PMC with it in the title or abstract, "
+            reason = (f"0 papers in Europe PMC with it in the title, abstract or keywords, "
                       f"last {settings.days_back} days")
             candidates = list(dict.fromkeys(terms + new_terms))   # in order, once
             offered = [t for t in candidates if live[t] != 0]
