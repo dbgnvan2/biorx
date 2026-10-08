@@ -18,6 +18,19 @@
   fail instead of falling back. Read them defensively (as `osf.py` does) and
   test a null value.
 
+## Date-window gate (`docs/cycles/2026-10-08_date-window-qa-gate.md`) — APPROVED
+
+- [ ] **L1** `dateWindowText` says "Searched all years (to END)" without the start
+  date (the plan's wording). If `search.all_years_start` is ever set to a recent
+  date, show it on the page.
+- [ ] **L2** `_ALL_YEARS_FALLBACK` / `_HINT_FALLBACK` in `src/search_limits.py`
+  repeat the values in `sources_config.yaml` (same pattern as `_FALLBACK`).
+  Note them as frozen defaults or derive them.
+- [ ] **Not in this batch (owner decision):** PubMed's Title/Abstract also
+  matches author keywords; the app does not (3 of PubMed's 18 2016–2026
+  `internal family systems` papers). Needs its own plan; touches the
+  protected Europe PMC query.
+
 ## From the browser run (`docs/cycles/2026-09-29_browser-run.md`)
 
 - All findings fixed (see the report). A search including bioRxiv/medRxiv
