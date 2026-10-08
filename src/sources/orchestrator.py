@@ -38,6 +38,23 @@ class EmptyFilterError(ValueError):
     uses, not only in each front end (review S2, learnings P10)."""
 
 
+def fetched_status(label: str, new: int, duplicates: int) -> str:
+    """The line after a source finishes. A source whose papers were all found
+    already (PubMed after Europe PMC, which includes it) used to read "0
+    fetched", as if it had been skipped.
+
+    Purpose: Say how many of a source's papers were new.
+    Spec:    docs/implementation_plan_2026-10-07_duplicate_status.md#DS1
+    Tests:   tests/test_orchestrator.py::test_ds1_fetched_status,
+             tests/test_orchestrator.py::test_ds2_overlap_is_named
+    """
+    if not duplicates:
+        return f"{label}: {new:,} fetched"
+    if not new:
+        return f"{label}: {duplicates:,} papers read, all already found by an earlier source"
+    return f"{label}: {new:,} new, {duplicates:,} already found by an earlier source"
+
+
 def _report_failure(source_name: str, kind: str,
                     on_status: Optional[Callable[[str], None]],
                     on_source_failure: Optional[Callable[[str, str], None]]) -> None:
@@ -257,7 +274,7 @@ class SourceOrchestrator:
                 total_fetched += fetched
                 known_total   += fetched
                 if on_status:
-                    on_status(f"{label}: {fetched:,} fetched")
+                    on_status(fetched_status(label, fetched, self._last_duplicates))
             except SourceUnavailableError as e:
                 logger.error("Source unavailable (%s): %s", source_name, e)
                 _report_failure(source_name, "unavailable", on_status, on_source_failure)
@@ -381,6 +398,7 @@ class SourceOrchestrator:
         page_limit = self._page_limit(source_name)
         not_matching = 0
         duplicates = 0       # matched, but a paper already read (another version)
+        self._last_duplicates = 0   # never a previous source's count (DS1)
         limited_by_pages = False
         seen_raw  = 0        # records the source sent, duplicates included
         src_total = 0
@@ -517,6 +535,8 @@ class SourceOrchestrator:
             page += 1
 
         logger.info("Source %s: %d records fetched", source_name, fetched)
+        # Read by search() for the line after this source (DS1).
+        self._last_duplicates = duplicates
         if local_filter:
             of_total = f" of {src_total:,}" if src_total else ""
             # Every paper read is one of these; say so, and warn if they do

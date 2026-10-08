@@ -978,3 +978,36 @@ def test_bw3_skip_is_not_a_failure():
     assert calls == [] and records == []
     assert failures == []
     assert not any("page limit" in s for s in statuses), statuses
+
+
+# ── DS: say when a source's papers were already found ────────────────────────
+# docs/implementation_plan_2026-10-07_duplicate_status.md
+
+def test_ds1_fetched_status():
+    from src.sources.orchestrator import fetched_status
+    assert fetched_status("PubMed", 52, 0) == "PubMed: 52 fetched"
+    assert fetched_status("PubMed", 0, 52) == \
+        "PubMed: 52 papers read, all already found by an earlier source"
+    assert fetched_status("PubMed", 3, 49) == "PubMed: 3 new, 49 already found by an earlier source"
+    assert fetched_status("PubMed", 0, 0) == "PubMed: 0 fetched"
+    assert fetched_status("PubMed", 1234, 5678) == \
+        "PubMed: 1,234 new, 5,678 already found by an earlier source"
+
+
+def test_ds2_overlap_is_named():
+    """Two sources returning the same papers (Europe PMC includes PubMed)."""
+    # Same prefix = same DOIs, so the second source's papers are duplicates.
+    def run(second_total):
+        statuses = []
+        records = _orch_with({"europepmc": _PagedAdapter("shared", total=30),
+                              "pubmed": _PagedAdapter("shared", total=second_total)}).search(
+            {"days_back": 7, "text_groups": [{"both": "x"}]}, {"all": True, "selected": []},
+            max_results=200, on_status=statuses.append)
+        return records, statuses
+    records, statuses = run(30)
+    assert len(records) == 30
+    assert "Europe PMC: 30 fetched" in statuses, statuses
+    assert "PubMed: 30 papers read, all already found by an earlier source" in statuses, statuses
+    records, statuses = run(40)
+    assert len(records) == 40
+    assert "PubMed: 10 new, 30 already found by an earlier source" in statuses, statuses
