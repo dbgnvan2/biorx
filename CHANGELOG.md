@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-07 — sources whose papers were already found say so (DS1–DS4)
+
+From `docs/implementation_plan_2026-10-07_duplicate_status.md`.
+
+### Fixed
+- With Europe PMC and PubMed both ticked, PubMed's line read "0 fetched", as
+  if it had been skipped: Europe PMC includes PubMed, so every PubMed paper was
+  already found and merged. It now reads "PubMed: 52 papers read, all already
+  found by an earlier source" (or "3 new, 49 already found"). Unchanged when
+  there are no duplicates.
+
+
 ## 2026-10-07 — bioRxiv/medRxiv read directly only where it helps (BW1–BW7)
 
 From `docs/implementation_plan_2026-10-07_biorxiv_window.md`.

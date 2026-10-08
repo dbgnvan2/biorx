@@ -2,7 +2,7 @@
 
 **Request:** "fix the PubMed '0 fetched' status wording too" (after "why does it
 seem to skip Euro PMC and Pubmed and go to PsyArxiv right away").
-**Status:** PLAN — awaiting owner approval. No code written.
+**Status:** APPROVED 2026-10-07; built. DS1–DS4 done.
 **Touches protected retrieval code:** `src/sources/orchestrator.py` (W1.a) —
 status text only, no change to what is fetched, merged or kept.
 

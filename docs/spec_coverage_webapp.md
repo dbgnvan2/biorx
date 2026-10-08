@@ -136,6 +136,10 @@ an existing filter opens with its own sources, keywords and days.
 | BW6 page shows notes | `tests/web/test_frontend_wiring.py::test_bw6_job_notes_shown`, `test_bw6_poll_passes_the_notes` | done |
 | BW7 config | `tests/test_biorxiv_window.py::test_bw7_*` (2) | done |
 | BW-L live on production | needs a signed-in browser | not done |
+| DS1 fetched_status lines | `tests/test_orchestrator.py::test_ds1_fetched_status` | done |
+| DS2 overlap named (full and partial) | `tests/test_orchestrator.py::test_ds2_overlap_is_named` | done |
+| DS3 records/counts unchanged | full suite | done |
+| DS4 drift baseline | `tests/web/test_no_retrieval_drift.py` | done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |
