@@ -3,6 +3,13 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## Search-within gate (`docs/cycles/2026-10-07_search-within-qa-gate.md`) — APPROVED
+
+- L1, L2, L3, L5 fixed in the same batch. L4 not fixed: title and abstract
+  are joined with a space before matching, so a phrase can match across the
+  join ("…cortisol" + "Sleep…" = "cortisol sleep"). Same as the filter's
+  Title-or-abstract box has always done; fix both together if it matters.
+
 ## AND terms gate (`docs/cycles/2026-10-07_and-terms-qa-gate.md`) — APPROVED
 
 - `_lucene_term` escapes only `"`; a part such as `OR`, `NOT`, or one with

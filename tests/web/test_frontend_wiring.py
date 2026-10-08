@@ -1365,7 +1365,7 @@ def test_e2_run_controls_are_wired():
     ("  cortisol, maternal ", "cortisol, maternal – 2026-09-18"),
 ])
 def test_pf1_default_list_name(label, expected):
-    got = _node_eval([_js_block(r"function defaultListName\(label, isoDate, within\) \{.*?\n\}")],
+    got = _node_eval([_js_block(r"const LIST_NAME_MAX = \d+;"), _js_block(r"function defaultListName\(label, isoDate, within\) \{.*?\n\}")],
                      f"defaultListName({label!r}, '2026-09-18')")
     assert got == expected
 
@@ -1470,7 +1470,7 @@ def test_b2_taken_name_reopens_the_dialog():
     node = shutil.which("node")
     if not node:
         pytest.skip("node is not installed")
-    fns = [_js_block(rf"(async )?function {n}\(.*?\n\}}")
+    fns = [_js_block(r"const LIST_NAME_MAX = \d+;")] + [_js_block(rf"(async )?function {n}\(.*?\n\}}")
            for n in ("nextListName", "defaultListName", "saveResults", "saveResultsAs")]
     script = """
 const prompts = [];
@@ -3416,8 +3416,8 @@ _SW_SCRIPT = r"""
     const n = url.includes("within=") ? 1 : 4;
     if (url.endsWith("/save-as-list")) return { saved: 1, requested: 1, skipped: [] };
     if (url.endsWith("/summaries.pdf")) return { status: 500, ok: false, json: async () => ({}) };
-    return { total: n, total_unrefined: 4, within_max_terms: 10, status: "running",
-             results: [] };
+    return { total: n, total_unrefined: 4, within_max_terms: 10, within_max_chars: 200,
+             status: "running", results: [] };
   }
   const PAGE_SIZE = 50;
   function renderResults() {} function refreshSearchSummaries() {}
@@ -3434,7 +3434,10 @@ def _sw_run(steps, extra=()):
         pytest.skip("node is not installed")
     names = ["withinQuery", "resultsUrl", "loadResults", "withinNote", "renderWithinChips",
              "addWithinTerm", "removeWithinTerm", "applyWithin", *extra]
-    script = "\n".join(_discover_js(*names)) + _SW_SCRIPT + f"""
+    stubs = _SW_SCRIPT
+    for name in extra:              # a real function loaded replaces its stub
+        stubs = re.sub(rf"(async )?function {name}\(\) \{{\}}", "", stubs)
+    script = "\n".join(_discover_js(*names)) + stubs + f"""
       (async () => {{ const out = {{}}; {steps}
         console.log(JSON.stringify(out)); }})();"""
     r = subprocess.run([shutil.which("node"), "-e", script], capture_output=True, text=True,
@@ -3499,7 +3502,7 @@ def test_sw7_refused_while_the_search_runs_and_kept_on_failure():
 def test_sw7_zero_results_note():
     fn = [_js_block(r"function withinNote\(.*?\n\}")]
     assert _node_eval(fn, 'withinNote(0, 183, ["a", "b"])') == \
-        "No results contain all of: a; b. Remove a term to widen."
+        "None of the 183 results of this search contain all of: a; b. Remove a term to widen."
     assert _node_eval(fn, 'withinNote(5, 5, [])') == ""
 
 
@@ -3531,9 +3534,48 @@ def test_sw8_save_and_pdf_send_the_terms_and_name_them():
     pdf = got["bodies"][got["urls"].index("/api/searches/J/summaries.pdf")]
     assert save == {"name": "L", "paper_ids": None, "within": ["cortisol", "infant*"]}
     assert pdf["within"] == ["cortisol", "infant*"] and pdf["paper_ids"] is None
-    name = _node_eval([_js_block(r"function defaultListName\(.*?\n\}")],
+    name = _node_eval([_js_block(r"const LIST_NAME_MAX = \d+;"), _js_block(r"function defaultListName\(.*?\n\}")],
                       'defaultListName("sleep", "2026-10-07", ["cortisol", "infant*"])')
     assert name == "sleep – within cortisol; infant* – 2026-10-07"
-    plain = _node_eval([_js_block(r"function defaultListName\(.*?\n\}")],
+    plain = _node_eval([_js_block(r"const LIST_NAME_MAX = \d+;"), _js_block(r"function defaultListName\(.*?\n\}")],
                        'defaultListName("sleep", "2026-10-07", [])')
     assert plain == "sleep – 2026-10-07"
+
+
+
+def test_sw8_default_list_name_never_passes_the_server_limit():
+    """Search-within gate L1: a long label plus terms made 203 characters,
+    which save-as-list refuses (max 200)."""
+    from web.routes_searches import SaveAsListBody
+    limit = SaveAsListBody.model_fields["name"].metadata[-1].max_length
+    fn = [_js_block(r"const LIST_NAME_MAX = \d+;"), _js_block(r"function defaultListName\(.*?\n\}")]
+    assert _node_eval(fn, "LIST_NAME_MAX") == limit
+    for label, within in (("x" * 200, ["y" * 30]), ("x" * 160, ["a" * 200, "b"]),
+                          ("short", ["y" * 200]), ("x" * 150, [])):
+        name = _node_eval(fn, f"defaultListName({label!r}, '2026-10-07', {within!r})")
+        assert len(name) <= limit, (len(name), label[:5], within)
+        assert name.endswith(" – 2026-10-07")
+
+
+def test_sw5_summaries_list_url_carries_the_terms():
+    """Search-within gate L5: run the real refreshSearchSummaries."""
+    got = _sw_run("""
+      state.within = ["cortisol", "infant*"];
+      globalThis.mergeSummaries = (a, b) => b; globalThis.renderSummariesPanel = () => {};
+      await refreshSearchSummaries();
+      out.url = urls[urls.length - 1];
+    """, extra=("refreshSearchSummaries",))
+    assert got["url"] == "/api/searches/J/summaries?within=cortisol&within=infant*"
+
+
+def test_sw6_input_length_comes_from_the_server():
+    """Search-within gate L3: the page takes the 200-character limit from the
+    results payload instead of a second copy in the HTML."""
+    from web.routes_searches import WITHIN_MAX_CHARS
+    html = (APP_JS.parent / "index.html").read_text()
+    tag = re.search(r'<input id="within-input"[^>]*>', html, re.DOTALL).group(0)
+    assert "maxlength" not in tag
+    got = _sw_run("""
+      await loadResults(); out.max = $("within-input").maxLength;
+    """)
+    assert got["max"] == WITHIN_MAX_CHARS

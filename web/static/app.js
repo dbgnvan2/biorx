@@ -1012,7 +1012,8 @@ async function loadResults() {
   const page = await api("GET", resultsUrl(state.jobId, state.offset, PAGE_SIZE, state.within));
   state.total = page.total;
   state.totalUnrefined = page.total_unrefined ?? page.total;
-  state.withinMax = page.within_max_terms || null;   // the server's limit
+  state.withinMax = page.within_max_terms || null;   // the server's limits
+  if (page.within_max_chars) $("within-input").maxLength = page.within_max_chars;
   state.results = page.results;
   renderResults();
   if (page.status === "done") refreshSearchSummaries();
@@ -1022,7 +1023,8 @@ async function loadResults() {
 function withinNote(total, unrefined, within) {
   if (!within || !within.length) return "";
   const terms = within.join("; ");
-  if (!total) return `No results contain all of: ${terms}. Remove a term to widen.`;
+  if (!total) return `None of the ${unrefined} results of this search contain all of: ` +
+                     `${terms}. Remove a term to widen.`;
   return `Showing ${total} of ${unrefined} results (within: ${terms}). ` +
          `Only this search's results are searched.`;
 }
@@ -1229,11 +1231,18 @@ function saveButtonLabel(checked, total) {
 }
 
 /* Default name for a saved list: what drove the search, and when (PF1). */
+/* The server's limit on a list name (SaveAsListBody.name max_length). */
+const LIST_NAME_MAX = 200;
+
 function defaultListName(label, isoDate, within) {
-  const base = (label || "").trim() || "Search";
+  const base = ((label || "").trim() || "Search").slice(0, 150);
+  const tail = ` – ${isoDate}`;
   const terms = (within || []).join("; ");
-  const refined = terms ? ` – within ${terms}`.slice(0, 40) : "";
-  return `${base.slice(0, 150)}${refined} – ${isoDate}`;
+  // The within part gets what is left, so the name never passes the server's
+  // limit (search-within gate L1: it reached 203 and the save was refused).
+  const room = Math.max(0, LIST_NAME_MAX - base.length - tail.length);
+  const refined = terms ? ` – within ${terms}`.slice(0, Math.min(40, room)) : "";
+  return `${base}${refined}${tail}`;
 }
 
 function updateSaveAsListBtn() {
