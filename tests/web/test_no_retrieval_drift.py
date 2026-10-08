@@ -140,7 +140,10 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from ee3e301 → 155cc75 (HW1, 2026-10-07: a wildcard word is split on spaces and punctuation
 #   in query_builder._term_clause; flagged in docs/implementation_plan_2026-10-07_hyphen_wildcard.md)
 # Updated from 155cc75 → 5eafea4 (HW gate F1/F3: non-recursive _word_clause, shared word splitter)
-BASELINE = "5eafea4"
+# Updated from 5eafea4 → 2e1f1e0 (WS2, 2026-10-08: optional on_source_limit callback in
+#   orchestrator.py carrying read/total counts; flagged in
+#   docs/implementation_plan_2026-10-08_limits_and_warnings.md)
+BASELINE = "2e1f1e0"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
