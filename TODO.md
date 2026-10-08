@@ -3,6 +3,14 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## Duplicate status re-gate (`docs/cycles/2026-10-07_duplicate-status-regate-qa-gate.md`) — APPROVED
+
+- `test_ds2_counts_are_not_shared_between_concurrent_searches` partly checks
+  source text (`inspect.getsource`); replace with a two-thread run.
+- A source re-sending a paper it sent earlier, after another source merged
+  into it, is counted as "already found by an earlier source".
+- The DS1 table in the plan lists four lines; there are now six (repeats).
+
 ## bioRxiv/medRxiv window (`docs/implementation_plan_2026-10-07_biorxiv_window.md`)
 
 - `BiorxivMedrxivAdapter._servers()` reads `biorxiv_medrxiv.servers` from the
