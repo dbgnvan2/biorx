@@ -992,15 +992,27 @@ def test_ds1_fetched_status():
     assert fetched_status("PubMed", 0, 0) == "PubMed: 0 fetched"
     assert fetched_status("PubMed", 1234, 5678) == \
         "PubMed: 1,234 new, 5,678 already found by an earlier source"
+    # DS gate F2: a source's own repeats are not "an earlier source".
+    assert fetched_status("PubMed", 10, 0, 3) == "PubMed: 10 new, 3 repeated within PubMed"
+    assert fetched_status("PubMed", 0, 4, 2) == \
+        "PubMed: 0 new, 4 already found by an earlier source, 2 repeated within PubMed"
+
+
+class _SharedDoiAdapter(_PagedAdapter):
+    """Papers with DOIs shared across sources, labelled with this source."""
+
+    def normalize(self, raw):
+        return _make_record(doi=f"10.1/shared{raw['i']}", source=self.prefix,
+                            title=f"shared paper {raw['i']}")
 
 
 def test_ds2_overlap_is_named():
     """Two sources returning the same papers (Europe PMC includes PubMed)."""
-    # Same prefix = same DOIs, so the second source's papers are duplicates.
+    # Same DOIs, each source's own label — as Europe PMC and PubMed records are.
     def run(second_total):
         statuses = []
-        records = _orch_with({"europepmc": _PagedAdapter("shared", total=30),
-                              "pubmed": _PagedAdapter("shared", total=second_total)}).search(
+        records = _orch_with({"europepmc": _SharedDoiAdapter("europepmc", total=30),
+                              "pubmed": _SharedDoiAdapter("pubmed", total=second_total)}).search(
             {"days_back": 7, "text_groups": [{"both": "x"}]}, {"all": True, "selected": []},
             max_results=200, on_status=statuses.append)
         return records, statuses
@@ -1011,3 +1023,47 @@ def test_ds2_overlap_is_named():
     records, statuses = run(40)
     assert len(records) == 40
     assert "PubMed: 10 new, 30 already found by an earlier source" in statuses, statuses
+
+
+
+class _RepeatingAdapter(_PagedAdapter):
+    """Sends each of its papers twice in one page (a source's own repeats)."""
+
+    def search(self, query, page=1, page_size=50, **_):
+        recs = super().search(query, page, page_size)
+        return recs + recs
+
+
+def test_ds2_own_repeats_are_not_an_earlier_source():
+    """DS gate F2, adversarial (P7): repeats inside one source must not be
+    reported as found by an earlier source."""
+    statuses = []
+    _orch_with({"pubmed": _RepeatingAdapter("solo", total=10)}).search(
+        {"days_back": 7, "text_groups": [{"both": "x"}]}, {"all": True, "selected": []},
+        max_results=200, on_status=statuses.append)
+    assert "PubMed: 10 new, 10 repeated within PubMed" in statuses, statuses
+    assert not any("earlier source" in s for s in statuses), statuses
+
+
+def test_ds2_counts_are_not_shared_between_concurrent_searches():
+    """DS gate F1: the orchestrator is shared and runs searches two at a time.
+    The counts live in each search call, not on the orchestrator."""
+    import inspect
+    from src.sources import orchestrator as o
+    orch = _orch_with({"europepmc": _SharedDoiAdapter("europepmc", total=30),
+                       "pubmed": _SharedDoiAdapter("pubmed", total=30)})
+    orch.search({"days_back": 7, "text_groups": [{"both": "x"}]},
+                {"all": True, "selected": []}, max_results=200)
+    assert not [k for k in vars(orch) if "duplicate" in k or "already" in k], vars(orch).keys()
+    assert "self._last_duplicates" not in inspect.getsource(o)
+
+
+def test_ds3_local_filter_source_keeps_one_final_line():
+    """DS gate F3: bioRxiv/medRxiv posts its own fuller line; no second one."""
+    orch, _ = _sparse_biorxiv(60, 30, every=10)
+    statuses = []
+    orch.search({"days_back": 7, "text_groups": [{"both": "needle"}]},
+                {"all": True, "selected": []}, max_results=200, on_status=statuses.append)
+    finals = [s for s in statuses if s.startswith("bioRxiv / medRxiv:")
+              and ("fetched" in s or "match the filter" in s)]
+    assert finals == ["bioRxiv / medRxiv: 90 of 90 papers read, 9 match the filter"], finals

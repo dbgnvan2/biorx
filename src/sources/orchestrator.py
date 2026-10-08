@@ -38,21 +38,29 @@ class EmptyFilterError(ValueError):
     uses, not only in each front end (review S2, learnings P10)."""
 
 
-def fetched_status(label: str, new: int, duplicates: int) -> str:
+def fetched_status(label: str, new: int, already_found: int = 0, repeats: int = 0) -> str:
     """The line after a source finishes. A source whose papers were all found
     already (PubMed after Europe PMC, which includes it) used to read "0
     fetched", as if it had been skipped.
+
+    already_found: papers an earlier source had returned; repeats: papers this
+    source sent more than once (DS gate F2: they are not "an earlier source").
 
     Purpose: Say how many of a source's papers were new.
     Spec:    docs/implementation_plan_2026-10-07_duplicate_status.md#DS1
     Tests:   tests/test_orchestrator.py::test_ds1_fetched_status,
              tests/test_orchestrator.py::test_ds2_overlap_is_named
     """
-    if not duplicates:
+    if not already_found and not repeats:
         return f"{label}: {new:,} fetched"
-    if not new:
-        return f"{label}: {duplicates:,} papers read, all already found by an earlier source"
-    return f"{label}: {new:,} new, {duplicates:,} already found by an earlier source"
+    if not new and not repeats:
+        return f"{label}: {already_found:,} papers read, all already found by an earlier source"
+    parts = [f"{new:,} new"]
+    if already_found:
+        parts.append(f"{already_found:,} already found by an earlier source")
+    if repeats:
+        parts.append(f"{repeats:,} repeated within {label}")
+    return f"{label}: " + ", ".join(parts)
 
 
 def _report_failure(source_name: str, kind: str,
@@ -257,6 +265,7 @@ class SourceOrchestrator:
                 g_total   = _known + max(eff_total, src_fetched)
                 on_progress(g_fetched, max(g_fetched, g_total))
 
+            counts: Dict[str, int] = {}     # this source's duplicates (DS)
             try:
                 fetched = self._search_source(
                     source_name=source_name,
@@ -270,11 +279,15 @@ class SourceOrchestrator:
                     max_results=budget,
                     on_status=on_status,
                     on_source_failure=on_source_failure,
+                    counts=counts,
                 )
                 total_fetched += fetched
                 known_total   += fetched
-                if on_status:
-                    on_status(fetched_status(label, fetched, self._last_duplicates))
+                # A source that filters locally (bioRxiv/medRxiv) has already
+                # posted its fuller line, repeats included (DS gate F3).
+                if on_status and not getattr(adapter, "filters_locally", False) is True:
+                    on_status(fetched_status(label, fetched, counts.get("already_found", 0),
+                                             counts.get("repeats", 0)))
             except SourceUnavailableError as e:
                 logger.error("Source unavailable (%s): %s", source_name, e)
                 _report_failure(source_name, "unavailable", on_status, on_source_failure)
@@ -377,8 +390,13 @@ class SourceOrchestrator:
         max_results: int,
         on_status: Optional[Callable] = None,
         on_source_failure: Optional[Callable[[str, str], None]] = None,
+        counts: Optional[Dict[str, int]] = None,
     ) -> int:
         """Paginate through a single source and add results to dedup. Returns count fetched.
+
+        `counts`, when given, receives this source's "already_found" (papers an
+        earlier source returned) and "repeats" (papers it sent twice) — a
+        caller-owned dict, so concurrent searches never share it (DS gate F1).
 
         Purpose: Read one source up to its limits, and say so when a limit cut it off.
         Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#B1
@@ -398,7 +416,7 @@ class SourceOrchestrator:
         page_limit = self._page_limit(source_name)
         not_matching = 0
         duplicates = 0       # matched, but a paper already read (another version)
-        self._last_duplicates = 0   # never a previous source's count (DS1)
+        already_found = 0    # duplicates of a paper another source returned (DS)
         limited_by_pages = False
         seen_raw  = 0        # records the source sent, duplicates included
         src_total = 0
@@ -484,6 +502,7 @@ class SourceOrchestrator:
                         not_matching += 1
                         continue
                     before    = len(dedup)
+                    own       = {h.source for h in canonical.source_hits}
                     canonical = dedup.add(canonical)
                     if len(dedup) == before:
                         # Duplicate of an already-seen record (e.g. the heavy
@@ -492,6 +511,10 @@ class SourceOrchestrator:
                         # the page's result count matches the unique set that is
                         # actually saved. Counted, so "N read" adds up.
                         duplicates += 1
+                        # The merged record lists every source that sent it;
+                        # one this record did not come from found it first.
+                        if any(h.source not in own for h in canonical.source_hits):
+                            already_found += 1
                         continue
                     batch.append(canonical)
                     fetched += 1
@@ -535,8 +558,9 @@ class SourceOrchestrator:
             page += 1
 
         logger.info("Source %s: %d records fetched", source_name, fetched)
-        # Read by search() for the line after this source (DS1).
-        self._last_duplicates = duplicates
+        if counts is not None:
+            counts["already_found"] = already_found
+            counts["repeats"] = duplicates - already_found
         if local_filter:
             of_total = f" of {src_total:,}" if src_total else ""
             # Every paper read is one of these; say so, and warn if they do
