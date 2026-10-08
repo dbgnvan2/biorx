@@ -385,15 +385,15 @@ def _text(q):
 
 
 @pytest.mark.parametrize("group, expected", [
-    ({"both": "cooperati* AND survival"}, "((cooperati* AND survival))"),
-    ({"both": "a AND b AND c"}, "((a AND b AND c))"),
+    ({"both": "cooperati* AND survival"}, "((TITLE_ABS:cooperati* AND TITLE_ABS:survival))"),
+    ({"both": "a AND b AND c"}, "((TITLE_ABS:a AND TITLE_ABS:b AND TITLE_ABS:c))"),
     ({"title": "cooperati* AND survival"}, "((TITLE:cooperati* AND TITLE:survival))"),
     ({"abstract": "kin selection AND survival"},
      '((ABSTRACT:"kin selection" AND ABSTRACT:survival))'),
     ({"both": "cooperati* AND survival, kin selection"},
-     '(((cooperati* AND survival) OR "kin selection"))'),
-    ({"both": "anxiety and depression"}, '("anxiety and depression")'),     # lowercase: phrase
-    ({"both": "cooperative species survival"}, '("cooperative species survival")'),
+     '(((TITLE_ABS:cooperati* AND TITLE_ABS:survival) OR TITLE_ABS:"kin selection"))'),
+    ({"both": "anxiety and depression"}, '(TITLE_ABS:"anxiety and depression")'),  # lowercase: phrase
+    ({"both": "cooperative species survival"}, '(TITLE_ABS:"cooperative species survival")'),
 ])
 def test_and3_europepmc_queries(group, expected):
     g = {"title": "", "abstract": "", "both": "", **group}
@@ -404,7 +404,8 @@ def test_and3_europepmc_and_term_in_two_groups_and_two_fields():
     q = _text(build_europepmc_query(_q([
         {"title": "stress AND cortisol", "abstract": "infant*", "both": ""},
         {"title": "", "abstract": "", "both": "sleep AND apnea"}])))
-    assert q == "((((TITLE:stress AND TITLE:cortisol)) AND (ABSTRACT:infant*)) OR ((sleep AND apnea)))"
+    assert q == ("((((TITLE:stress AND TITLE:cortisol)) AND (ABSTRACT:infant*)) OR "
+                 "((TITLE_ABS:sleep AND TITLE_ABS:apnea)))")
 
 
 def test_and3_a_term_that_is_only_and_is_ignored():
@@ -412,7 +413,7 @@ def test_and3_a_term_that_is_only_and_is_ignored():
     q = build_europepmc_query(_q([{"title": "", "abstract": "", "both": "AND"}]))
     assert "()" not in q and q.startswith("FIRST_PDATE")
     q = build_europepmc_query(_q([{"title": "", "abstract": "", "both": "AND, sleep"}]))
-    assert _text(q) == "(sleep)"
+    assert _text(q) == "(TITLE_ABS:sleep)"
 
 
 @pytest.mark.parametrize("group, expected", [
@@ -449,3 +450,36 @@ def test_and5_osf_part_is_a_superset(term):
 def test_and5_psyarxiv_keywords_list_the_parts():
     q = build_psyarxiv_query(_q([{"title": "", "abstract": "", "both": "cooperati* AND survival"}]))
     assert q == "cooperati survival"
+
+
+# ── TA1/TA3: Title-or-abstract terms use Europe PMC's TITLE_ABS field ─────────
+# docs/implementation_plan_2026-10-07_title_abs.md. A bare term matched full
+# text too; the app keeps only title/abstract matches, after reading 200.
+
+@pytest.mark.parametrize("both, expected", [
+    ("loneliness", "(TITLE_ABS:loneliness)"),
+    ("kin selection", '(TITLE_ABS:"kin selection")'),
+    ("adolescen*", "(TITLE_ABS:adolescen*)"),
+    ("cooperati* AND survival", "((TITLE_ABS:cooperati* AND TITLE_ABS:survival))"),
+    ("sleep, apnea", "((TITLE_ABS:sleep OR TITLE_ABS:apnea))"),
+])
+def test_ta1_both_terms_use_title_abs(both, expected):
+    q = build_europepmc_query(_q([{"title": "", "abstract": "", "both": both}]))
+    assert _text(q) == expected
+
+
+def test_ta1_title_and_abstract_boxes_unchanged():
+    q = _text(build_europepmc_query(_q([{"title": "stress", "abstract": "cortisol", "both": ""}])))
+    assert q == "((TITLE:stress) AND (ABSTRACT:cortisol))"
+
+
+def test_ta3_both_terms_never_bare():
+    """Adversarial (P7): every search word in the text part carries a field,
+    so Europe PMC is never asked for full-text-only matches."""
+    import re as _re
+    q = _text(build_europepmc_query(_q([
+        {"title": "", "abstract": "", "both": "cooperati* AND survival, kin selection, mice"},
+        {"title": "x", "abstract": "", "both": "y AND z"}])))
+    stripped = _re.sub(r'(TITLE_ABS|TITLE|ABSTRACT):("[^"]*"|\S+?)(?=[\s)])', "", q)
+    leftover = [w for w in _re.findall(r"[A-Za-z*\"]+", stripped) if w not in ("AND", "OR")]
+    assert leftover == [], (q, leftover)

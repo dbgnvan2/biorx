@@ -3,6 +3,12 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## Europe PMC TITLE_ABS (`docs/implementation_plan_2026-10-07_title_abs.md`)
+
+- The local filter matches a phrase as written, so "kin selection" does not
+  match "kin-selection"; Europe PMC does. Found in the TA3 live check (4 of 5
+  kept). Treating hyphens as spaces in phrase matching would close it.
+
 ## Search-within gate (`docs/cycles/2026-10-07_search-within-qa-gate.md`) — APPROVED
 
 - L1, L2, L3, L5 fixed in the same batch. L4 not fixed: title and abstract

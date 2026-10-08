@@ -2181,7 +2181,7 @@ function liveCount(term, info) {
   const n = Number(live[term]);
   return { checked: true, n, text: `${n.toLocaleString("en-US")} in Europe PMC`,
            title: `A search for this term finds ${n.toLocaleString("en-US")} ` +
-                  `papers in Europe PMC${days}.` };
+                  `papers in Europe PMC with it in the title or abstract${days}.` };
 }
 
 /* The names of the terms that were not offered, for the line under the
@@ -2196,7 +2196,7 @@ function renderDiscoverChips(terms, info) {
   if (!terms.length) {
     const dropped = droppedTermsText(info);
     container.textContent = dropped
-      ? `No suggested term found papers in Europe PMC` +
+      ? `No suggested term is in the title or abstract of any Europe PMC paper` +
         `${info.days_back ? ` in the last ${info.days_back} days` : ""}: ${dropped}. ` +
         `Try a shorter description or different words.`
       : "No terms suggested.";

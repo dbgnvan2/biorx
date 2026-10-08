@@ -600,7 +600,8 @@ def test_dt9c_zero_hit_phrase_is_not_offered(signed_in, ctx):
     assert r["live_hits"] == {"cooperative breeding": 1147}
     assert [d["term"] for d in r["dropped"]] == ["cooperative species survival",
                                                   "kin selection survival"]
-    assert r["dropped"][0]["reason"] == "0 papers in Europe PMC, last 90 days"
+    assert r["dropped"][0]["reason"] == \
+        "0 papers in Europe PMC with it in the title or abstract, last 90 days"
 
 
 def test_dt9b_zero_terms_are_replaced_once(signed_in, ctx):
@@ -758,3 +759,15 @@ def test_and6_and_term_counts_need_every_part():
                             "Cooperative AND Survival"], papers)
     assert hits == {"cooperati* AND survival": 2, "cooperati* AND survival, ants": 3,
                     "Cooperative AND Survival": 2}
+
+
+
+def test_ta4_check_counts_titles_and_abstracts():
+    """docs/implementation_plan_2026-10-07_title_abs.md TA4: the Discover
+    check counts title/abstract matches, as the filter keeps, not full text."""
+    sent = []
+    europepmc_term_count("kin selection", 90,
+                         lambda url, params, timeout: sent.append(params["query"])
+                         or FakeResp(body={"hitCount": 5}), 1)
+    assert 'TITLE_ABS:"kin selection"' in sent[0]
+    assert ' "kin selection"' not in sent[0].replace('TITLE_ABS:"kin selection"', "")

@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-10-07 — Europe PMC searches title and abstract, not full text (TA1–TA6)
+
+From `docs/implementation_plan_2026-10-07_title_abs.md`.
+
+### Fixed
+- Title-or-abstract terms were sent to Europe PMC and PubMed as bare words,
+  which also match full text. The app keeps only title/abstract matches, so
+  most records read (up to Max results) were thrown away and real matches past
+  that limit were never read. They are now sent as `TITLE_ABS:`. Live, first
+  200 records: `loneliness` (14 days) 94 of 200 kept → 94 of 94;
+  `cooperati* AND survival` (14 days) 16 of 200 → 17 of 17 (one paper had
+  been missed).
+- The Discover term check uses the same query, so its counts are now
+  title/abstract counts, matching what a filter shows; the wording says so.
+
+
 ## 2026-10-07 — search within a search's results (SW1–SW8)
 
 From `docs/implementation_plan_2026-10-07_search_within.md`.

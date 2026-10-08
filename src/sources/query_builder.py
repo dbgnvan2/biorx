@@ -77,8 +77,11 @@ def _group_to_lucene(group: Dict[str, str]) -> str:
         parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
 
     if both_terms:
-        # "both" = any field — bare term matches title OR abstract in Europe PMC
-        clauses = [_lucene_clause(t) for t in both_terms]
+        # "both" = title or abstract. A bare term matched every field,
+        # full text included, while the app keeps only title/abstract
+        # matches: most of the records read were thrown away and real
+        # matches past Max results were never read (TA1).
+        clauses = [_lucene_clause(t, "TITLE_ABS") for t in both_terms]
         parts.append("(" + " OR ".join(clauses) + ")" if len(clauses) > 1 else clauses[0])
 
     if not parts:

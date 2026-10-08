@@ -2,7 +2,10 @@
 
 **Found:** 2026-10-07 while checking search-within in a local browser:
 "Found 200 · Matched 16" for `cooperati* AND survival` (Europe PMC, 14 days).
-**Status:** PLAN — awaiting owner approval. No code written.
+**Status:** APPROVED 2026-10-07; built. TA1, TA2, TA4, TA5 done; TA3 partial (see coverage: one term at 80%, a hyphen case in the local filter); TA6 after deploy.
+**Change from the plan:** the term button still reads "N in Europe PMC" (space);
+its tooltip, the dropped-term reason and the all-dropped message say
+"title or abstract".
 **Touches protected retrieval code:** `src/sources/query_builder.py` (W1.a);
 flagged here, drift baseline advanced in the same batch.
 

@@ -3342,7 +3342,8 @@ def test_dt9e_chip_shows_live_count():
     chips = {c["term"]: c for c in got["chips"]}
     good = chips["cooperative breeding"]
     assert "1,147 in Europe PMC" in good["text"] and "of 30" not in good["text"]
-    assert "finds 1,147 papers in Europe PMC in the last 90 days" in good["title"]
+    assert ("finds 1,147 papers in Europe PMC with it in the title or abstract "
+            "in the last 90 days") in good["title"]
     assert "4 of the 30 sampled papers" in good["title"]          # sample count kept, in the tooltip
     assert good["label"] == "cooperative breeding, 1,147 in Europe PMC"
     assert not good["unchecked"] and not good["unmatched"]
@@ -3363,7 +3364,8 @@ def test_dt9e_dropped_terms_are_listed():
 def test_dt9c2_page_says_when_every_term_was_dropped():
     got = _render('renderDiscoverChips([], {days_back: 90, live_hits: {}, '
                   'dropped: [{term: "x y z"}, {term: "p q r"}]});')
-    assert got["only"].startswith("No suggested term found papers in Europe PMC in the last 90 days: x y z; p q r.")
+    assert got["only"].startswith("No suggested term is in the title or abstract of any "
+                                  "Europe PMC paper in the last 90 days: x y z; p q r.")
 
 
 def test_dt9e_old_result_unchanged():

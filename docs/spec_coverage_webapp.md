@@ -123,6 +123,11 @@ an existing filter opens with its own sources, keywords and days.
 | SW8 save/PDF send terms; list name | `test_frontend_wiring.py::test_sw8_save_and_pdf_send_the_terms_and_name_them` | done |
 | SW local browser check | local server, Europe PMC search `cooperati* AND survival` (16 results) → within `cancer` 10 → `+ lung` 6 → remove `cancer` 6; ticks cleared with notice; Save label "Save all 6 results"; matches `/results?within=` totals | done |
 | SW-L live check on production | needs a signed-in browser | not done |
+| TA1 both-terms use TITLE_ABS; Title/Abstract boxes unchanged | `tests/test_query_builder.py::test_ta1_both_terms_use_title_abs` (5), `test_ta1_title_and_abstract_boxes_unchanged`; AND3 expectations updated | done |
+| TA3 no bare search word | `test_query_builder.py::test_ta3_both_terms_never_bare`; live (first 200 records, 2026-10-07): loneliness 47% → 100% kept, cooperati* AND survival 8% → 100%, "kin selection" 14% → 80% (4 of 5: "kin-selection" with a hyphen fails the local phrase match — TODO) | partial (80% on one term vs the plan's > 90%) |
+| TA4 Discover check counts titles and abstracts | `tests/web/test_discover_routes.py::test_ta4_check_counts_titles_and_abstracts`; wording in `test_dt9c_*`, `test_dt9e_*` | done |
+| TA5 drift baseline | `tests/web/test_no_retrieval_drift.py` | done |
+| TA6 live on production | needs a signed-in browser | not done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |
