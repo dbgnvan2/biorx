@@ -166,6 +166,18 @@ an existing filter opens with its own sources, keywords and days.
 | FL4 monitor | `tests/test_monitor.py::test_fl4_*` (2) | done |
 | FL5 limits from config | `test_searches_routes.py::test_fl5_limits_from_config`, `test_frontend_wiring.py::test_fl5_limits_come_from_config_not_the_page` | done |
 | FL6 limit beside Run | `test_frontend_wiring.py::test_fl6_run_limit_line` | done |
+| DW1 window on the job | `tests/web/test_searches_routes.py::test_dw1_window_on_the_job` (mutation-checked) | done |
+| DW2 window text | `tests/web/test_frontend_wiring.py::test_dw2_date_window_text` (mutation-checked) | done |
+| DW3 lines carry the window | `test_frontend_wiring.py::test_dw3_lines_carry_the_window` (mutation-checked), `test_dw3_render_results_and_filter_test_use_the_helpers`, `test_dw3_poll_keeps_the_window_for_the_results` | done |
+| DW4 hint in config | `tests/test_search_limits.py::test_dw4_*` (5), `test_searches_routes.py::test_dw4_hint_in_config_endpoint`, `test_frontend_wiring.py::test_dw4_hint_read_from_config` | done |
+| DW5 monitor logs the window | `tests/test_monitor.py::test_dw5_window_logged` (mutation-checked) | done |
+| AY1 All years dates | `tests/test_filtering.py::test_ay1_all_years_dates` | done |
+| AY2 only true widens | `test_filtering.py::test_ay2_only_true_widens` (7; mutation-checked) | done |
+| AY3 start date from config | `tests/test_search_limits.py::test_ay3_*` (7) | done |
+| AY4 saved filters and editor | `test_searches_routes.py::test_ay4_*` (6; mutation-checked), `test_frontend_wiring.py::test_ay4_date_fields_shown`, `test_ay4_editor_reads_and_writes_all_years` | done |
+| AY5 Search tab sends all_years | `test_frontend_wiring.py::test_ay5_manual_filter_all_years` (mutation-checked) | done |
+| AY6 every source gets the window | `test_searches_routes.py::test_ay6_all_sources_get_the_window` (real orchestrator; mutation-checked) | done |
+| AY7 live | local server 2026-10-08, `internal family systems`, All years, Europe PMC + PubMed: "Results — 27 matching · Searched all years (to 2026-10-08)" (Europe PMC's 28 less one preprint merged with its published version); production needs the owner signed in | done (local) |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |

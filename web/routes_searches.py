@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from src import user_store
-from src.filtering import (filter_papers, fixed_dates, normalise_filter, within_matches,
+from src.filtering import (date_window, filter_papers, fixed_dates, normalise_filter, within_matches,
                            without_license)
 from src.filters_store import EMPTY_FILTER_MESSAGE, filter_has_text
 from src.jobs import Job, JobLookup
@@ -116,7 +116,7 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
     week when a source was simply unreachable (learnings P2).
     """
     # The query builders read the canonical shape too, not only filter_papers.
-    filter_dict = fixed_dates(normalise_filter(filter_dict))
+    filter_dict = fixed_dates(normalise_filter(filter_dict), ctx.sources_config)
     # Enrichment supplies the licence for many papers, so the licence is
     # checked once enrichment has run, not as pages arrive (review B5).
     pre_enrichment = without_license(filter_dict)
@@ -153,6 +153,7 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
             job.phase = message
 
         job.max_results = max_results
+        job.date_window = date_window(filter_dict)
         orchestrator = ctx.get_orchestrator()
         active = orchestrator.resolve_active_sources(source_selection)
         ceiling = search_limits(ctx.sources_config)[1]

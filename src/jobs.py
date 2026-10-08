@@ -145,6 +145,8 @@ class Job:
     source_limits: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     limit_summary: Optional[Dict[str, Any]] = None
     max_results: Optional[int] = None
+    # DW1: the dates the search covered ({start, end, all_years}).
+    date_window: Optional[Dict[str, Any]] = None
     created_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -180,6 +182,7 @@ class Job:
             "notes": list(self.notes),
             "limit_summary": self.limit_summary,
             "max_results": self.max_results,
+            "date_window": self.date_window,
             "created_at": self.created_at,
             "finished_at": self.finished_at,
             "tokens": {

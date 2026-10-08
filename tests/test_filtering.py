@@ -389,3 +389,34 @@ def test_td7_fixed_dates_keeps_legacy_and_explicit_ranges():
     fd = fixed_dates({"days_back": 10})
     assert fd["end_date"] == date.today().isoformat()
     assert fd["start_date"] == (date.today() - timedelta(days=10)).isoformat()
+
+
+# ── AY: All years ─────────────────────────────────────────────────────────────
+# docs/implementation_plan_2026-10-08_date_window.md
+
+def test_ay1_all_years_dates():
+    """All years starts at the configured date and ends today; days_back and
+    stored dates are ignored."""
+    from datetime import date
+    from src.filtering import date_window, fixed_dates
+    cfg = {"search": {"all_years_start": "1900-01-01"}}
+    for extra in ({}, {"days_back": 30}, {"start_date": "2020-01-01", "end_date": "2020-12-31"}):
+        fd = fixed_dates({"all_years": True, **extra}, cfg)
+        assert (fd["start_date"], fd["end_date"]) == ("1900-01-01", date.today().isoformat())
+        assert date_window(fd) == {"start": "1900-01-01", "end": date.today().isoformat(),
+                                   "all_years": True}
+    # Without a config passed, the real sources_config.yaml is read.
+    assert fixed_dates({"all_years": True})["start_date"] == "1900-01-01"
+
+
+@pytest.mark.parametrize("value", [False, "false", "true", 0, 1, None, "yes"])
+def test_ay2_only_true_widens(value):
+    """Adversarial (P7): anything but a real true keeps the filter's own window."""
+    from datetime import date, timedelta
+    from src.filtering import date_window, fixed_dates
+    fd = fixed_dates({"all_years": value, "days_back": 30},
+                     {"search": {"all_years_start": "1900-01-01"}})
+    assert fd["start_date"] == (date.today() - timedelta(days=30)).isoformat()
+    assert date_window(fd)["all_years"] is False
+    fd = fixed_dates({"days_back": 30})                     # key missing
+    assert fd["start_date"] == (date.today() - timedelta(days=30)).isoformat()

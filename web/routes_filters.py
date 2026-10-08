@@ -78,6 +78,18 @@ def _check_filter_limit(filter_dict: Dict[str, Any], ctx: AppContext) -> None:
         filter_dict["max_results"] = n
 
 
+def _check_all_years(filter_dict: Dict[str, Any]) -> None:
+    """AY4: All years is stored as a real bool (400 for anything else), so
+    only a real true widens the window (fixed_dates checks `is True`)."""
+    if "all_years" not in filter_dict:
+        return
+    if not isinstance(filter_dict["all_years"], bool):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="All years must be true or false.")
+    if not filter_dict["all_years"]:
+        filter_dict.pop("all_years")
+
+
 @router.get("/api/filters")
 def list_filters(ctx: AppContext = Depends(get_context),
                  user_id: str = Depends(current_user)):
@@ -90,6 +102,7 @@ def create_filter(body: FilterBody,
                   user_id: str = Depends(current_user)):
     refuse_unusable_facets(body.filter)
     _check_filter_limit(body.filter, ctx)
+    _check_all_years(body.filter)
     _refuse_name_clash(ctx, user_id, body.name)
     filter_id = user_store.insert_filter(
         ctx.db, user_id, body.name, body.filter, body.enabled
@@ -107,6 +120,7 @@ def update_filter(filter_id: int, body: FilterBody,
                             detail="No such filter.")
     refuse_unusable_facets(body.filter)
     _check_filter_limit(body.filter, ctx)
+    _check_all_years(body.filter)
     _refuse_name_clash(ctx, user_id, body.name, exclude_id=filter_id)
     # Updated in place: a rename keeps the filter's id.
     user_store.update_filter(ctx.db, user_id, filter_id, body.name, body.filter,

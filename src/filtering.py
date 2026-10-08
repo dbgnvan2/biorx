@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from src import filter_vocabulary as vocab
 from src.search_terms import and_parts, normalise_text
@@ -213,21 +214,46 @@ def text_group_matches(paper: Dict[str, Any], group: Dict[str, str]) -> bool:
     return True
 
 
-def fixed_dates(filter_dict: Dict[str, Any]) -> Dict[str, Any]:
+def fixed_dates(filter_dict: Dict[str, Any],
+                sources_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """The filter with its date window written out once (start_date/end_date),
     so every source and the bioRxiv/medRxiv note use the same dates even if
     the search runs past midnight (TD7).
 
-    Purpose: One date window per search.
-    Spec:    docs/implementation_plan_2026-10-07_gate_todos.md#TD7
-    Tests:   tests/web/test_searches_routes.py::test_td7_dates_fixed_once
+    Purpose: One date window per search; All years starts it at the
+             configured earliest date (AY1).
+    Spec:    docs/implementation_plan_2026-10-07_gate_todos.md#TD7,
+             docs/implementation_plan_2026-10-08_date_window.md#AY1, #AY2
+    Tests:   tests/web/test_searches_routes.py::test_td7_dates_fixed_once,
+             tests/test_filtering.py::test_ay1_all_years_dates,
+             tests/test_filtering.py::test_ay2_only_true_widens
     """
     from src.sources.query_builder import get_date_range
     # Legacy keys (date_from/date_to) first, or their dates would be replaced
     # by days_back's window (caught by test_b13_legacy_filter_normalised).
     filter_dict = normalise_filter(filter_dict)
-    start, end = get_date_range(filter_dict)
+    if filter_dict.get("all_years") is True:
+        from src.search_limits import all_years_start
+        if sources_config is None:
+            from src.sources.config import load_sources_config
+            sources_config = load_sources_config()
+        start = all_years_start(sources_config)
+        end = datetime.today().strftime("%Y-%m-%d")
+    else:
+        start, end = get_date_range(filter_dict)
     return {**filter_dict, "start_date": start, "end_date": end}
+
+
+def date_window(filter_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """The window a fixed_dates filter searches, for the job and the page.
+
+    Purpose: Say which dates a search covered (DW1).
+    Spec:    docs/implementation_plan_2026-10-08_date_window.md#DW1
+    Tests:   tests/web/test_searches_routes.py::test_dw1_window_on_the_job
+    """
+    return {"start": filter_dict.get("start_date") or "",
+            "end": filter_dict.get("end_date") or "",
+            "all_years": filter_dict.get("all_years") is True}
 
 
 def within_matches(paper: Dict[str, Any], terms: List[str]) -> bool:

@@ -40,9 +40,12 @@ def _ids_used_by_js() -> set:
     # table (review S3), so their ids are read from it.
     table = re.search(r"const FACET_FIELDS = \[(.*?)\];", source, re.DOTALL)
     facet_ids = set(re.findall(r'\[\s*"([\w-]+)",', table.group(1))) if table else set()
+    # The date fields of both forms go through the DATE_FIELD_IDS table (AY4).
+    dates = re.search(r"const DATE_FIELD_IDS = \{(.*?)\n\};", source, re.DOTALL)
+    date_ids = set(re.findall(r':\s*"([\w-]+)"', dates.group(1))) if dates else set()
     return set(re.findall(r'\$\("([^"]+)"\)', source)) | set(
         re.findall(r'getElementById\("([^"]+)"\)', source)
-    ) | facet_ids
+    ) | facet_ids | date_ids
 
 
 def _api_paths_called_by_js() -> set:
@@ -464,6 +467,16 @@ def _js_block(pattern):
     match = re.search(pattern, APP_JS.read_text(), re.DOTALL)
     assert match, f"not found in app.js: {pattern}"
     return match.group(0)
+
+
+_DATE_FNS = ("dateWindowText", "dateFieldsShown", "syncDateFields", "searchedSuffix")
+
+
+def _date_blocks():
+    """The date-window helpers (DW/AY) that progressText, the editor and the
+    result views call; loaded into each harness that runs those."""
+    return ([_js_block(r"const DATE_FIELD_IDS = \{.*?\n\};")]
+            + [_js_block(r"function " + n + r"\(.*?\n\}") for n in _DATE_FNS])
 
 
 def test_fe1_text_group_fields_are_the_ones_filtering_reads():
@@ -1688,7 +1701,7 @@ def test_sign_out_errors_are_shown_and_the_gate_message_is_used_once():
 ])
 def test_fr3_3_progress_text(job, text):
     import json
-    got = _node_eval([_js_block(r"function progressText\(job\) \{.*?\n\}")],
+    got = _node_eval([_js_block(r"function progressText\(job\) \{.*?\n\}"), *_date_blocks()],
                      f"progressText({json.dumps(job)})")
     assert got == text
 
@@ -1821,7 +1834,7 @@ def _run_flow(body):
         _js_block(r"function withinQuery\(.*?\n\}"),
         _js_block(r"function resultsUrl\(.*?\n\}"),
         _js_block(r"async function loadResults\(\) \{.*?\n\}"),
-        _js_block(r"function progressText\(job\) \{.*?\n\}"),
+        _js_block(r"function progressText\(job\) \{.*?\n\}"), *_date_blocks(),
         _js_block(r"function elapsedText\(createdAt, nowSeconds\) \{.*?\n\}"),
         _js_block(r"function enrichProblemsText\(job\) \{.*?\n\}"),
         _js_block(r"function shouldStopPolling\(error, failuresInARow\) \{.*?\n\}"),
@@ -2055,7 +2068,7 @@ function failedSourcesText() { return ""; } function renderFilterTestResults() {
         _js_block(r"const state = \{.*?\n\};"),
         harness,
         _js_block(r"function shouldStopPolling\(error, failuresInARow\) \{.*?\n\}"),
-        _js_block(r"function progressText\(job\) \{.*?\n\}"),
+        _js_block(r"function progressText\(job\) \{.*?\n\}"), *_date_blocks(),
         _js_block(r"function elapsedText\(createdAt, nowSeconds\) \{.*?\n\}"),
         _js_block(r"function enrichProblemsText\(job\) \{.*?\n\}"),
         _js_block(r"async function pollFilterTest\(\) \{.*?\n\}"),
@@ -2558,7 +2571,7 @@ async function populateFacetSelect(id, facet) {
   s.value = "any";
 }
 async function reloadFilterList() {}
-""" + facet_fields + "\n" + "\n".join(fns) + "\n" + body
+""" + facet_fields + "\n" + "\n".join(fns + _date_blocks()) + "\n" + body
 
 
 def test_a3_new_filter_resets_facets():
@@ -3143,7 +3156,8 @@ const document = { createElement: () => fakeEl("") };
 
 
 def _discover_js(*names):
-    return [_FAKE_DOM] + [_js_block(r"(async )?function " + n + r"\(.*?\n\}") for n in names]
+    return ([_FAKE_DOM] + [_js_block(r"(async )?function " + n + r"\(.*?\n\}") for n in names]
+            + _date_blocks())
 
 
 def test_dt6b_term_filter_uses_discover_window():
@@ -3755,3 +3769,123 @@ def test_fl1_editor_reads_and_writes_the_limit():
         return [a.max_results, "max_results" in b];
       })()""")
     assert got == [1200, False]
+
+
+# ── DW / AY: the date window searched, and All years (node-run) ──────────────
+# docs/implementation_plan_2026-10-08_date_window.md
+
+def test_dw2_date_window_text():
+    got = _node_eval(_date_blocks(), """[
+      dateWindowText({start: "2016-10-10", end: "2026-10-08", all_years: false}),
+      dateWindowText({start: "1900-01-01", end: "2026-10-08", all_years: true}),
+      dateWindowText(null), dateWindowText(undefined), dateWindowText({}),
+      dateWindowText({start: "", end: "2026-10-08"})]""")
+    assert got == ["Searched 2016-10-10 to 2026-10-08", "Searched all years (to 2026-10-08)",
+                   "", "", "", ""]
+
+
+def test_dw3_lines_carry_the_window():
+    w = '{start: "2016-10-10", end: "2026-10-08", all_years: false}'
+    got = _node_eval(_date_blocks() + [
+        _js_block(r"function progressText\(job\) \{.*?\n\}"),
+        _js_block(r"function resultsHeadingText\(.*?\n\}"),
+        _js_block(r"function noMatchText\(.*?\n\}")], f"""[
+      progressText({{fetched: 14, matched: 12, phase: "Searching", date_window: {w}}}),
+      progressText({{fetched: 14, matched: 12}}),
+      resultsHeadingText(12, 12, false, dateWindowText({w})),
+      resultsHeadingText(3, 12, true, dateWindowText({w})),
+      resultsHeadingText(12, 12, false, dateWindowText(null)),
+      noMatchText(40, dateWindowText({w})),
+      noMatchText(40, ""),
+      searchedSuffix({{date_window: {w}}}), searchedSuffix({{}})]""")
+    assert got == [
+        "Found 14 · Matched 12 · Searched 2016-10-10 to 2026-10-08 — Searching",
+        "Found 14 · Matched 12",
+        "Results — 12 matching · Searched 2016-10-10 to 2026-10-08",
+        "Results — 3 of 12 matching · Searched 2016-10-10 to 2026-10-08",
+        "Results — 12 matching",
+        "No papers matched your filter (Searched 2016-10-10 to 2026-10-08). 40 were fetched "
+        "and checked — try broader words or a longer date range.",
+        "No papers matched your filter. 40 were fetched and checked — try broader words or a "
+        "longer date range.",
+        " · Searched 2016-10-10 to 2026-10-08", ""]
+    assert not any("undefined" in g for g in got)
+
+
+def test_dw3_render_results_and_filter_test_use_the_helpers():
+    """renderResults draws the heading, hint and empty note from the tested
+    helpers with textContent; the Filters-tab Test line adds the window."""
+    code = _js_without_comments()
+    render = re.search(r"function renderResults\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "resultsHeadingText(" in render and "noMatchText(" in render
+    assert '$("date-window-hint").textContent' in render
+    out = _run_filter_test("""
+      polls.push({ status: "done", fetched: 5, matched: 2, sources_failed: [],
+                   date_window: {start: "2025-10-08", end: "2026-10-08", all_years: false} });
+      await pollFilterTest(); out.after = $("filter-test-status").textContent;
+    """)
+    assert out["after"] == "2 papers matched · Searched 2025-10-08 to 2026-10-08."
+
+
+def test_dw3_poll_keeps_the_window_for_the_results():
+    code = _js_without_comments()
+    poll = re.search(r"async function pollSearchFor\(jobId\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "state.dateWindow = job.date_window || null;" in poll
+    start = re.search(r"async function startSearch\(payload\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert "state.dateWindow = null;" in start             # a new search forgets the old one
+
+
+def test_dw4_hint_read_from_config():
+    code = _js_without_comments()
+    load = re.search(r"async function loadSources\(\) \{.*?\n\}", code, re.DOTALL).group(0)
+    assert 'state.dateWindowHint = health.date_window_hint || "";' in load
+
+
+def test_ay4_date_fields_shown():
+    got = _node_eval(_date_blocks(), """[
+      dateFieldsShown(false, false), dateFieldsShown(false, true),
+      dateFieldsShown(true, false), dateFieldsShown(true, true)]""")
+    assert got == [{"toggle": True, "days": True, "range": False},
+                   {"toggle": True, "days": False, "range": True},
+                   {"toggle": False, "days": False, "range": False},
+                   {"toggle": False, "days": False, "range": False}]
+    hidden = _node_eval(_discover_js(), """(() => {
+      $("filter-all-years").checked = true; syncDateFields("filter");
+      const a = ["filter-date-range-toggle-wrap", "filter-days-wrap", "filter-date-range-wrap"]
+        .map(id => $(id).classList.contains("hidden"));
+      $("filter-all-years").checked = false; syncDateFields("filter");
+      const b = ["filter-date-range-toggle-wrap", "filter-days-wrap", "filter-date-range-wrap"]
+        .map(id => $(id).classList.contains("hidden"));
+      return [a, b]; })()""")
+    assert hidden == [[True, True, True], [False, False, True]]
+
+
+def test_ay4_editor_reads_and_writes_all_years():
+    got = _node_json(_editor_script("""
+(async () => {
+  await loadFilterTab();
+  state.filters = [{ id: 1, name: "Ever", text_groups: [{both: "x"}], all_years: true },
+                   { id: 2, name: "Week", text_groups: [{both: "x"}], days_back: 7 }];
+  selectFilter(1);
+  const ticked = $("filter-all-years").checked; const a = buildFilterDict();
+  selectFilter(2);
+  const b = buildFilterDict();
+  selectFilter(1); await newFilter();
+  console.log(JSON.stringify({ ticked, a, b, afterNew: $("filter-all-years").checked }));
+})();"""))
+    assert got["ticked"] is True
+    assert got["a"]["all_years"] is True and "days_back" not in got["a"] and "start_date" not in got["a"]
+    assert "all_years" not in got["b"] and got["b"]["days_back"] == 7
+    assert got["afterNew"] is False
+
+
+def test_ay5_manual_filter_all_years():
+    got = _node_eval(_discover_js("manualFilter") + ['const ANY = "(any)";'], """(() => {
+      $("q-both").value = "internal family systems";
+      $("search-days").value = "30";
+      $("search-all-years").checked = true; const a = manualFilter();
+      $("search-all-years").checked = false; const b = manualFilter();
+      return [a, b]; })()""")
+    assert got[0]["all_years"] is True
+    assert "days_back" not in got[0] and "start_date" not in got[0]
+    assert "all_years" not in got[1] and got[1]["days_back"] == 30

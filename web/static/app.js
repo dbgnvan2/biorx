@@ -641,6 +641,7 @@ async function loadSources() {
     const health = await api("GET", "/api/config");     // signed-in only (M7)
     state.sources = (health.sources || []).filter(s => s.enabled);
     applySearchLimits(health.search_limits);
+    state.dateWindowHint = health.date_window_hint || "";   // DW4
     state.findByTitleDefault = health.find_by_title_default !== false;
     $("find-by-title").checked = findByTitle() !== false;
     if (health.startup_warnings && health.startup_warnings.length) {
@@ -857,8 +858,41 @@ function shouldStopPolling(error, failuresInARow) {
 function progressText(job) {
   const parts = [`Found ${job.fetched || 0}`, `Matched ${job.matched || 0}`];
   if (job.enrich_total > 0) parts.push(`Enriched ${job.enriched || 0}/${job.enrich_total}`);
+  const searched = dateWindowText(job.date_window);       // DW3
+  if (searched) parts.push(searched);
   const step = job.phase || job.status || "";
   return parts.join(" · ") + (step ? ` — ${step}` : "");
+}
+
+/* DW2: the dates a search covered, from the job's date_window; "" for an
+   older job without one. Pure, for the node-run test. */
+function dateWindowText(w) {
+  if (!w || !w.end) return "";
+  if (w.all_years) return `Searched all years (to ${w.end})`;
+  return w.start ? `Searched ${w.start} to ${w.end}` : "";
+}
+
+/* AY4/AY5: which date fields show. All years hides Days back, the date
+   boxes and the date-range switch. Pure, for the node-run test. */
+function dateFieldsShown(allYears, useRange) {
+  return { toggle: !allYears, days: !allYears && !useRange, range: !allYears && !!useRange };
+}
+
+const DATE_FIELD_IDS = {
+  search: { all: "search-all-years", range: "search-date-range-toggle",
+            toggleWrap: "search-date-range-toggle-wrap", daysWrap: "search-days-wrap",
+            rangeWrap: "search-date-range-wrap" },
+  filter: { all: "filter-all-years", range: "filter-date-range-toggle",
+            toggleWrap: "filter-date-range-toggle-wrap", daysWrap: "filter-days-wrap",
+            rangeWrap: "filter-date-range-wrap" },
+};
+
+function syncDateFields(form) {
+  const ids = DATE_FIELD_IDS[form];
+  const shown = dateFieldsShown($(ids.all).checked, $(ids.range).checked);
+  $(ids.toggleWrap).classList.toggle("hidden", !shown.toggle);
+  $(ids.daysWrap).classList.toggle("hidden", !shown.days);
+  $(ids.rangeWrap).classList.toggle("hidden", !shown.range);
 }
 
 /* How long a job has been running, e.g. "(1m 05s)". It ticks on every poll
@@ -906,7 +940,9 @@ function manualFilter() {
   };
   const cat = $("search-category").value;
   if (cat && cat !== ANY) f.category = cat;
-  if (useRange) {
+  if ($("search-all-years").checked) {
+    f.all_years = true;                                    // AY5
+  } else if (useRange) {
     f.start_date = $("search-start-date").value;
     f.end_date   = $("search-end-date").value;
   } else {
@@ -923,6 +959,7 @@ async function startSearch(payload) {
   state.fetched = 0;
   state.checkedPapers.clear();
   state.searchSummaries = [];
+  state.dateWindow = null;
   // A new search starts without search-within terms (SW7).
   state.within = [];
   $("within-input").value = "";
@@ -1004,6 +1041,7 @@ async function pollSearchFor(jobId) {
   state.pollFailures = 0;
 
   $("phase").textContent = progressText(job);
+  state.dateWindow = job.date_window || null;
   $("phase-elapsed").textContent = elapsedText(job.created_at, Date.now() / 1000);
   renderJobNotes(job.notes);
   if (job.total > 0) {
@@ -1191,20 +1229,32 @@ async function applyWithin(terms) {
   }
 }
 
+/* DW3: the results heading, with the dates searched when known. Pure. */
+function resultsHeadingText(total, unrefined, refined, searched) {
+  return (refined ? `Results — ${total} of ${unrefined} matching` : `Results — ${total} matching`)
+    + (searched ? ` · ${searched}` : "");
+}
+
+/* DW3: the note when papers were fetched but none matched. Pure. */
+function noMatchText(fetched, searched) {
+  return `No papers matched your filter${searched ? ` (${searched})` : ""}. ` +
+         `${fetched} were fetched and checked — try broader words or a longer date range.`;
+}
+
 function renderResults() {
   const body = $("results-body");
   body.textContent = "";
   $("results-card").classList.remove("hidden");
-  $("results-heading").textContent = state.within.length
-    ? `Results — ${state.total} of ${state.totalUnrefined} matching`
-    : `Results — ${state.total} matching`;
+  const searched = dateWindowText(state.dateWindow);      // DW3
+  $("results-heading").textContent = resultsHeadingText(
+    state.total, state.totalUnrefined, state.within.length > 0, searched);
+  $("date-window-hint").textContent = searched ? (state.dateWindowHint || "") : "";
+  $("date-window-hint").classList.toggle("hidden", !searched || !state.dateWindowHint);
   renderWithinChips();
 
   const empty = $("empty-note");
   if (state.total === 0 && state.fetched > 0) {
-    empty.textContent =
-      `No papers matched your filter. ${state.fetched} were fetched and checked — ` +
-      `try broader words or a longer date range.`;
+    empty.textContent = noMatchText(state.fetched, searched);
     empty.classList.remove("hidden");
   } else if (state.total === 0) {
     empty.textContent = "The sources returned nothing for this search.";
@@ -1840,9 +1890,9 @@ function selectFilter(filterId) {
   const startDate = fd.start_date || fd.date_from || "";
   const endDate   = fd.end_date   || fd.date_to   || "";
   const useRange = !!(startDate || endDate);
+  $("filter-all-years").checked = fd.all_years === true;  // AY4
   $("filter-date-range-toggle").checked = useRange;
-  $("filter-days-wrap").classList.toggle("hidden", useRange);
-  $("filter-date-range-wrap").classList.toggle("hidden", !useRange);
+  syncDateFields("filter");
   $("filter-days").value = fd.days_back || 7;
   $("filter-max").value = fd.max_results || "";        // empty = the default (FL1)
   $("filter-start-date").value = startDate;
@@ -1948,7 +1998,9 @@ function buildFilterDict() {
     authors:     $("filter-authors").value.split(",").map(s => s.trim()).filter(Boolean),
     source_selection: getSourceSelection($("filter-sources-picker")),
   };
-  if (useRange) {
+  if ($("filter-all-years").checked) {
+    f.all_years = true;                                    // AY4
+  } else if (useRange) {
     f.start_date = $("filter-start-date").value;
     f.end_date   = $("filter-end-date").value;
   } else {
@@ -1969,9 +2021,9 @@ async function newFilter() {
   $("filter-enabled").checked = true;
   $("filter-days").value = 7;
   $("filter-max").value = "";
+  $("filter-all-years").checked = false;
   $("filter-date-range-toggle").checked = false;
-  $("filter-days-wrap").classList.remove("hidden");
-  $("filter-date-range-wrap").classList.add("hidden");
+  syncDateFields("filter");
   $("filter-authors").value = "";
   // A3: a new filter starts with no restrictions; the last filter's category,
   // paper type, licence etc. were kept and saved into it unseen.
@@ -2112,11 +2164,18 @@ async function pollFilterTestFor(jobId) {
       renderFilterTestResults(page.results || []);
       const enrichNote = enrichProblemsText(job);
       $("filter-test-status").textContent =
-        `${page.total} papers matched.${failed}${enrichNote ? " " + enrichNote : ""}`;
+        `${page.total} papers matched${searchedSuffix(job)}.${failed}` +
+        `${enrichNote ? " " + enrichNote : ""}`;
     } else {
       $("filter-test-status").textContent = (job.error || job.status) + failed;
     }
   }
+}
+
+/* " · Searched …" for a job's window, or "" (DW3). Pure. */
+function searchedSuffix(job) {
+  const searched = dateWindowText(job && job.date_window);
+  return searched ? ` · ${searched}` : "";
 }
 
 function renderFilterTestResults(papers) {
@@ -2447,7 +2506,8 @@ async function addTermAsGroup(term) {
                                       .map(f => f.name);
   const name = appendedFilterName(current, term, others);
   const note = windowNote($("filter-days").value,
-                          $("filter-date-range-toggle").checked, state.discoverDays);
+                          $("filter-date-range-toggle").checked || $("filter-all-years").checked,
+                          state.discoverDays);
   renderTextGroups(groupsWithTerm(groups, term));
   if (name === null) {
     await saveTermFilter(`Added "${term}" to "${current}" as a new group. The ` +
@@ -3394,11 +3454,8 @@ function wire() {
   $("tab-settings").addEventListener("click", () => switchTab("settings"));
 
   // Search tab
-  $("search-date-range-toggle").addEventListener("change", () => {
-    const on = $("search-date-range-toggle").checked;
-    $("search-days-wrap").classList.toggle("hidden", on);
-    $("search-date-range-wrap").classList.toggle("hidden", !on);
-  });
+  $("search-date-range-toggle").addEventListener("change", () => syncDateFields("search"));
+  $("search-all-years").addEventListener("change", () => syncDateFields("search"));
   $("search-filter-select").addEventListener("change", renderFilterRunButtons);
   $("btn-run-filter").addEventListener("click", runSelectedFilter);
   $("run-search").addEventListener("click", runAdHocSearch);
@@ -3428,11 +3485,8 @@ function wire() {
   $("btn-filter-saveas").addEventListener("click", saveFilterAs);
   $("btn-filter-delete").addEventListener("click", deleteFilter);
   $("btn-filter-test").addEventListener("click", testFilter);
-  $("filter-date-range-toggle").addEventListener("change", () => {
-    const on = $("filter-date-range-toggle").checked;
-    $("filter-days-wrap").classList.toggle("hidden", on);
-    $("filter-date-range-wrap").classList.toggle("hidden", !on);
-  });
+  $("filter-date-range-toggle").addEventListener("change", () => syncDateFields("filter"));
+  $("filter-all-years").addEventListener("change", () => syncDateFields("filter"));
   $("btn-add-group").addEventListener("click", () => {
     const groups = collectTextGroups(true);
     groups.push({});

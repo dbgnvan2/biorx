@@ -1,7 +1,20 @@
 # Implementation plan — show the date window, and an "All years" choice (2026-10-08, DW1–DW5, AY1–AY7)
 
 **Request:** "plan both — date window in results and all years."
-**Status:** PLAN — awaiting approval.
+**Status:** APPROVED 2026-10-08; built. DW1–DW5, AY1–AY7 done (AY7 on a
+local server; production needs the owner signed in).
+**Changes from the plan:**
+- The DW4 tests are in `tests/test_search_limits.py` and
+  `tests/web/test_searches_routes.py` (`/api/config`), not
+  `tests/web/test_app.py`.
+- The AY4 route tests are in `test_searches_routes.py`, next to the FL1 ones.
+- The heading and empty-note text moved into pure helpers
+  (`resultsHeadingText`, `noMatchText`) so they could be tested.
+- The date fields of both forms are listed in one table (`DATE_FIELD_IDS`),
+  which the orphaned-controls test reads.
+- AY7 live: 27, not 28. One Europe PMC record is a PsyArXiv preprint of a
+  paper also in the list (published August 2026); de-duplication merges
+  them, which is correct.
 **Touches protected retrieval code:** none planned. Every source already takes
 the start/end dates that `fixed_dates` (`src/filtering.py`, not protected)
 writes out; All years only changes the start date written there.

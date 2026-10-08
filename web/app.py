@@ -164,6 +164,7 @@ def create_app(ctx: AppContext = None) -> FastAPI:
         enabled_sources = orch.get_enabled_sources() if orch else []
         from src.sources.config import get_default_selected_sources, source_label
         from .routes_searches import search_limits
+        from src.search_limits import date_window_hint
         server_defaults = set(get_default_selected_sources(c.sources_config or {}))
         sources_list = [
             {"id": sid, "label": source_label(sid), "enabled": True,
@@ -183,6 +184,8 @@ def create_app(ctx: AppContext = None) -> FastAPI:
             # FL5: the page takes the limit's default and maximum from here.
             "search_limits": dict(zip(("default", "ceiling"),
                                       search_limits(c.sources_config))),
+            # DW4: the line under the results explaining the dates searched.
+            "date_window_hint": date_window_hint(c.sources_config),
             # Where summaries look for free full text (plan 2026-09-19 C4).
             # Unpaywall needs a contact email; without one it is not listed.
             "full_text_finders": _full_text_finders(c.sources_config or {}),

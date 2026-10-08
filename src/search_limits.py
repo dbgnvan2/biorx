@@ -16,6 +16,7 @@ from typing import Any, Mapping, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 _FALLBACK = (200, 2000)
+_ALL_YEARS_FALLBACK = "1900-01-01"
 
 
 def search_limits(sources_config: Optional[Mapping]) -> Tuple[int, int]:
@@ -53,3 +54,39 @@ def filter_limit(filter_dict: Mapping, sources_config: Optional[Mapping]) -> int
     except ValueError as e:
         logger.warning("Filter has an unusable max_results (%s); using %d", e, default)
         return default
+
+
+def all_years_start(sources_config: Optional[Mapping]) -> str:
+    """The start date for an All years search, from search.all_years_start.
+
+    Purpose: One configured earliest date for All years (no year in code).
+    Spec:    docs/implementation_plan_2026-10-08_date_window.md#AY3
+    Tests:   tests/test_search_limits.py::test_ay3_*
+    """
+    from datetime import date
+    value = ((sources_config or {}).get("search") or {}).get("all_years_start")
+    try:
+        return date.fromisoformat(str(value)).isoformat()
+    except (TypeError, ValueError):
+        logger.warning("sources_config search.all_years_start is missing or not a "
+                       "date (%r) — using %s", value, _ALL_YEARS_FALLBACK)
+        return _ALL_YEARS_FALLBACK
+
+
+_HINT_FALLBACK = ("Dates are when a paper first appeared, online or in print, "
+                  "so a source's own date can differ.")
+
+
+def date_window_hint(sources_config: Optional[Mapping]) -> str:
+    """The line under the results explaining the dates searched (date_window.hint).
+
+    Purpose: Editorial wording for the date window in config (rule 9).
+    Spec:    docs/implementation_plan_2026-10-08_date_window.md#DW4
+    Tests:   tests/web/test_searches_routes.py::test_dw4_config_hint,
+             tests/web/test_searches_routes.py::test_dw4_missing_key_falls_back
+    """
+    hint = ((sources_config or {}).get("date_window") or {}).get("hint")
+    if not isinstance(hint, str) or not hint.strip():
+        logger.warning("sources_config has no date_window.hint — using the built-in wording")
+        return _HINT_FALLBACK
+    return hint.strip()

@@ -294,3 +294,22 @@ def test_fl4_explicit_max_overrides_and_is_logged(caplog):
         seen = _main_with_filters(FILTERS, ["--all", "--dry-run", "--max", "50"])
     assert [m for _n, m in seen] == [50, 50, 50]
     assert any("--max 50 overrides" in r.getMessage() for r in caplog.records)
+
+
+# ── DW5: the monitor names the dates searched ────────────────────────────────
+# docs/implementation_plan_2026-10-08_date_window.md#DW5
+
+def test_dw5_window_logged(caplog):
+    from datetime import date, timedelta
+    orch = MagicMock()
+    orch.search.return_value = []
+    orch.config = {"search": {"all_years_start": "1900-01-01"}}
+    orch.resolve_active_sources.return_value = []
+    group = [{"title": "", "abstract": "", "both": "x"}]
+    with caplog.at_level("INFO"):
+        monitor.run_search(orch, {"text_groups": group, "days_back": 10}, "recent")
+        monitor.run_search(orch, {"text_groups": group, "all_years": True}, "ever")
+    text = [r.getMessage() for r in caplog.records]
+    today = date.today().isoformat()
+    assert f"[recent] Searching {(date.today() - timedelta(days=10)).isoformat()} to {today}" in text
+    assert f"[ever] Searching all years (1900-01-01 to {today})" in text

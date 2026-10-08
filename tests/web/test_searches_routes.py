@@ -773,3 +773,86 @@ def test_ws1_summary_shown_while_the_search_runs(ctx, signed_in):
     finally:
         release.set()
     _await_status(signed_in, job_id)
+
+
+# ── DW / AY: the date window searched, and All years ─────────────────────────
+# docs/implementation_plan_2026-10-08_date_window.md
+
+def test_dw1_window_on_the_job(ctx, signed_in):
+    """The job carries the window fixed_dates set: days_back, From/To, All years."""
+    from datetime import date, timedelta
+    today = date.today().isoformat()
+    cases = [
+        ({**FILTER, "days_back": 30},
+         {"start": (date.today() - timedelta(days=30)).isoformat(), "end": today, "all_years": False}),
+        ({**FILTER, "start_date": "2020-01-01", "end_date": "2020-12-31"},
+         {"start": "2020-01-01", "end": "2020-12-31", "all_years": False}),
+        ({**FILTER, "all_years": True},
+         {"start": "1900-01-01", "end": today, "all_years": True}),
+    ]
+    for filter_dict, window in cases:
+        ctx.orchestrator = _fake_orchestrator(records=[])
+        job_id = signed_in.post("/api/searches", json={"filter": filter_dict}).json()["job_id"]
+        assert _await_status(signed_in, job_id)["date_window"] == window
+
+
+def test_ay6_all_sources_get_the_window(ctx, signed_in):
+    """With the real orchestrator, every source's request carries the All
+    years start date; bioRxiv/medRxiv gets its last-21-days note."""
+    from src.sources.orchestrator import SourceOrchestrator
+    seen = {}
+
+    def recorder(name):
+        class _Recorder:
+            last_page_size = 0
+            last_total = 0
+
+            def search(self, query, page=1, page_size=50, filter_dict=None, **_):
+                seen[name] = (query, (filter_dict or {}).get("start_date"))
+                return []
+
+            def normalize(self, raw):
+                raise NotImplementedError
+        return _Recorder()
+
+    names = ("europepmc", "pubmed", "arxiv", "psyarxiv", "socarxiv", "biorxiv_medrxiv")
+    orch = SourceOrchestrator(ctx.sources_config)
+    orch._search_adapters = {n: recorder(n) for n in names}
+    ctx.orchestrator = orch
+    job_id = signed_in.post("/api/searches", json={
+        "filter": {**FILTER, "all_years": True},
+        "source_selection": {"all": False, "selected": list(names)}}).json()["job_id"]
+    body = _await_status(signed_in, job_id)
+    assert set(seen) == set(names)
+    assert "FIRST_PDATE:[1900-01-01 TO" in seen["europepmc"][0]
+    assert "FIRST_PDATE:[1900-01-01 TO" in seen["pubmed"][0]
+    assert "submittedDate:[190001010000 TO" in seen["arxiv"][0]
+    for name in ("arxiv", "psyarxiv", "socarxiv", "biorxiv_medrxiv"):
+        assert seen[name][1] == "1900-01-01", name
+    assert any("last 21 days" in n for n in body["notes"])
+
+
+def test_dw4_hint_in_config_endpoint(signed_in):
+    hint = signed_in.get("/api/config").json()["date_window_hint"]
+    assert hint.startswith("Dates are when a paper first appeared")
+
+
+@pytest.mark.parametrize("bad", ["true", 1, 0, None, "yes"])
+def test_ay4_all_years_must_be_a_bool(ctx, signed_in, bad):
+    r = signed_in.post("/api/filters", json={"name": f"AY {bad}", "filter": {**FILTER, "all_years": bad}})
+    assert r.status_code == 400 and "All years" in r.json()["detail"]
+
+
+def test_ay4_all_years_saved_and_read_back(ctx, signed_in):
+    fid = signed_in.post("/api/filters", json={"name": "Ever",
+                                               "filter": {**FILTER, "all_years": True}}).json()["id"]
+    got = [f for f in signed_in.get("/api/filters").json()["filters"] if f["id"] == fid][0]
+    assert got.get("filter", got)["all_years"] is True
+    r = signed_in.put(f"/api/filters/{fid}", json={"name": "Ever", "filter": {**FILTER, "all_years": False}})
+    assert r.status_code == 200
+    assert "all_years" not in r.json().get("filter", r.json())     # false is not stored
+    # Running the saved filter uses the wide window.
+    signed_in.put(f"/api/filters/{fid}", json={"name": "Ever", "filter": {**FILTER, "all_years": True}})
+    ctx.orchestrator = _fake_orchestrator(records=[])
+    job_id = signed_in.post(f"/api/filters/{fid}/test").json()["job_id"]
+    assert _await_status(signed_in, job_id)["date_window"]["all_years"] is True

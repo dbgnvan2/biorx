@@ -143,7 +143,14 @@ def run_search(
 
     # TD7: one date window for every source and the note.
     from src.filtering import fixed_dates
-    filter_dict = fixed_dates(filter_dict)
+    filter_dict = fixed_dates(filter_dict, getattr(orchestrator, "config", None))
+    # DW5: name the dates searched.
+    if filter_dict.get("all_years") is True:
+        logger.info("[%s] Searching all years (%s to %s)", filter_name,
+                    filter_dict["start_date"], filter_dict["end_date"])
+    else:
+        logger.info("[%s] Searching %s to %s", filter_name,
+                    filter_dict["start_date"], filter_dict["end_date"])
     # BW5: say how bioRxiv/medRxiv is read for this range (same rule as the adapter).
     from datetime import date
     from src.sources.biorxiv_window import biorxiv_notes

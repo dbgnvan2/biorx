@@ -119,6 +119,13 @@ failure_explanations:
 search:
   default_max_results: 200
   max_results_ceiling: 2000
+  # "All years" searches from this date (AY3). Every source takes it as an
+  # ordinary date range.
+  all_years_start: "1900-01-01"
+
+# The line under the results that explains the dates searched (DW4).
+date_window:
+  hint: "Dates are when a paper first appeared, online or in print, so a source's own date can differ."
 
 # The summary shown when a search could not read every source in full: one
 # action per source, chosen by situation, and the most useful next step

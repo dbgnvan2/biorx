@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-10-08 — the dates searched are shown; an All years choice (DW, AY)
+
+From `docs/implementation_plan_2026-10-08_date_window.md`.
+
+### Added
+- Each search says which dates it covered: "Searched 2016-10-10 to
+  2026-10-08", or "Searched all years (to …)". It is shown in the progress line, the results
+  heading, the "no papers matched" note and the Filters-tab Test line, with
+  a note that dates are when a paper first appeared (wording in
+  sources_config.yaml, `date_window.hint`). The monitor logs it.
+- **All years** on the Search tab and in the Filters editor. It searches from
+  `search.all_years_start` (sources_config.yaml, 1900-01-01) to today and
+  hides Days back and the date boxes. Saved filters store `all_years: true`.
+
+### Why
+- `internal family systems`: PubMed found 24 papers over all years. The app
+  searched at most 10 years (Days back stops at 3,650) and did not say so.
+
 ## 2026-10-08 — clearer "results are incomplete" summary; a limit per saved filter (WS, FL)
 
 From `docs/implementation_plan_2026-10-08_limits_and_warnings.md`.
