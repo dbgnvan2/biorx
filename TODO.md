@@ -7,6 +7,11 @@
 
 - `BiorxivMedrxivAdapter._servers()` reads `biorxiv_medrxiv.servers` from the
   config's top level, not `publication_sources`, so the setting is never read.
+- Gate L1 (`docs/cycles/2026-10-07_biorxiv-window-qa-gate.md`): the job note
+  uses today's date when the search starts; the adapter checks again as it
+  reads. A search that runs across midnight could show a note one day off.
+- Gate L2: the search route and monitor call
+  `orchestrator._resolve_active_sources`, a private method; make it public.
 - With Europe PMC and PubMed both ticked, PubMed's status says "0 fetched":
   every PubMed record is already in Europe PMC and is merged. Say "N read, all
   already found in Europe PMC" instead.
