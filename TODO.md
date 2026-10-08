@@ -3,6 +3,12 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## Gate follow-ups gate (`docs/cycles/2026-10-07_gate-todos-qa-gate.md`) — APPROVED
+
+- L1: a wildcard on one hyphenated word (`COVID-1*`, `kin-select*`) is sent to
+  Europe PMC as a quoted word without the `*`, narrower than the local filter.
+  Split on hyphens as on spaces (`COVID AND 1*`) so the query stays a superset.
+
 ## From the browser run (`docs/cycles/2026-09-29_browser-run.md`)
 
 - All findings fixed (see the report). A search including bioRxiv/medRxiv
