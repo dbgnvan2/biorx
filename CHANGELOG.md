@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-07 — bioRxiv/medRxiv read directly only where it helps (BW1–BW7)
+
+From `docs/implementation_plan_2026-10-07_biorxiv_window.md`.
+
+### Fixed
+- bioRxiv's API cannot search words and lists papers oldest first. A long
+  range (e.g. 2019–2026, 589,593 papers) read the first weeks of 2019 for 3–4
+  minutes and stopped at the page limit. Now a range ending more than 60 days
+  ago is not read directly at all, and a longer recent range reads only its
+  last 21 days directly (the newest preprints, which Europe PMC may not have
+  yet). Europe PMC indexes bioRxiv and medRxiv preprints with word search.
+- The search page says which of these happened, under the progress line,
+  and asks you to tick Europe PMC if it is not selected. A skipped range is
+  not reported as "page limit reached".
+
+### Changed
+- `sources_config.yaml`: `biorxiv_medrxiv.max_direct_days: 21`,
+  `europepmc_lag_days: 60`.
+
+
 ## 2026-10-07 — Europe PMC searches title and abstract, not full text (TA1–TA6)
 
 From `docs/implementation_plan_2026-10-07_title_abs.md`.

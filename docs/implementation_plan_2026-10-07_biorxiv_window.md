@@ -2,7 +2,15 @@
 
 **Reported:** "the status line reads — Found 585 · Matched 4 — bioRxiv / medRxiv:
 3,000 of 589,593 papers read, 0 match so far… it's going to take hours".
-**Status:** PLAN — awaiting owner approval. No code written.
+**Status:** APPROVED 2026-10-07; built. BW1–BW7 done; BW-L after deploy.
+**Changes from the plan:** the "status line names the limit" item is a job
+note ("every paper in the range is read and checked; it stops after N pages
+per server") rather than a change to the orchestrator's status text.
+`test_b7_date_range_used` now uses a recent range (its old range is a skip).
+**Adjacent, not fixed:** `BiorxivMedrxivAdapter._servers()` reads
+`biorxiv_medrxiv.servers` from the top level of the config, not under
+`publication_sources`, so a `servers:` setting in sources_config.yaml is never
+read (default: both servers).
 **Touches protected retrieval code:** `src/sources/biorxiv_medrxiv.py` (W1.a);
 flagged here, drift baseline advanced in the same batch.
 

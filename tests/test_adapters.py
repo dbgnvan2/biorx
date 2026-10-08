@@ -404,10 +404,16 @@ def _biorxiv_adapter(collections, cfg=None):
 
 
 def test_b7_date_range_used():
+    # A short recent range (BW: a range ending long ago is no longer read
+    # directly, so the 2020–2026-06 range this test used to send is now
+    # test_bw3_old_range_makes_no_requests).
+    from datetime import date, timedelta
+    end = date.today()
+    start = end - timedelta(days=10)
     adapter, calls = _biorxiv_adapter({})
-    adapter.search("x", filter_dict={"days_back": 0, "start_date": "2020-06-01",
-                                     "end_date": "2026-06-08"})
-    assert calls and all(c[1:3] == ("2020-06-01", "2026-06-08") for c in calls)
+    adapter.search("x", filter_dict={"days_back": 0, "start_date": start.isoformat(),
+                                     "end_date": end.isoformat()})
+    assert calls and all(c[1:3] == (start.isoformat(), end.isoformat()) for c in calls)
 
 
 def test_b7_medrxiv_queried():
@@ -450,6 +456,35 @@ def test_m18_biorxiv_version_carried():
     assert d["version"] == "2"
     assert filter_papers([d], {"version": "2+ (revised only)"}) == [d]
     assert filter_papers([d], {"version": "1 (first submission only)"}) == []
+
+
+# ── BW2/BW3: read directly only where it helps ───────────────────────────────
+# docs/implementation_plan_2026-10-07_biorxiv_window.md
+
+BW_CFG = {"publication_sources": {"biorxiv_medrxiv": {"max_direct_days": 21,
+                                                      "europepmc_lag_days": 60}}}
+
+
+def test_bw2_long_range_reads_only_the_newest_days():
+    from datetime import date
+    adapter, calls = _biorxiv_adapter({}, cfg=BW_CFG)
+    with patch("src.sources.biorxiv_medrxiv._today", return_value=date(2026, 10, 7)):
+        adapter.search("x", filter_dict={"days_back": 0, "start_date": "2019-01-01",
+                                         "end_date": "2026-10-07"})
+    assert calls and all(c[1:3] == ("2026-09-17", "2026-10-07") for c in calls)
+
+
+def test_bw3_old_range_makes_no_requests():
+    """Real-scale (P9): 2019–2020 is ~300k papers; it used to read 150 pages
+    per server from January 2019 and stop. Now: no request at all."""
+    from datetime import date
+    adapter, calls = _biorxiv_adapter({("biorxiv", 0): [{"doi": "10.1101/x", "title": "x"}]},
+                                      cfg=BW_CFG)
+    with patch("src.sources.biorxiv_medrxiv._today", return_value=date(2026, 10, 7)):
+        out = adapter.search("x", filter_dict={"days_back": 0, "start_date": "2019-01-01",
+                                               "end_date": "2020-12-31"})
+    assert calls == [] and list(out) == []
+    assert adapter.has_more is False and adapter.last_total == 0
 
 
 # ── M19: an empty container-title is not a Crossref outage ───────────────────

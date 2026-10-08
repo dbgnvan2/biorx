@@ -3,6 +3,14 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## bioRxiv/medRxiv window (`docs/implementation_plan_2026-10-07_biorxiv_window.md`)
+
+- `BiorxivMedrxivAdapter._servers()` reads `biorxiv_medrxiv.servers` from the
+  config's top level, not `publication_sources`, so the setting is never read.
+- With Europe PMC and PubMed both ticked, PubMed's status says "0 fetched":
+  every PubMed record is already in Europe PMC and is merged. Say "N read, all
+  already found in Europe PMC" instead.
+
 ## Europe PMC TITLE_ABS (`docs/implementation_plan_2026-10-07_title_abs.md`)
 
 - The local filter matches a phrase as written, so "kin selection" does not

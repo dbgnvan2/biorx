@@ -1778,7 +1778,7 @@ async function api(method, path, body) {
 }
 const job = (status) => ({ status, fetched: 3, matched: 0, phase: "", sources_failed: [] });
 function notice() {} function renderSummariesPanel() {} function renderResults() {}
-function renderWithinChips() {}
+function renderWithinChips() {} function renderJobNotes() {}
 function refreshSearchSummaries() {} function failedSourcesText() { return ""; }
 async function populateFacetSelect() {} function getSourceSelection() { return { all: true }; }
 const POLL_MS = 1000;
@@ -3423,7 +3423,7 @@ _SW_SCRIPT = r"""
   }
   const PAGE_SIZE = 50;
   function renderResults() {} function refreshSearchSummaries() {}
-  function updateSaveAsListBtn() {}
+  function updateSaveAsListBtn() {} function renderJobNotes() {}
   function chips() { return $("within-chips").children.map(c => c.textContent); }
 """
 
@@ -3581,3 +3581,46 @@ def test_sw6_input_length_comes_from_the_server():
       await loadResults(); out.max = $("within-input").maxLength;
     """)
     assert got["max"] == WITHIN_MAX_CHARS
+
+
+
+# ── BW6: the page shows how the search ran ────────────────────────────────────
+# docs/implementation_plan_2026-10-07_biorxiv_window.md
+
+def test_bw6_job_notes_shown():
+    got = _node_eval(_discover_js("renderJobNotes"), """(() => {
+      renderJobNotes(["bioRxiv/medRxiv: not read directly <b>x</b>", "second"]);
+      const box = $("job-notes");
+      const shown = { lines: box.children.map(c => c.textContent),
+                      hidden: box.classList.contains("hidden") };
+      renderJobNotes([]);
+      return { shown, after: { lines: box.children.length,
+                               hidden: box.classList.contains("hidden") } };
+    })()""")
+    assert got["shown"] == {"lines": ["bioRxiv/medRxiv: not read directly <b>x</b>", "second"],
+                            "hidden": False}
+    assert got["after"] == {"lines": 0, "hidden": True}
+
+
+def test_bw6_poll_passes_the_notes():
+    """Run the real poll handler with a job carrying notes."""
+    import json
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    names = ["renderJobNotes", "pollSearchFor"]
+    script = "\n".join(_discover_js(*names)) + """
+      function notice() {}
+      const state = { jobId: "j", polling: 1, pollFailures: 0 };
+      async function api() { return { status: "running", phase: "x", fetched: 0, total: 0,
+                                      sources_failed: [], notes: ["note one"] }; }
+      function progressText() { return "p"; } function elapsedText() { return ""; }
+      function enrichProblemsText() { return ""; } function failedSourcesText() { return ""; }
+      const POLL_GIVE_UP = 8; function shouldStopPolling() { return true; }
+      (async () => { await pollSearchFor("j");
+        console.log(JSON.stringify($("job-notes").children.map(c => c.textContent))); })();"""
+    r = subprocess.run([shutil.which("node"), "-e", script], capture_output=True, text=True,
+                       timeout=20)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout.strip()) == ["note one"]

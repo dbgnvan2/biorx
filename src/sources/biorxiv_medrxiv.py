@@ -19,6 +19,7 @@ from .schema import CanonicalRecord, AuthorRecord, SourceHit, RecordFlags, make_
 from .errors import SourceUnavailableError, RateLimitedError
 from .config import polite_user_agent
 from .query_builder import get_date_range
+from .biorxiv_window import SKIP, biorxiv_direct_window, window_settings
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,12 @@ SERVER_LABELS = {"biorxiv": "bioRxiv", "medrxiv": "medRxiv"}
 # The details endpoint's page size is not assumed: it was 100 and is 30 today
 # (checked 2026-09-29). Each server's cursor advances by what it sent, and a
 # server is done when its reported total is reached or it sends nothing.
+
+
+def _today():
+    """Today's date; one place for tests to fix it."""
+    from datetime import date
+    return date.today()
 
 
 class BiorxivMedrxivAdapter:
@@ -47,6 +54,8 @@ class BiorxivMedrxivAdapter:
         self._next: Dict[str, int] = {}        # server -> next cursor
         self._exhausted: set = set()
         self.has_more = True
+        # BW: read directly only where it adds papers Europe PMC may lack.
+        self._max_direct_days, self._lag_days = window_settings(self.sources_config)
         from src.biorxiv_api import BioRxivAPI
         self._api = BioRxivAPI(timeout=timeout, user_agent=polite_user_agent(self.sources_config))
 
@@ -84,6 +93,17 @@ class BiorxivMedrxivAdapter:
         """
         fd = filter_dict or {}
         start_date, end_date = get_date_range(fd)
+        # BW1–BW3: a range ending long ago is not read (Europe PMC has those
+        # preprints, and this API reads oldest first); a long recent range is
+        # read for its newest days only. The web route shows the same rule's note.
+        window = biorxiv_direct_window(start_date, end_date, _today(),
+                                       self._max_direct_days, self._lag_days)
+        if window.mode == SKIP:
+            self.last_page_size = 0
+            self.last_total = 0
+            self.has_more = False
+            return []
+        start_date, end_date = window.start, window.end
         category = fd.get("category", "(any)")
         category = None if category in ("(any)", "", None) else category
         if page == 1:

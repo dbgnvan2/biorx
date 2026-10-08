@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -25,6 +26,7 @@ from src import user_store
 from src.filtering import filter_papers, normalise_filter, within_matches, without_license
 from src.filters_store import EMPTY_FILTER_MESSAGE, filter_has_text
 from src.jobs import Job, JobLookup
+from src.sources.biorxiv_window import biorxiv_notes
 
 from .auth import current_user, get_context
 from .deps import AppContext
@@ -148,8 +150,14 @@ def _run_search(ctx: AppContext, filter_dict: Dict[str, Any],
         def on_source_failure(source_name: str, kind: str):
             record_failure(job, source_name, kind, ctx.sources_config)
 
+        orchestrator = ctx.get_orchestrator()
+        # BW5: how bioRxiv/medRxiv will be read for this range, from the rule
+        # the adapter follows, before the search starts.
+        job.notes.extend(biorxiv_notes(
+            filter_dict, orchestrator._resolve_active_sources(source_selection),
+            ctx.sources_config, date.today()))
         try:
-            ctx.get_orchestrator().search(
+            orchestrator.search(
                 filter_dict=filter_dict,
                 source_selection=source_selection,
                 on_batch=on_batch,

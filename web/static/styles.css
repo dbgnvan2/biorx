@@ -138,3 +138,4 @@ body.modal-open { overflow: hidden; }
 .term-hint { margin: 4px 0 0; }
 .within-row { margin-bottom: 4px; }
 .within-chip { border: 1px solid var(--accent); font: inherit; font-size: 12px; margin: 2px; cursor: pointer; }
+.job-note { margin: 4px 0 0; }

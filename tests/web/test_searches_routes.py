@@ -591,3 +591,41 @@ def test_sw6_real_scale_is_fast(ctx, signed_in):
     elapsed = time.perf_counter() - start
     assert body["total"] == 667 and body["total_unrefined"] == 2000
     assert elapsed < 0.5, elapsed
+
+
+# ── BW5: the job says how bioRxiv/medRxiv is read for the range ──────────────
+# docs/implementation_plan_2026-10-07_biorxiv_window.md
+
+def _bw_search(ctx, client, start, end, active):
+    from datetime import date
+    ctx.orchestrator = _fake_orchestrator(records=[])
+    ctx.orchestrator._resolve_active_sources = lambda selection: list(active)
+    fd = {**FILTER, "days_back": 0, "start_date": start, "end_date": end}
+    job_id = client.post("/api/searches", json={"filter": fd}).json()["job_id"]
+    return _await_status(client, job_id)
+
+
+def test_bw5_long_range_note_on_the_job(ctx, signed_in):
+    body = _bw_search(ctx, signed_in, "2019-01-01", "2020-12-31",
+                      ["europepmc", "biorxiv_medrxiv"])
+    assert len(body["notes"]) == 1
+    assert "not read directly" in body["notes"][0]
+    assert "Tick Europe PMC" not in body["notes"][0]
+
+
+def test_bw5_note_says_to_tick_europe_pmc(ctx, signed_in):
+    body = _bw_search(ctx, signed_in, "2019-01-01", "2020-12-31", ["biorxiv_medrxiv"])
+    assert body["notes"][0].endswith("Tick Europe PMC to include them.")
+
+
+def test_bw5_no_note_without_biorxiv(ctx, signed_in):
+    body = _bw_search(ctx, signed_in, "2019-01-01", "2020-12-31", ["europepmc"])
+    assert body["notes"] == []
+
+
+def test_bw5_short_recent_range_names_the_limit(ctx, signed_in):
+    from datetime import date, timedelta
+    end = date.today()
+    body = _bw_search(ctx, signed_in, (end - timedelta(days=7)).isoformat(), end.isoformat(),
+                      ["europepmc", "biorxiv_medrxiv"])
+    assert len(body["notes"]) == 1 and "every paper in the range is read" in body["notes"][0]

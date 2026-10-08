@@ -128,6 +128,14 @@ an existing filter opens with its own sources, keywords and days.
 | TA4 Discover check counts titles and abstracts | `tests/web/test_discover_routes.py::test_ta4_check_counts_titles_and_abstracts`; wording in `test_dt9c_*`, `test_dt9e_*` | done |
 | TA5 drift baseline | `tests/web/test_no_retrieval_drift.py` | done |
 | TA6 live on production | needs a signed-in browser | not done |
+| BW1 window rule | `tests/test_biorxiv_window.py::test_bw1_window` (7 cases), `test_bw1_notes_say_where_the_papers_come_from` | done |
+| BW2 long recent range reads the newest days | `tests/test_adapters.py::test_bw2_long_range_reads_only_the_newest_days` | done |
+| BW3 old range: no requests, no failure | `tests/test_adapters.py::test_bw3_old_range_makes_no_requests`, `tests/test_orchestrator.py::test_bw3_skip_is_not_a_failure` | done |
+| BW4 short range unchanged | `tests/test_adapters.py::test_b7_*` (`test_b7_date_range_used` moved to a recent range: its old 2020–2026-06 range is now a skip) | done |
+| BW5 note on the job / monitor log | `tests/test_biorxiv_window.py::test_bw5_notes`, `tests/web/test_searches_routes.py::test_bw5_*` (4) | done |
+| BW6 page shows notes | `tests/web/test_frontend_wiring.py::test_bw6_job_notes_shown`, `test_bw6_poll_passes_the_notes` | done |
+| BW7 config | `tests/test_biorxiv_window.py::test_bw7_*` (2) | done |
+| BW-L live on production | needs a signed-in browser | not done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |

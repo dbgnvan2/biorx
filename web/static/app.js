@@ -870,6 +870,7 @@ async function startSearch(payload) {
   $("progress-wrap").classList.remove("hidden");
   $("progress").value = 0;
   $("phase").textContent = "Starting…";
+  renderJobNotes([]);
   // Every Run button is disabled before the request leaves (FR4.2).
   state.searchRunning = true;
   state.pollFailures = 0;
@@ -934,6 +935,7 @@ async function pollSearchFor(jobId) {
 
   $("phase").textContent = progressText(job);
   $("phase-elapsed").textContent = elapsedText(job.created_at, Date.now() / 1000);
+  renderJobNotes(job.notes);
   if (job.total > 0) {
     $("progress").max = job.total;
     $("progress").value = job.fetched;
@@ -959,6 +961,20 @@ async function pollSearchFor(jobId) {
     catch (e) { notice(`Could not load the results: ${e.message}`); }
     searchFinished(job.status);
   }
+}
+
+/* Notes about how the search ran (not failures), e.g. which part of the
+   range bioRxiv/medRxiv is read for (BW6). One line each, textContent. */
+function renderJobNotes(notes) {
+  const box = $("job-notes");
+  box.textContent = "";
+  for (const text of notes || []) {
+    const p = document.createElement("p");
+    p.className = "muted small job-note";
+    p.textContent = text;
+    box.appendChild(p);
+  }
+  box.classList.toggle("hidden", !(notes && notes.length));
 }
 
 function searchFinished(status) {

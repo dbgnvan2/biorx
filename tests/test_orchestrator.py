@@ -957,3 +957,24 @@ def test_br10_every_paper_read_is_accounted_for(caplog):
     assert "21 match the filter, 270 do not, 9 repeat a paper already read, " \
            "0 could not be read" in caplog.text
     assert "accounted for" not in caplog.text
+
+
+# ── BW3: a range bioRxiv/medRxiv is not read directly is not a failure ───────
+# docs/implementation_plan_2026-10-07_biorxiv_window.md
+
+def test_bw3_skip_is_not_a_failure():
+    """The reported case: 2019–2020 used to read 150 pages per server from
+    January 2019 and end in "page limit reached". Now: no requests, no failure."""
+    from datetime import date
+    from unittest.mock import patch
+    orch, calls = _sparse_biorxiv(3400, 1500, max_pages=150)
+    statuses, failures = [], []
+    with patch("src.sources.biorxiv_medrxiv._today", return_value=date(2026, 10, 7)):
+        records = orch.search({"days_back": 0, "start_date": "2019-01-01",
+                               "end_date": "2020-12-31", "text_groups": [{"both": "needle"}]},
+                              {"all": True, "selected": []}, max_results=200,
+                              on_status=statuses.append,
+                              on_source_failure=lambda *a: failures.append(a))
+    assert calls == [] and records == []
+    assert failures == []
+    assert not any("page limit" in s for s in statuses), statuses

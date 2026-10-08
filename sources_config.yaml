@@ -27,6 +27,15 @@ publication_sources:
     # 3 minutes). 150 covers about 2.5 weeks; a longer range is cut off here
     # and the search says so.
     max_pages: 150
+    # Read directly only where it adds something (BW,
+    # docs/implementation_plan_2026-10-07_biorxiv_window.md). Europe PMC
+    # indexes bioRxiv and medRxiv preprints with word search but lags on the
+    # newest (last 14 days, 2026-10-07: 2,506 in Europe PMC vs 3,528 in
+    # bioRxiv). A range longer than max_direct_days reads only its last
+    # max_direct_days directly (about what max_pages covers); a range ending
+    # more than europepmc_lag_days ago is not read directly at all.
+    max_direct_days: 21
+    europepmc_lag_days: 60
 
   arxiv:
     enabled: true

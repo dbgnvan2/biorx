@@ -136,6 +136,9 @@ class Job:
     # Why each failed source failed, in plain language, keyed by display label
     # (D2). "Could not reach X" alone read the same for an outage and a limit.
     source_problems: Dict[str, str] = field(default_factory=dict)
+    # Things the user should know about how this search ran (not failures),
+    # e.g. which part of the range bioRxiv/medRxiv is read for (BW5).
+    notes: List[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -168,6 +171,7 @@ class Job:
             "error": self.error,
             "sources_failed": list(self.sources_failed),
             "source_problems": dict(self.source_problems),
+            "notes": list(self.notes),
             "created_at": self.created_at,
             "finished_at": self.finished_at,
             "tokens": {
