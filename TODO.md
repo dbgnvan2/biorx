@@ -18,6 +18,16 @@
   fail instead of falling back. Read them defensively (as `osf.py` does) and
   test a null value.
 
+## Author-keywords gate (`docs/cycles/2026-10-08_author-keywords-qa-gate.md`) — APPROVED
+
+- [ ] **KW7 test model:** `_matches_query` in `tests/test_query_builder.py`
+  treats a bare word as a substring, which is looser than Europe PMC. The
+  current cases are phrases, wildcards and AND terms, so they are not
+  affected. Make it whole-word if bare-word cases are added.
+- [ ] **Limit use:** keyword matches add papers that count against each
+  source's limit. The limit summary already reports this; no action unless
+  it bites.
+
 ## Date-window gate (`docs/cycles/2026-10-08_date-window-qa-gate.md`) — APPROVED
 
 - [ ] **L1** `dateWindowText` says "Searched all years (to END)" without the start
