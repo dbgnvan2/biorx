@@ -133,7 +133,11 @@ ROOT = Path(__file__).parent.parent.parent
 #   kept changes; flagged in docs/implementation_plan_2026-10-07_duplicate_status.md)
 # Updated from 4ff7421 → 29aca88 (DS gate F1–F3: counts returned through a per-call dict, own repeats
 #   told apart from earlier sources, no second line for bioRxiv — status text only)
-BASELINE = "29aca88"
+# Updated from 29aca88 → ee3e301 (TD1/TD3/TD6/TD7/TD8/TD9, 2026-10-07: query syntax quoted and
+#   arXiv wildcards sent (query_builder.py), bioRxiv servers setting and per-search window
+#   (biorxiv_medrxiv.py), public resolve_active_sources and re-send counting (orchestrator.py);
+#   flagged in docs/implementation_plan_2026-10-07_gate_todos.md)
+BASELINE = "ee3e301"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
