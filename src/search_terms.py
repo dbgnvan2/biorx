@@ -34,6 +34,13 @@ _PUNCTUATION = re.compile(r"[^\w\s*]")
 _SPACES = re.compile(r"\s+")
 
 
+def match_words(text: str) -> list:
+    """The words matching sees in a text, case kept: split on whitespace and
+    the same punctuation normalise_text turns into spaces. The query builder
+    splits wildcard terms with this, so query and filter split alike (HW)."""
+    return _PUNCTUATION.sub(" ", text or "").split()
+
+
 def normalise_text(text: str) -> str:
     """Lowercase, punctuation (hyphens included) as spaces, runs of spaces as
     one — applied to both the text and the term before matching.

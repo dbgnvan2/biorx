@@ -513,7 +513,7 @@ def test_td1_injection_stays_inside_one_clause():
     rest = _re.sub(r"TITLE_ABS:(Q|\w+\*?)", "", quoted_out)
     # Every clause is TITLE_ABS: + a quoted text or one plain word, never an
     # operator word; between clauses only AND and brackets.
-    assert values and not [v for v in values if v in ("AND", "OR", "NOT")], (q, values)
+    assert values and not [v for v in values if v in ("AND", "OR", "NOT", "ANDNOT")], (q, values)
     assert set(_re.findall(r"[^\s()]+", rest)) <= {"AND"}, (q, rest)
 
 
@@ -568,3 +568,17 @@ def test_hw2_query_is_a_superset_of_the_filter(term, titles):
             w = w.lower()
             ok = any(x.startswith(w[:-1]) for x in words) if w.endswith("*") else w in words
             assert ok, (term, title, w)
+
+
+
+@pytest.mark.parametrize("both, expected", [
+    ("OR*", '(TITLE_ABS:"OR")'),
+    ("AND*", '(TITLE_ABS:"AND")'),
+    ("ANDNOT*", '(TITLE_ABS:"ANDNOT")'),
+    ("cats OR*", '((TITLE_ABS:cats AND TITLE_ABS:"OR"))'),
+    ("x-NOT*", '((TITLE_ABS:x AND TITLE_ABS:"NOT"))'),
+])
+def test_hw_gate_f1_operator_wildcard_terminates(both, expected):
+    """HW gate F1: these recursed forever (RecursionError) in both builders."""
+    assert _text(build_europepmc_query(_q([{"title": "", "abstract": "", "both": both}]))) == expected
+    build_arxiv_query(_q([{"title": "", "abstract": "", "both": both}]))   # must return

@@ -17,11 +17,10 @@ Wildcard: term ending in '*' = prefix match (works natively in Europe PMC Lucene
 """
 
 import logging
-import re
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
-from src.search_terms import and_parts
+from src.search_terms import and_parts, match_words
 
 logger = logging.getLogger(__name__)
 
@@ -78,14 +77,23 @@ def _term_clause(term: str, field: str = "") -> str:
         # so "COVID-1*" is sent as COVID AND 1*, not the exact word "COVID-1"
         # (HW1). With the trailing punctuation gone ("SARS-CoV-*") there is
         # no word left to prefix, and the words alone are sent.
-        words = [w for w in re.split(r"[^\w]+", stem) if w]
+        words = match_words(stem)
         if not words:
             return f"{pre}{_quoted(stem)}"
         trailing_cut = not stem[-1:].isalnum() and not stem.endswith("_")
-        parts = [_term_clause(w, field) for w in words[:-1]]
-        parts.append(_term_clause(words[-1] if trailing_cut else words[-1] + "*", field))
+        parts = [_word_clause(w, pre) for w in words[:-1]]
+        parts.append(_word_clause(words[-1], pre, wildcard=not trailing_cut))
         return parts[0] if len(parts) == 1 else "(" + " AND ".join(parts) + ")"
     return f"{pre}{_quoted(term)}" if _needs_quotes(term) else f"{pre}{term}"
+
+
+def _word_clause(word: str, pre: str, wildcard: bool = False) -> str:
+    """One word of a split wildcard term. Not recursive: an operator word
+    ("OR") or one with syntax left in it is quoted and loses the wildcard —
+    "OR*" used to recurse forever (HW gate F1)."""
+    if _needs_quotes(word):
+        return f"{pre}{_quoted(word)}"
+    return f"{pre}{word}*" if wildcard else f"{pre}{word}"
 
 
 def _lucene_term(term: str, field: str = "") -> str:
