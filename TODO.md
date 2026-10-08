@@ -3,6 +3,13 @@
 > Items from 2026-09-15 are being reconciled and worked through in
 > `docs/implementation_plan_2026-09-16_backlog.md`; that plan is the current list.
 
+## Hyphen-wildcard re-gate (`docs/cycles/2026-10-07_hyphen-wildcard-regate-qa-gate.md`) — APPROVED
+
+- A wildcard on an operator word (`OR*`, `cats OR*`) is sent as the quoted
+  word without the `*` — narrower than the local filter. Same as before the
+  HW change (it now terminates instead of recursing). Rare input; leave unless
+  it comes up.
+
 ## From the browser run (`docs/cycles/2026-09-29_browser-run.md`)
 
 - All findings fixed (see the report). A search including bioRxiv/medRxiv
