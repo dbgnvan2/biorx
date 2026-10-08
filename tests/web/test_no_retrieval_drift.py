@@ -131,7 +131,9 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from 203668f → 4ff7421 (DS1, 2026-10-07: orchestrator.fetched_status names a source's
 #   papers that an earlier source already found — status text only, nothing fetched, merged or
 #   kept changes; flagged in docs/implementation_plan_2026-10-07_duplicate_status.md)
-BASELINE = "4ff7421"
+# Updated from 4ff7421 → 29aca88 (DS gate F1–F3: counts returned through a per-call dict, own repeats
+#   told apart from earlier sources, no second line for bioRxiv — status text only)
+BASELINE = "29aca88"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
