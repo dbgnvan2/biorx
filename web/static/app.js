@@ -864,11 +864,13 @@ function progressText(job) {
   return parts.join(" · ") + (step ? ` — ${step}` : "");
 }
 
-/* DW2: the dates a search covered, from the job's date_window; "" for an
-   older job without one. Pure, for the node-run test. */
+/* DW2/TG3: the dates a search covered, from the job's date_window; "" for
+   an older job without one. Pure, for the node-run test. */
 function dateWindowText(w) {
   if (!w || !w.end) return "";
-  if (w.all_years) return `Searched all years (to ${w.end})`;
+  // The start is named too, so a changed search.all_years_start shows (TG3).
+  if (w.all_years) return w.start ? `Searched all years (${w.start} to ${w.end})`
+                                  : `Searched all years (to ${w.end})`;
   return w.start ? `Searched ${w.start} to ${w.end}` : "";
 }
 

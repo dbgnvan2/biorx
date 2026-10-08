@@ -3779,9 +3779,13 @@ def test_dw2_date_window_text():
       dateWindowText({start: "2016-10-10", end: "2026-10-08", all_years: false}),
       dateWindowText({start: "1900-01-01", end: "2026-10-08", all_years: true}),
       dateWindowText(null), dateWindowText(undefined), dateWindowText({}),
-      dateWindowText({start: "", end: "2026-10-08"})]""")
-    assert got == ["Searched 2016-10-10 to 2026-10-08", "Searched all years (to 2026-10-08)",
-                   "", "", "", ""]
+      dateWindowText({start: "", end: "2026-10-08"}),
+      dateWindowText({start: "", end: "2026-10-08", all_years: true}),
+      dateWindowText({start: "1990-01-01", end: "2026-10-08", all_years: true})]""")
+    assert got == ["Searched 2016-10-10 to 2026-10-08",
+                   "Searched all years (1900-01-01 to 2026-10-08)", "", "", "", "",
+                   "Searched all years (to 2026-10-08)",
+                   "Searched all years (1990-01-01 to 2026-10-08)"]   # TG3
 
 
 def test_dw3_lines_carry_the_window():

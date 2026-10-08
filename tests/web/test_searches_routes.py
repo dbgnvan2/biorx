@@ -885,3 +885,17 @@ def test_kw9_keyword_only_paper_kept(ctx, signed_in):
     ctx.orchestrator = _fake_orchestrator(records=[_keyword_only_record()])
     job_id = signed_in.post(f"/api/filters/{fid}/test").json()["job_id"]
     assert _await_status(signed_in, job_id)["matched"] == 1
+
+
+# ── TG1: a broken numeric setting does not stop searches ─────────────────────
+# docs/implementation_plan_2026-10-08_gate_todos.md#TG1
+
+def test_tg1_search_starts_with_a_broken_config(ctx, signed_in):
+    """A blank setting must not make searches fail (the 2026-10-08 finding)."""
+    ctx.sources_config = {**ctx.sources_config,
+                          "search": {"default_max_results": None, "max_results_ceiling": ""},
+                          "osf": {"max_title_terms": "lots"}}
+    ctx.orchestrator = _fake_orchestrator(records=[])
+    r = signed_in.post("/api/searches", json={"filter": FILTER})
+    assert r.status_code == 202
+    assert _await_status(signed_in, r.json()["job_id"])["status"] == "done"

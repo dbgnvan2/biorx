@@ -10,32 +10,14 @@
   HW change (it now terminates instead of recursing). Rare input; leave unless
   it comes up.
 
-## Limits and warnings gate (`docs/cycles/2026-10-08_limits-and-warnings-qa-gate.md`) — APPROVED
+## Gate TODOs 2026-10-08 (`docs/implementation_plan_2026-10-08_gate_todos.md`)
 
-- F1: `src/search_limits.search_limits` and `src/limit_summary._osf_narrowed`
-  call `int()` on config values; a blank or non-numeric
-  `search.default_max_results` / `osf.max_title_terms` would make searches
-  fail instead of falling back. Read them defensively (as `osf.py` does) and
-  test a null value.
-
-## Author-keywords gate (`docs/cycles/2026-10-08_author-keywords-qa-gate.md`) — APPROVED
-
-- [ ] **KW7 test model:** `_matches_query` in `tests/test_query_builder.py`
-  treats a bare word as a substring, which is looser than Europe PMC. The
-  current cases are phrases, wildcards and AND terms, so they are not
-  affected. Make it whole-word if bare-word cases are added.
-- [ ] **Limit use:** keyword matches add papers that count against each
-  source's limit. The limit summary already reports this; no action unless
-  it bites.
-
-## Date-window gate (`docs/cycles/2026-10-08_date-window-qa-gate.md`) — APPROVED
-
-- [ ] **L1** `dateWindowText` says "Searched all years (to END)" without the start
-  date (the plan's wording). If `search.all_years_start` is ever set to a recent
-  date, show it on the page.
-- [ ] **L2** `_ALL_YEARS_FALLBACK` / `_HINT_FALLBACK` in `src/search_limits.py`
-  repeat the values in `sources_config.yaml` (same pattern as `_FALLBACK`).
-  Note them as frozen defaults or derive them.
+- [ ] `OsfPreprintAdapter._max_title_terms` (`src/sources/osf.py`, protected)
+  accepts 0, a bool or a fraction for `osf.max_title_terms`. The limit summary
+  falls back to the default for those, so the two could disagree on a bad
+  value. Use `src.search_limits.config_int` there next time osf.py changes.
+- Closed without code: "keyword matches count against each source's limit".
+  The limit summary already reports it.
 
 ## From the browser run (`docs/cycles/2026-09-29_browser-run.md`)
 

@@ -51,8 +51,12 @@ def _settings(sources_config: Optional[Mapping]) -> Mapping:
 
 def _osf_narrowed(filter_dict: Mapping, sources_config: Optional[Mapping]) -> bool:
     """True when PsyArXiv/SocArXiv can ask for title words (every group has one)."""
+    from src.search_limits import config_int
+    from src.sources.osf import DEFAULT_MAX_TITLE_TERMS
     from src.sources.query_builder import osf_title_terms
-    max_terms = int(((sources_config or {}).get("osf") or {}).get("max_title_terms", 8))
+    # The adapter's own default, read defensively (TG1/TG2).
+    max_terms = config_int((sources_config or {}).get("osf"), "max_title_terms",
+                           DEFAULT_MAX_TITLE_TERMS)
     return bool(osf_title_terms(dict(filter_dict or {}), max_terms))
 
 

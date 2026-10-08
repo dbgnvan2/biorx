@@ -75,3 +75,15 @@ def test_bw5_notes():
     [note] = biorxiv_notes({"days_back": 0, "start_date": "2026-09-30", "end_date": "2026-10-07"},
                            ["biorxiv_medrxiv"], cfg, TODAY)
     assert "every paper in the range is read" in note and "150 pages per server" in note
+
+
+@pytest.mark.parametrize("bad", [None, "", "soon", 1.5, True])
+def test_tg2_bad_window_settings_fall_back(bad):
+    """A blank or mistyped setting falls back; it does not make searches fail."""
+    from src.sources.biorxiv_window import window_settings
+    cfg = {"publication_sources": {"biorxiv_medrxiv": {"max_direct_days": bad,
+                                                       "europepmc_lag_days": bad}}}
+    assert window_settings(cfg) == (21, 60)
+    good = {"publication_sources": {"biorxiv_medrxiv": {"max_direct_days": 14,
+                                                        "europepmc_lag_days": 0}}}
+    assert window_settings(good) == (14, 0)

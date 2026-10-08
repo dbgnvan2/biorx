@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-10-08 — today's gate TODO items (TG1–TG5)
+
+From `docs/implementation_plan_2026-10-08_gate_todos.md`.
+
+### Fixed
+- A blank, non-numeric or out-of-range number in `sources_config.yaml` used
+  to make every search fail. Searches now use the default and log which
+  setting was wrong. This covers:
+  - the per-source limit and its maximum;
+  - the PsyArXiv/SocArXiv title-word count;
+  - the bioRxiv/medRxiv window settings.
+- The limit summary used its own default for the PsyArXiv/SocArXiv
+  title-word count. It now uses the adapter's.
+
+### Changed
+- All years names its start date: "Searched all years (1900-01-01 to …)".
+- A test now fails if the built-in defaults differ from `sources_config.yaml`.
+
 ## 2026-10-08 — the title-or-abstract box also matches the authors' keywords (KW)
 
 From `docs/implementation_plan_2026-10-08_author_keywords.md`.

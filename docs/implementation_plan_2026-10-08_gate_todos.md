@@ -1,7 +1,18 @@
 # Implementation plan — today's gate TODO items (2026-10-08, TG1–TG5)
 
 **Request:** "fix the TODO items from today's gates".
-**Status:** PLAN — awaiting approval.
+**Status:** APPROVED 2026-10-08; built. TG1–TG5 done.
+**Found during the build:**
+- TG5: the KW7 test model already compared bare words as whole words.
+  `texts` holds lists of words, so `in` tests list membership. The gate's
+  note was mistaken. The planned cases were added and prove it: a
+  substring version of the model fails `test_tg5_query_model_is_whole_word`.
+- The route test for TG1 is in `tests/web/test_searches_routes.py` (it needs
+  the web fixtures).
+**Adjacent issue, not fixed (protected file):** `OsfPreprintAdapter._max_title_terms`
+(`src/sources/osf.py`) accepts 0, a bool or a fraction (`int(2.5)` = 2). The
+summary now falls back to the default for those, so with such a value the two
+could disagree. The shipped value (8) is fine. Listed in TODO.md.
 **Source:** `TODO.md`, these sections:
 - Limits and warnings gate
 - Date-window gate

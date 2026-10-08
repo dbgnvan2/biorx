@@ -188,6 +188,11 @@ an existing filter opens with its own sources, keywords and days.
 | KW8 page | `tests/web/test_frontend_wiring.py::test_kw8_*` (2; mutation-checked) | done |
 | KW9 route | `tests/web/test_searches_routes.py::test_kw9_keyword_only_paper_kept` | done |
 | KW10 live | real orchestrator and local browser 2026-10-08: 30 papers, the 3 keyword-only PubMed papers kept, Keywords line shown | done (local) |
+| TG1 numeric settings read defensively | `tests/test_search_limits.py::test_tg1_*` (10), `tests/web/test_searches_routes.py::test_tg1_search_starts_with_a_broken_config` (mutation-checked) | done |
+| TG2 OSF default shared; bioRxiv window settings | `test_search_limits.py::test_tg2_osf_terms_default_shared` (4), `tests/test_biorxiv_window.py::test_tg2_bad_window_settings_fall_back` (5) (mutation-checked) | done |
+| TG3 All years names its start | `tests/web/test_frontend_wiring.py::test_dw2_date_window_text` (mutation-checked) | done |
+| TG4 fallbacks match the config | `test_search_limits.py::test_tg4_fallbacks_match_the_shipped_config` (mutation-checked) | done |
+| TG5 query model is whole-word | `tests/test_query_builder.py::test_tg5_query_model_is_whole_word`, `test_kw7_*` (+`ketamine`) (mutation-checked) | done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |

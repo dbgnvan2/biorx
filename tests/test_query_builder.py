@@ -636,7 +636,7 @@ def _matches_query(q, paper):
 
 @pytest.mark.parametrize("term", ["internal family systems", "internal famil*",
                                   "ketamine AND internal family systems", "COVID-1*",
-                                  "kin select*", "parts, self-leadership"])
+                                  "kin select*", "parts, self-leadership", "ketamine"])
 def test_kw7_query_is_a_superset_of_the_filter(term):
     from src.filtering import text_group_matches
     papers = [
@@ -653,3 +653,14 @@ def test_kw7_query_is_a_superset_of_the_filter(term):
     assert kept, term                                  # the case exercises something
     for p in kept:
         assert _matches_query(q, p), (term, p, q)
+
+
+def test_tg5_query_model_is_whole_word():
+    """The KW7 model treats a bare word as a whole word, as Europe PMC does:
+    'kin' is not found in 'kinship' (TG5)."""
+    paper = {"title": "Kinship and care", "abstract": "", "keywords": ["kinship"]}
+    assert not _matches_query("(TITLE_ABS:kin OR KW:kin)", paper)
+    assert _matches_query("(TITLE_ABS:kin* OR KW:kin*)", paper)
+    assert _matches_query("(TITLE_ABS:kinship OR KW:kinship)", paper)
+    assert _matches_query('(TITLE_ABS:"and care" OR KW:"and care")', paper)
+    assert not _matches_query('(TITLE_ABS:"kin and" OR KW:"kin and")', paper)

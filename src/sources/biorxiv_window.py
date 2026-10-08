@@ -65,7 +65,11 @@ def window_settings(sources_config: Optional[dict]) -> tuple:
         logging.getLogger(__name__).warning(
             "sources_config biorxiv_medrxiv has no max_direct_days / europepmc_lag_days "
             "— using 21 and 60")
-    return int(section.get("max_direct_days", 21)), int(section.get("europepmc_lag_days", 60))
+    from src.search_limits import config_int
+    # Read defensively: a blank or mistyped value falls back, it does not
+    # make every search fail (TG2).
+    return (config_int(section, "max_direct_days", 21),
+            config_int(section, "europepmc_lag_days", 60, minimum=0))
 
 
 def biorxiv_notes(filter_dict: dict, active_sources, sources_config: Optional[dict],
