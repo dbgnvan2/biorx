@@ -122,7 +122,10 @@ ROOT = Path(__file__).parent.parent.parent
 #   inside a term via src/search_terms.and_parts — Europe PMC/PubMed and arXiv get both parts,
 #   OSF gets the longest part; required to send the new operator to the sources, flagged in
 #   docs/implementation_plan_2026-10-07_and_terms.md)
-BASELINE = "408deae"
+# Updated from 408deae → b384965 (TA1, 2026-10-07: _group_to_lucene sends Title-or-abstract terms
+#   as TITLE_ABS: instead of bare terms, which matched full text and filled Max results with
+#   records the local filter drops; flagged in docs/implementation_plan_2026-10-07_title_abs.md)
+BASELINE = "b384965"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
