@@ -63,18 +63,9 @@ class SignInLimiter:
 def _setting(section: dict, name: str, default: int) -> int:
     """A whole number from `sign_in:`, or the default with a warning — a typo
     in the config must not stop the server starting (plan 2026-09-29 T1.5c)."""
-    value = section.get(name, default)
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        logger.warning("llm_config.yaml sign_in.%s is not a whole number (%r); using %d",
-                       name, value, default)
-        return default
-    if number < 1:
-        logger.warning("llm_config.yaml sign_in.%s must be at least 1 (%r); using %d",
-                       name, value, default)
-        return default
-    return number
+    from src.config_values import config_int
+    # The shared reader (TG6): inf, a fraction or a bool falls back too.
+    return config_int(section, name, default, minimum=1, name=f"sign_in.{name}")
 
 
 def from_config(config: Optional[dict]) -> SignInLimiter:

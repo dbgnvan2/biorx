@@ -330,6 +330,8 @@ def test_a14_lanes_from_config():
     from src.llm_config import job_lanes
     assert job_lanes({"jobs": {"search_workers": 5, "model_workers": 7}}) == {"search": 5, "model": 7}
     assert job_lanes({}) == {}
+    assert job_lanes({"jobs": {"search_workers": True}}) == {}   # a bool is not a count
+    assert job_lanes({"jobs": {"search_workers": "5"}}) == {}    # nor is text
     r = JobRegistry(lanes={"search": 5})
     assert r._pools["search"]._max_workers == 5 and r._pools["model"]._max_workers == 3
 

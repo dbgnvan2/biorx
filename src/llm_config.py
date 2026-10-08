@@ -14,7 +14,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from src.config_values import config_int
 
@@ -208,7 +208,7 @@ def provider_config(config: Dict[str, Any], name: str) -> Optional[ProviderConfi
     )
 
 
-def max_text_chars(config: Dict[str, Any]) -> int:
+def max_text_chars(config: Mapping[str, Any]) -> int:
     return config_int(config, "max_text_chars", _FALLBACK["max_text_chars"],
                       name="max_text_chars")
 
@@ -249,7 +249,7 @@ def job_lanes(config: Dict[str, Any]) -> Dict[str, int]:
     out = {}
     for lane, key in (("search", "search_workers"), ("model", "model_workers")):
         value = jobs.get(key)
-        if isinstance(value, int) and value > 0:
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
             out[lane] = value
     return out
 

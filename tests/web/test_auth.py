@@ -376,6 +376,8 @@ def test_t15a_a_limited_request_gives_its_slot_back(ctx, client):
     ({"attempts_per_minute": "lots", "max_concurrent": 3}, 20, 3),
     ({"attempts_per_minute": 5, "max_concurrent": None}, 5, 4),
     ({"attempts_per_minute": 0, "max_concurrent": -2}, 20, 4),
+    ({"attempts_per_minute": float("inf"), "max_concurrent": float("inf")}, 20, 4),
+    ({"attempts_per_minute": 2.5, "max_concurrent": True}, 20, 4),
     ("not a section", 20, 4),
 ])
 def test_t15c_bad_sign_in_settings_fall_back(section, per_minute, concurrent, caplog):

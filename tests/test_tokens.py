@@ -564,6 +564,9 @@ def test_m5a1_a_model_with_no_configured_rate_shows_no_price():
 @pytest.mark.parametrize("rates", [
     None, {}, {"claude-sonnet-5": None}, {"claude-sonnet-5": {"input": 2.0}},
     {"claude-sonnet-5": {"input": "two", "output": 10.0}},
+    {"claude-sonnet-5": {"input": True, "output": 10.0}},
+    {"claude-sonnet-5": {"input": float("inf"), "output": 10.0}},
+    {"claude-sonnet-5": {"input": 2.0, "output": float("nan")}},
 ])
 def test_m5a1_a_malformed_rate_is_no_rate(rates):
     """A half-written rate in the config must not become half a price."""
@@ -618,6 +621,21 @@ def test_m5a1_missing_config_falls_back_rather_than_crashing():
     got = estimate_summary_tokens(3, {}, "claude-sonnet-5")
     assert got["low"] > 0 and got["high"] > got["low"]
     assert got["dollars_low"] is None
+
+
+def test_tg6_inf_or_bool_estimate_setting_falls_back():
+    """A token_estimate value of inf/nan or a bool falls back, not int(inf)
+    downstream; the top-level hard cap is read defensively too (re-gate)."""
+    from src.tokens import estimate_summary_tokens
+
+    good = estimate_summary_tokens(1, _config())
+    assert good["low"] == 1100 and good["high"] == 3800
+    for field in ("chars_per_token", "text_chars_low", "prompt_overhead_tokens",
+                  "completion_tokens_low", "completion_tokens_high"):
+        for bad in (float("inf"), float("nan"), True):
+            assert estimate_summary_tokens(1, _config(**{field: bad})) == good, (field, bad)
+    for bad in (float("inf"), "lots", True):
+        assert estimate_summary_tokens(1, {"max_text_chars": bad}) == good, bad
 
 
 

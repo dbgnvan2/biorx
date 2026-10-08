@@ -19,6 +19,7 @@ the summary itself is still good and must not be thrown away over its receipt.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
@@ -163,7 +164,13 @@ def _settings(config: Mapping) -> Mapping:
 
 def _setting(config: Mapping, key: str, fallback):
     value = _settings(config).get(key, fallback)
-    return value if isinstance(value, (int, float)) and value >= 0 else fallback
+    # A whole/finite number >= 0; a bool, inf or nan falls back (TG6) — an
+    # infinite estimate would crash int(inf) downstream.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return fallback
+    if not math.isfinite(value) or value < 0:
+        return fallback
+    return value
 
 
 def rate_for(config: Mapping, model: str) -> Optional[Mapping]:
@@ -179,10 +186,10 @@ def rate_for(config: Mapping, model: str) -> Optional[Mapping]:
     entry = rates.get(model)
     if not isinstance(entry, Mapping):
         return None
-    if not isinstance(entry.get("input"), (int, float)):
-        return None
-    if not isinstance(entry.get("output"), (int, float)):
-        return None
+    for v in (entry.get("input"), entry.get("output")):
+        # A bool or inf/nan is not a price; treat it as no rate (TG6).
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            return None
     return entry
 
 
@@ -207,8 +214,10 @@ def estimate_summary_tokens(n_papers: int, config: Mapping,
 
     per_token = _setting(config, "chars_per_token", 4) or 4
     low_chars = _setting(config, "text_chars_low", 3000)
-    high_chars = _setting(config, "max_text_chars", 0) or (config or {}).get(
-        "max_text_chars", 12000)
+    # The high bound is the hard text cap, read through the shared reader so
+    # a bad value falls back instead of crashing int(inf) (TG6).
+    from src.llm_config import max_text_chars
+    high_chars = max_text_chars(config)
     overhead = _setting(config, "prompt_overhead_tokens", 200)
     out_low = _setting(config, "completion_tokens_low", 150)
     out_high = _setting(config, "completion_tokens_high", 600)
