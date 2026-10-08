@@ -143,7 +143,10 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from 5eafea4 → 2e1f1e0 (WS2, 2026-10-08: optional on_source_limit callback in
 #   orchestrator.py carrying read/total counts; flagged in
 #   docs/implementation_plan_2026-10-08_limits_and_warnings.md)
-BASELINE = "2e1f1e0"
+# Updated from 2e1f1e0 → ec56a18 (KW1-KW4, 2026-10-08: keywords in to_dict, uncapped in
+#   europepmc/osf, merged in dedup; TITLE_ABS parts also search KW in query_builder;
+#   flagged in docs/implementation_plan_2026-10-08_author_keywords.md)
+BASELINE = "ec56a18"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
