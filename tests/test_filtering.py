@@ -420,3 +420,18 @@ def test_ay2_only_true_widens(value):
     assert date_window(fd)["all_years"] is False
     fd = fixed_dates({"days_back": 30})                     # key missing
     assert fd["start_date"] == (date.today() - timedelta(days=30)).isoformat()
+
+
+def test_ay2_non_bool_all_years_warns_not_silent(caplog):
+    """A malformed all_years on the run path must not widen, and must say so —
+    not narrow in silence (review P5/P10: the saved-filter route refuses it,
+    the search route and monitor must not accept it quietly)."""
+    from datetime import date, timedelta
+    from src.filtering import date_window, fixed_dates
+    with caplog.at_level("WARNING"):
+        fd = fixed_dates({"all_years": "true", "days_back": 30},
+                         {"search": {"all_years_start": "1900-01-01"}})
+    assert fd["start_date"] == (date.today() - timedelta(days=30)).isoformat()
+    assert date_window(fd)["all_years"] is False
+    assert "all_years" not in fd
+    assert any("all_years" in r.getMessage() for r in caplog.records)

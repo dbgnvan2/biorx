@@ -232,6 +232,16 @@ def fixed_dates(filter_dict: Dict[str, Any],
     # Legacy keys (date_from/date_to) first, or their dates would be replaced
     # by days_back's window (caught by test_b13_legacy_filter_normalised).
     filter_dict = normalise_filter(filter_dict)
+    # AY2: 'all years' is a real bool everywhere. A present but non-bool value
+    # is dropped with a warning, so a malformed value cannot silently narrow
+    # the window on the run paths (search route and monitor) that do not
+    # refuse it outright the way the saved-filter routes do (_check_all_years).
+    if (filter_dict.get("all_years") is not None
+            and not isinstance(filter_dict.get("all_years"), bool)):
+        logger.warning("all_years is not true or false (%r) — ignoring it; "
+                       "only a real true widens the window",
+                       filter_dict.get("all_years"))
+        filter_dict.pop("all_years")
     if filter_dict.get("all_years") is True:
         from src.search_limits import all_years_start
         if sources_config is None:
