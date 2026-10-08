@@ -18,6 +18,8 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import requests
 
+from src.config_values import config_float, config_int
+
 from src.filtering import split_terms, wildcard_pattern
 from src.search_terms import and_parts, normalise_text
 from src.sources.base import with_retry
@@ -87,13 +89,14 @@ def discover_settings(config: Dict[str, Any]) -> DiscoverSettings:
         logger.warning("llm_config discover block has no check_timeout_s / "
                        "check_delay_s — using 15 s and 0.2 s")
     return DiscoverSettings(
-        days_back=int(block.get("days_back", 90)),
-        max_papers=int(block.get("max_papers", 30)),
+        days_back=config_int(block, "days_back", 90, name="discover.days_back"),
+        max_papers=config_int(block, "max_papers", 30, name="discover.max_papers"),
         stop_words=frozenset(str(w).lower() for w in block.get("stop_words", []) or []),
         system_prompt=system_prompt,
         replace_prompt=replace_prompt,
-        check_timeout_s=float(block.get("check_timeout_s", 15.0)),
-        check_delay_s=float(block.get("check_delay_s", 0.2)),
+        check_timeout_s=config_float(block, "check_timeout_s", 15.0, minimum=0.1,
+                                     name="discover.check_timeout_s"),
+        check_delay_s=config_float(block, "check_delay_s", 0.2, name="discover.check_delay_s"),
     )
 
 

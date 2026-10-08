@@ -9,18 +9,30 @@
   substring version of the model fails `test_tg5_query_model_is_whole_word`.
 - The route test for TG1 is in `tests/web/test_searches_routes.py` (it needs
   the web fixtures).
-**Adjacent issue, not fixed (protected file):** `OsfPreprintAdapter._max_title_terms`
-(`src/sources/osf.py`) accepts 0, a bool or a fraction (`int(2.5)` = 2). The
-summary now falls back to the default for those, so with such a value the two
-could disagree. The shipped value (8) is fine. Listed in TODO.md.
+**Gate 1 (REJECTED, `docs/cycles/2026-10-08_gate-todos-qa-gate.md`) → TG6:**
+- F1: `config_int` let `OverflowError` through, so `.inf` crashed searches.
+- F2: the class was incomplete. Numeric settings were still read with bare
+  `int()`/`float()` in several places.
+- F3: a default above the ceiling reset both values to (200, 2000), throwing
+  away a lowered ceiling.
+- F4: the "agree" test never called the adapter.
+
+| ID | Fix | Test |
+|---|---|---|
+| TG6 | One reader for every numeric setting, `src/config_values.py` (`config_int`, `config_float`). It refuses blank, text, fractions, bools, inf/nan and values below a minimum, and logs the full setting path. Every numeric read in both config files now uses it: (1) `orchestrator._page_limit` (protected); (2) `OsfPreprintAdapter._max_title_terms` (protected), so the adapter and the limit summary agree on any value (F4); (3) `fulltext.extract_limits`; (4) `paper_meta.scrape_max_chars`; (5) the summary routes' `max_downloads`; (6) `discover_settings`; (7) `llm_config` timeout, `max_text_chars` and the daily cap (0 is allowed for the cap). F3: a default above the ceiling is brought down to the ceiling. | `tests/test_config_values.py` (25: every bad shape for both readers, and each caller with inf); `tests/test_search_limits.py::test_tg1_default_above_ceiling_is_clamped`, `test_tg2_osf_terms_summary_and_adapter_agree` (calls the adapter); `test_orchestrator.py::test_br3_page_limit_bad_config_falls_back` message updated |
+
+**Touches protected retrieval code (TG6, flagged):** `src/sources/orchestrator.py`
+(`_page_limit`) and `src/sources/osf.py` (`_max_title_terms`). Each now reads its
+setting through the shared reader; a value that was valid before reads the same.
+The drift baseline is advanced.
 **Source:** `TODO.md`, these sections:
 - Limits and warnings gate
 - Date-window gate
 - Author-keywords gate
 
-**Touches protected retrieval code:** none. `src/sources/biorxiv_window.py` is
-not on the protected list (`biorxiv_medrxiv.py` is), and `osf.py` is only
-read from, not changed.
+**Touches protected retrieval code:** none in TG1–TG5 (`biorxiv_window.py` is
+not on the protected list). TG6 (after gate 1) changes `orchestrator.py` and
+`osf.py`; see above.
 
 ---
 

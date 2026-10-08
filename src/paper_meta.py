@@ -170,10 +170,12 @@ def scrape_max_chars() -> int:
     Spec:    docs/implementation_plan_2026-09-28_review_fixes.md#B8 (gate 6 note 2)
     Tests:   tests/test_paper_meta.py::test_b8_scrape_cap_from_config_and_logged
     """
+    from .config_values import config_int
     from .sources.config import load_sources_config
     try:
         ft = load_sources_config().get("full_text") or {}
-        return int(ft.get("scrape_max_chars", SCRAPE_MAX_CHARS))
+        return config_int(ft, "scrape_max_chars", SCRAPE_MAX_CHARS,
+                          name="full_text.scrape_max_chars")
     except (OSError, ValueError, TypeError) as e:
         logger.warning("Could not read full_text.scrape_max_chars (%s); using %d",
                        e, SCRAPE_MAX_CHARS)

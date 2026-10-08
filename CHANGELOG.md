@@ -5,14 +5,15 @@
 From `docs/implementation_plan_2026-10-08_gate_todos.md`.
 
 ### Fixed
-- A blank, non-numeric or out-of-range number in `sources_config.yaml` used
-  to make every search fail. Searches now use the default and log which
-  setting was wrong. This covers:
-  - the per-source limit and its maximum;
-  - the PsyArXiv/SocArXiv title-word count;
-  - the bioRxiv/medRxiv window settings.
-- The limit summary used its own default for the PsyArXiv/SocArXiv
-  title-word count. It now uses the adapter's.
+- A blank, non-numeric, infinite or out-of-range number in
+  `sources_config.yaml` or `llm_config.yaml` could make searches, summaries
+  or Discover fail. Every numeric setting is now read by one reader
+  (`src/config_values.py`), which uses the default and logs the full name of
+  the setting that was wrong.
+- The limit summary and the PsyArXiv/SocArXiv adapter could disagree on the
+  title-word count. They now read it the same way.
+- A default limit above the maximum used to reset both to 200/2000. The
+  default is now lowered to the maximum, which is kept.
 
 ### Changed
 - All years names its start date: "Searched all years (1900-01-01 to …)".

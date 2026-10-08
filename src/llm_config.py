@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from src.config_values import config_int
+
 logger = logging.getLogger(__name__)
 
 CONFIG_FILENAME = "llm_config.yaml"
@@ -198,7 +200,7 @@ def provider_config(config: Dict[str, Any], name: str) -> Optional[ProviderConfi
         name=name,
         dialect=raw.get("dialect", ""),
         model=model or raw.get("model", ""),
-        timeout=int(raw.get("timeout", 120)),
+        timeout=config_int(raw, "timeout", 120, name=f"providers.{name}.timeout"),
         base_url=raw.get("base_url", ""),
         api_key_env=raw.get("api_key_env", ""),
         api_key=raw.get("api_key", ""),
@@ -207,7 +209,8 @@ def provider_config(config: Dict[str, Any], name: str) -> Optional[ProviderConfi
 
 
 def max_text_chars(config: Dict[str, Any]) -> int:
-    return int(config.get("max_text_chars", _FALLBACK["max_text_chars"]))
+    return config_int(config, "max_text_chars", _FALLBACK["max_text_chars"],
+                      name="max_text_chars")
 
 
 def summary_daily_cap(config: Dict[str, Any]) -> int:
@@ -218,8 +221,8 @@ def summary_daily_cap(config: Dict[str, Any]) -> int:
             return int(env)
         except ValueError:
             logger.warning("SUMMARY_DAILY_CAP_PER_USER is not an integer — using config")
-    return int(config.get("summary_daily_cap_per_user",
-                          _FALLBACK["summary_daily_cap_per_user"]))
+    return config_int(config, "summary_daily_cap_per_user",
+                      _FALLBACK["summary_daily_cap_per_user"], minimum=0)
 
 
 def non_article_kind(config: Dict[str, Any], title: str) -> str:

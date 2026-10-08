@@ -362,13 +362,11 @@ class SourceOrchestrator:
         Spec:  docs/cycles/2026-09-29_browser-run.md (bioRxiv decision)
         Tests: tests/test_orchestrator.py::test_br3_page_limit_from_config
         """
+        from src.config_values import config_int
         section = ((self.config or {}).get("publication_sources") or {}).get(source_name) or {}
-        try:
-            return max(1, int(section.get("max_pages", self.MAX_PAGES_PER_SOURCE)))
-        except (TypeError, ValueError):
-            logger.warning("publication_sources.%s.max_pages is not a number; using %d",
-                           source_name, self.MAX_PAGES_PER_SOURCE)
-            return self.MAX_PAGES_PER_SOURCE
+        # Read defensively: inf, a fraction or a bool falls back too (TG6).
+        return config_int(section, "max_pages", self.MAX_PAGES_PER_SOURCE,
+                          name=f"publication_sources.{source_name}.max_pages")
 
     @staticmethod
     def _local_matcher(filter_dict: Dict[str, Any]) -> Callable[[CanonicalRecord], bool]:

@@ -189,7 +189,8 @@ an existing filter opens with its own sources, keywords and days.
 | KW9 route | `tests/web/test_searches_routes.py::test_kw9_keyword_only_paper_kept` | done |
 | KW10 live | real orchestrator and local browser 2026-10-08: 30 papers, the 3 keyword-only PubMed papers kept, Keywords line shown | done (local) |
 | TG1 numeric settings read defensively | `tests/test_search_limits.py::test_tg1_*` (10), `tests/web/test_searches_routes.py::test_tg1_search_starts_with_a_broken_config` (mutation-checked) | done |
-| TG2 OSF default shared; bioRxiv window settings | `test_search_limits.py::test_tg2_osf_terms_default_shared` (4), `tests/test_biorxiv_window.py::test_tg2_bad_window_settings_fall_back` (5) (mutation-checked) | done |
+| TG2 OSF default shared; bioRxiv window settings | `test_search_limits.py::test_tg2_osf_terms_summary_and_adapter_agree`, `tests/test_biorxiv_window.py::test_tg2_bad_window_settings_fall_back` (5) (mutation-checked) | done |
+| TG6 one reader for numeric settings (gate 1) | `tests/test_config_values.py` (25), `tests/test_search_limits.py::test_tg1_default_above_ceiling_is_clamped`, `test_tg2_osf_terms_summary_and_adapter_agree` (16; mutation-checked) | done |
 | TG3 All years names its start | `tests/web/test_frontend_wiring.py::test_dw2_date_window_text` (mutation-checked) | done |
 | TG4 fallbacks match the config | `test_search_limits.py::test_tg4_fallbacks_match_the_shipped_config` (mutation-checked) | done |
 | TG5 query model is whole-word | `tests/test_query_builder.py::test_tg5_query_model_is_whole_word`, `test_kw7_*` (+`ketamine`) (mutation-checked) | done |

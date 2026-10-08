@@ -22,30 +22,7 @@ logger = logging.getLogger(__name__)
 _FALLBACK = (200, 2000)
 _ALL_YEARS_FALLBACK = "1900-01-01"
 
-
-def config_int(block: Optional[Mapping], key: str, default: int, minimum: int = 1) -> int:
-    """A whole-number setting from a config block, or the default with a
-    warning when it is missing, blank, text, a fraction, a bool or below the
-    minimum — a bad value must not make every search fail.
-
-    Purpose: One defensive reader for numeric settings.
-    Spec:    docs/implementation_plan_2026-10-08_gate_todos.md#TG1, #TG2
-    Tests:   tests/test_search_limits.py::test_tg1_bad_values_fall_back
-    """
-    value = (block or {}).get(key)
-    if value is None or value == "":
-        if key in (block or {}):
-            logger.warning("sources_config %s is blank — using %d", key, default)
-        return default
-    try:
-        n = int(value)
-        if isinstance(value, bool) or n != float(value) or n < minimum:
-            raise ValueError
-    except (TypeError, ValueError):
-        logger.warning("sources_config %s is not a whole number of at least %d (%r) — "
-                       "using %d", key, minimum, value, default)
-        return default
-    return n
+from src.config_values import config_int  # noqa: E402  (re-exported; TG1)
 
 
 def search_limits(sources_config: Optional[Mapping]) -> Tuple[int, int]:
@@ -54,13 +31,16 @@ def search_limits(sources_config: Optional[Mapping]) -> Tuple[int, int]:
     if "default_max_results" not in block or "max_results_ceiling" not in block:
         logger.warning("sources_config has no search.default_max_results / "
                        "max_results_ceiling — using 200 and 2000")
-    default = config_int(block, "default_max_results", _FALLBACK[0])
-    ceiling = config_int(block, "max_results_ceiling", _FALLBACK[1])
+    default = config_int(block, "default_max_results", _FALLBACK[0],
+                         name="search.default_max_results")
+    ceiling = config_int(block, "max_results_ceiling", _FALLBACK[1],
+                         name="search.max_results_ceiling")
     if default > ceiling:
+        # Keep a lowered ceiling; bring the default down to it (gate F3).
         logger.warning("sources_config search.default_max_results (%d) is above "
-                       "max_results_ceiling (%d) — using %d and %d",
-                       default, ceiling, *_FALLBACK)
-        return _FALLBACK
+                       "max_results_ceiling (%d) — using %d for both",
+                       default, ceiling, ceiling)
+        return ceiling, ceiling
     return default, ceiling
 
 

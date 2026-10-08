@@ -910,7 +910,7 @@ def test_br3_page_limit_bad_config_falls_back(caplog):
     orch = _orch_with({})
     orch.config = {"publication_sources": {"biorxiv_medrxiv": {"max_pages": "lots"}}}
     assert orch._page_limit("biorxiv_medrxiv") == orch.MAX_PAGES_PER_SOURCE
-    assert "not a number" in caplog.text
+    assert "publication_sources.biorxiv_medrxiv.max_pages is not a whole number" in caplog.text
 
 
 def test_br3_page_limit_message_is_configured():

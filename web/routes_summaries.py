@@ -10,6 +10,8 @@ import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+
+from src.config_values import config_int
 from pydantic import BaseModel, Field
 
 from src import spend, user_store
@@ -176,7 +178,8 @@ def _extract_text(ctx: AppContext, paper: Dict[str, Any],
         own_links=[own] if own else [],
         by_title=by_title,
         email=get_unpaywall_email(cfg),
-        max_downloads=int(settings.get("max_downloads", 4)),
+        max_downloads=config_int(settings, "max_downloads", 4,
+                                 name="full_text.max_downloads"),
         user_agent=polite_user_agent(cfg),
         get_json=_FINDER_GET_JSON,
         refusal_notes=settings.get("refused_download_notes") or {},

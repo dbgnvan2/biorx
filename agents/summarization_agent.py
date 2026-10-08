@@ -13,6 +13,7 @@ from typing import Optional, Dict, Any
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.config_values import config_int
 from src.db import Database
 from src.pdf_handler import PDFHandler
 from src.llm import MockOllamaClient
@@ -94,7 +95,8 @@ class SummarizationAgent:
             paper, download_pdf_text, own_links=[own] if own else [],
             by_title=bool(settings.get("find_by_title", True)),
             email=get_unpaywall_email(cfg),
-            max_downloads=int(settings.get("max_downloads", 4)),
+            max_downloads=config_int(settings, "max_downloads", 4,
+                                 name="full_text.max_downloads"),
             user_agent=polite_user_agent(cfg),
         )
 

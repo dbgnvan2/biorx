@@ -12,10 +12,6 @@
 
 ## Gate TODOs 2026-10-08 (`docs/implementation_plan_2026-10-08_gate_todos.md`)
 
-- [ ] `OsfPreprintAdapter._max_title_terms` (`src/sources/osf.py`, protected)
-  accepts 0, a bool or a fraction for `osf.max_title_terms`. The limit summary
-  falls back to the default for those, so the two could disagree on a bad
-  value. Use `src.search_limits.config_int` there next time osf.py changes.
 - Closed without code: "keyword matches count against each source's limit".
   The limit summary already reports it.
 

@@ -329,12 +329,15 @@ def extract_limits() -> Dict[str, Any]:
     """
     from .llm_config import load_llm_config, max_text_chars
     from .sources.config import load_sources_config
+    from .config_values import config_float, config_int
     ft = (load_sources_config().get("full_text") or {})
     return {
-        "max_pages": int(ft.get("max_pages", 40)),
+        "max_pages": config_int(ft, "max_pages", 40, name="full_text.max_pages"),
         "max_chars": max_text_chars(load_llm_config()) + TITLE_WINDOW_CHARS,
-        "timeout": float(ft.get("extract_timeout_seconds", 60)),
-        "mem_bytes": int(ft.get("extract_memory_mb", 1024)) * 1024 * 1024,
+        "timeout": config_float(ft, "extract_timeout_seconds", 60.0, minimum=1.0,
+                                name="full_text.extract_timeout_seconds"),
+        "mem_bytes": config_int(ft, "extract_memory_mb", 1024,
+                                name="full_text.extract_memory_mb") * 1024 * 1024,
     }
 
 

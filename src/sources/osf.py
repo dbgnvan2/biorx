@@ -72,11 +72,10 @@ class OsfPreprintAdapter:
         return type(self)(timeout=self.timeout, sources_config=self.sources_config)
 
     def _max_title_terms(self) -> int:
-        osf_cfg = self.sources_config.get("osf") or {}
-        try:
-            return int(osf_cfg.get("max_title_terms", DEFAULT_MAX_TITLE_TERMS))
-        except (TypeError, ValueError):
-            return DEFAULT_MAX_TITLE_TERMS
+        from src.config_values import config_int
+        # The same reader as the limit summary, so the two agree on any value (TG6).
+        return config_int(self.sources_config.get("osf"), "max_title_terms",
+                          DEFAULT_MAX_TITLE_TERMS, name="osf.max_title_terms")
 
     def _get(self, params: Dict[str, Any]) -> Dict[str, Any]:
         resp = with_retry(
