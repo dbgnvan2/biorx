@@ -128,7 +128,10 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from b384965 → 203668f (BW2/BW3, 2026-10-07: biorxiv_medrxiv.py applies
 #   src/sources/biorxiv_window.py — a range ending long ago is not read, a long recent range reads
 #   only its newest days; flagged in docs/implementation_plan_2026-10-07_biorxiv_window.md)
-BASELINE = "203668f"
+# Updated from 203668f → 4ff7421 (DS1, 2026-10-07: orchestrator.fetched_status names a source's
+#   papers that an earlier source already found — status text only, nothing fetched, merged or
+#   kept changes; flagged in docs/implementation_plan_2026-10-07_duplicate_status.md)
+BASELINE = "4ff7421"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
