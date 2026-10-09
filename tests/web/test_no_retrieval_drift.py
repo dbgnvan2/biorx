@@ -149,7 +149,10 @@ ROOT = Path(__file__).parent.parent.parent
 # Updated from ec56a18 → e3a0cfe (TG6, 2026-10-08: orchestrator._page_limit and
 #   OsfPreprintAdapter._max_title_terms read their settings through
 #   src/config_values.config_int; flagged in docs/implementation_plan_2026-10-08_gate_todos.md)
-BASELINE = "e3a0cfe"
+# Updated from e3a0cfe → 05a5a89 (GN2/GN3, 2026-10-08: schema.keyword_list used by the
+#   europepmc/osf adapters, stripped keywords in dedup; flagged in
+#   docs/implementation_plan_2026-10-08_gate_notes.md)
+BASELINE = "05a5a89"
 
 # Everything W1.a names. Adapters are listed individually rather than by glob so
 # that adding an adapter is a deliberate edit here, not a silent widening.
