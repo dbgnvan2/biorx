@@ -19,8 +19,12 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 logger = logging.getLogger(__name__)
 
-WORD_SOURCES = ("europepmc", "pubmed", "arxiv")
-OSF_SOURCES = ("psyarxiv", "socarxiv")
+# How each source is read, for the summary's wording. Every source the
+# orchestrator registers must be in exactly one list
+# (tests/test_limit_summary.py::test_gn1_every_registered_source_is_classified).
+WORD_SOURCES = ("europepmc", "pubmed", "arxiv")      # searched by words
+OSF_SOURCES = ("psyarxiv", "socarxiv")               # by Title words, else by date
+DATE_SOURCES = ("biorxiv_medrxiv",)                  # by date only
 LIMIT_KINDS = ("truncated", "page-limit")
 
 _FALLBACK = {
@@ -85,8 +89,12 @@ def _counts(source: str, kind: str, limit: Optional[Mapping], osf_narrowed: bool
         what = "matches"
     elif source in OSF_SOURCES and osf_narrowed:
         what = "papers with your Title words"
-    else:
+    elif source in OSF_SOURCES or source in DATE_SOURCES:
         what = "papers in the date range"
+    else:
+        # A source not classified above: say only what is certain (GN1).
+        logger.warning("limit_summary: %s is not in WORD/OSF/DATE_SOURCES", source)
+        what = "papers"
     if total:
         return f"read {read:,} of {int(total):,} {what}"
     return f"read {read:,} {what} (total not reported)"

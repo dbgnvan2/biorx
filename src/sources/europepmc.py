@@ -11,7 +11,8 @@ import logging
 import requests
 
 from .base import RawRecord, with_retry
-from .schema import CanonicalRecord, AuthorRecord, SourceHit, RecordFlags, make_canonical_id
+from .schema import (CanonicalRecord, AuthorRecord, SourceHit, RecordFlags, keyword_list,
+                     make_canonical_id)
 from .errors import SourceUnavailableError, RateLimitedError
 from .config import polite_user_agent
 from .markup import markup_to_text
@@ -303,7 +304,8 @@ class EuropePmcAdapter:
         trust = 0.98 if source_field == "PMC" else 1.0
 
         # Keywords and subjects
-        keywords: List[str] = raw.get("keywordList", {}).get("keyword", []) or []
+        kw_block = raw.get("keywordList")
+        keywords = keyword_list(kw_block.get("keyword") if isinstance(kw_block, dict) else None)
         mesh_list = raw.get("meshHeadingList", {}).get("meshHeading", []) or []
         subjects: List[str] = [m.get("descriptorName", "") for m in mesh_list if m.get("descriptorName")]
 
@@ -353,7 +355,7 @@ class EuropePmcAdapter:
             subjects=subjects[:5],
             # Every keyword: the filter matches them, so a cut one would drop
             # a paper Europe PMC returned for it (KW2).
-            keywords=[k for k in keywords if isinstance(k, str) and k.strip()],
+            keywords=keywords,
             source_hits=[SourceHit(
                 source=self.source_name,
                 source_record_id=raw.get("id", doi or pmid),

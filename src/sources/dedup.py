@@ -115,10 +115,11 @@ def merged_keywords(first: Optional[List[str]], second: Optional[List[str]]) -> 
     out: List[str] = []
     seen = set()
     for k in list(first or []) + list(second or []):
-        key = k.strip().lower() if isinstance(k, str) else ""
+        k = k.strip() if isinstance(k, str) else ""
+        key = k.lower()
         if key and key not in seen:
             seen.add(key)
-            out.append(k)
+            out.append(k)                                   # stored stripped (GN2)
     return out
 
 

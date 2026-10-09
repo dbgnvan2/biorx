@@ -14,6 +14,8 @@
 
 - Closed without code: "keyword matches count against each source's limit".
   The limit summary already reports it.
+- The "below-medium, backlog" notes in today's gate files are fixed or
+  closed (`docs/implementation_plan_2026-10-08_gate_notes.md`, GN1–GN3).
 
 ## From the browser run (`docs/cycles/2026-09-29_browser-run.md`)
 

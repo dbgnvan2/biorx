@@ -656,3 +656,34 @@ def test_kw2_all_keywords_kept():
     for rec in (epmc, osf):
         assert rec.keywords == words
         assert filter_papers([rec.to_dict()], group), rec.source_hits[0].source
+
+
+# ── GN2/GN3: keywords stripped; one string is one keyword ────────────────────
+# docs/implementation_plan_2026-10-08_gate_notes.md
+
+def _epmc_with(value):
+    from src.sources.europepmc import EuropePmcAdapter
+    return EuropePmcAdapter().normalize({**EPMC_FIXTURE, "keywordList": value})
+
+
+def _osf_with(tags):
+    from src.sources.psyarxiv import PsyArxivAdapter
+    attrs = {**PSYARXIV_FIXTURE["attributes"], "tags": tags}
+    return PsyArxivAdapter().normalize({**PSYARXIV_FIXTURE, "attributes": attrs})
+
+
+def test_gn2_keywords_stripped():
+    assert _epmc_with({"keyword": ["  Internal Family Systems ", "\tparts"]}).keywords == \
+        ["Internal Family Systems", "parts"]
+    assert _osf_with([" kinship ", "  "]).keywords == ["kinship"]
+
+
+def test_gn3_single_string_keyword_is_one_keyword():
+    """Adversarial (P7): one string must not become 23 one-letter keywords."""
+    assert _epmc_with({"keyword": "Internal Family Systems"}).keywords == ["Internal Family Systems"]
+    assert _osf_with("Internal Family Systems").keywords == ["Internal Family Systems"]
+    for odd in (None, 7, {"x": 1}):
+        assert _epmc_with({"keyword": odd}).keywords == []
+        assert _osf_with(odd).keywords == []
+    for block in (None, "x", ["a"]):
+        assert _epmc_with(block).keywords == []

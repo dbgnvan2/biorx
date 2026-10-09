@@ -160,6 +160,22 @@ class CanonicalRecord:
 
 # ── Canonical ID generation ────────────────────────────────────────────────────
 
+def keyword_list(value: Any) -> List[str]:
+    """A source's keywords as a clean list: each non-blank string, stripped.
+    One string is one keyword (not split into letters); anything else is none.
+
+    Purpose: Read keyword fields defensively, whatever shape a source sends.
+    Spec:    docs/implementation_plan_2026-10-08_gate_notes.md#GN2, #GN3
+    Tests:   tests/test_adapters.py::test_gn2_keywords_stripped,
+             tests/test_adapters.py::test_gn3_single_string_keyword_is_one_keyword
+    """
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [k.strip() for k in value if isinstance(k, str) and k.strip()]
+
+
 def make_canonical_id(doi: str = "", pmid: str = "", pmcid: str = "",
                       title: str = "", first_author: str = "", year: int = 0) -> str:
     """Generate a stable canonical ID using the first available identifier."""

@@ -28,7 +28,8 @@ import logging
 import requests
 
 from .base import RawRecord, with_retry
-from .schema import CanonicalRecord, AuthorRecord, SourceHit, RecordFlags, make_canonical_id
+from .schema import (CanonicalRecord, AuthorRecord, SourceHit, RecordFlags, keyword_list,
+                     make_canonical_id)
 from .errors import SourceUnavailableError, RateLimitedError
 from .config import polite_user_agent
 from .query_builder import get_date_range, osf_title_terms
@@ -252,7 +253,7 @@ class OsfPreprintAdapter:
             oa_status="open",  # OSF preprint servers are open access
             subjects=subjects[:5],
             # Every tag: the filter matches them (KW2).
-            keywords=[t for t in tags if isinstance(t, str) and t.strip()],
+            keywords=keyword_list(tags),
             source_hits=[SourceHit(
                 source=self.source_name,
                 source_record_id=osf_id,

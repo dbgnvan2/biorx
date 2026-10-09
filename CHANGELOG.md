@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-08 — notes from today's gates (GN1–GN3)
+
+From `docs/implementation_plan_2026-10-08_gate_notes.md`.
+
+### Fixed
+- Keywords are stored without surrounding spaces.
+- A keyword field sent as one string (not a list) is read as one keyword,
+  not split into letters.
+- The incomplete-results summary no longer gives a wrong label to a source it
+  does not know. A test fails if a registered source is not classified.
+
 ## 2026-10-08 — today's gate TODO items (TG1–TG5)
 
 From `docs/implementation_plan_2026-10-08_gate_todos.md`.

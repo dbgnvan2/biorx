@@ -272,3 +272,8 @@ def test_kw3_keywords_merged(first):
         d.add(r)
     (merged,) = d.results()
     assert merged.keywords == ["Internal Family Systems", "parts", "self-leadership"]
+
+
+def test_gn2_merged_keywords_stripped():
+    from src.sources.dedup import merged_keywords
+    assert merged_keywords([" Parts "], ["parts", "  Self  ", None, 3]) == ["Parts", "Self"]

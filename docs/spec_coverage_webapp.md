@@ -194,6 +194,9 @@ an existing filter opens with its own sources, keywords and days.
 | TG3 All years names its start | `tests/web/test_frontend_wiring.py::test_dw2_date_window_text` (mutation-checked) | done |
 | TG4 fallbacks match the config | `test_search_limits.py::test_tg4_fallbacks_match_the_shipped_config` (mutation-checked) | done |
 | TG5 query model is whole-word | `tests/test_query_builder.py::test_tg5_query_model_is_whole_word`, `test_kw7_*` (+`ketamine`) (mutation-checked) | done |
+| GN1 every source classified in the summary | `tests/test_limit_summary.py::test_gn1_*` (2; mutation-checked) | done |
+| GN2 keywords stripped | `tests/test_adapters.py::test_gn2_keywords_stripped`, `tests/test_dedup.py::test_gn2_merged_keywords_stripped` (mutation-checked) | done |
+| GN3 one string is one keyword | `tests/test_adapters.py::test_gn3_single_string_keyword_is_one_keyword` (mutation-checked) | done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |

@@ -1,7 +1,7 @@
 # Implementation plan — the unrecorded notes from today's gates (2026-10-08, GN1–GN3)
 
 **Request:** "fix the TODO items from today's gates" (second time).
-**Status:** PLAN — awaiting approval.
+**Status:** APPROVED 2026-10-08; built. GN1–GN3 done (each test mutation-checked).
 **Source:** `TODO.md` has no open items from today's gates. Four notes were
 listed only as "below-medium, backlog" in the gate files and never reached
 TODO.md:

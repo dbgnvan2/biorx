@@ -121,3 +121,32 @@ def test_ws6_repo_config_has_every_action_and_step():
     block = CFG["limit_summary"]
     keys = set(block["next_step_order"])
     assert keys <= set(block["actions"]) and keys <= set(block["next_step"])
+
+
+# ── GN1: every registered source is classified ───────────────────────────────
+# docs/implementation_plan_2026-10-08_gate_notes.md#GN1
+
+def test_gn1_every_registered_source_is_classified():
+    from src.limit_summary import DATE_SOURCES, OSF_SOURCES, WORD_SOURCES
+    from src.sources.config import load_sources_config
+    from src.sources.orchestrator import SourceOrchestrator
+    cfg = load_sources_config()
+    for section in (cfg.get("publication_sources") or {}).values():
+        if isinstance(section, dict):
+            section["enabled"] = True
+    registered = set(SourceOrchestrator(cfg)._search_adapters)
+    lists = [set(WORD_SOURCES), set(OSF_SOURCES), set(DATE_SOURCES)]
+    assert len(registered) >= 6
+    for name in registered:
+        assert sum(name in group for group in lists) == 1, name
+    assert set().union(*lists) == registered
+
+
+def test_gn1_unknown_source_is_not_mislabelled(caplog):
+    from src.limit_summary import _counts
+    with caplog.at_level("WARNING"):
+        text = _counts("newsource", "truncated", {"read": 200, "total": 900}, False, "")
+    assert text == "read 200 of 900 papers"
+    assert "newsource" in caplog.text
+    assert _counts("biorxiv_medrxiv", "truncated", {"read": 50, "total": 0}, False, "") == \
+        "read 50 papers in the date range (total not reported)"
