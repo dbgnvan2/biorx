@@ -17,6 +17,17 @@
 - The "below-medium, backlog" notes in today's gate files are fixed or
   closed (`docs/implementation_plan_2026-10-08_gate_notes.md`, GN1–GN3).
 
+## Gate-notes gate (`docs/cycles/2026-10-08_gate-notes-qa-gate.md`) — APPROVED
+
+- [ ] `filtering.keyword_fields` is a near-copy of `schema.keyword_list`.
+  They agree today (matching normalises spaces), but should share one helper.
+- [ ] Three source lists are kept by hand: `config._SEARCH_SOURCES` (7, incl.
+  the unwired `openalex`), `orchestrator._register_adapters` (6) and
+  `limit_summary` WORD/OSF/DATE (6). GN1's test ties the last two together;
+  `_SEARCH_SOURCES` is separate. Candidate for consolidation.
+- [ ] The GN1 test's `len(registered) >= 6` is a floor; the exact set
+  assertions are the real guard. Harmless.
+
 ## From the browser run (`docs/cycles/2026-09-29_browser-run.md`)
 
 - All findings fixed (see the report). A search including bioRxiv/medRxiv
