@@ -18,6 +18,18 @@
   closed (`docs/implementation_plan_2026-10-08_gate_notes.md`, GN1–GN3;
   `docs/implementation_plan_2026-10-08_gate_notes_2.md`, GN4–GN6).
 
+## Gate-notes-2 gate (`docs/cycles/2026-10-08_gate-notes-2-qa-gate.md`) — APPROVED
+
+- [ ] The GN1/GN5 test sets `enabled = True` on the dict from
+  `load_sources_config()`. That is safe today because every source is in
+  `sources_config.yaml`. A source added only to `_DEFAULT_CONFIG` would let
+  the test change the module default. Copy the config first.
+- [ ] The GN4 test compares the filter's and the adapters' keyword readers on
+  a set of inputs, not by identity. Add an identity check if the two are
+  ever split again.
+- [ ] Cosmetic: the GN5 test imports the private `_SEARCH_SOURCES`, and
+  `SOURCES_WITHOUT_ADAPTER` is a tuple while `_SEARCH_SOURCES` is a list.
+
 ## From the browser run (`docs/cycles/2026-09-29_browser-run.md`)
 
 - All findings fixed (see the report). A search including bioRxiv/medRxiv
