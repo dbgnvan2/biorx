@@ -197,6 +197,9 @@ an existing filter opens with its own sources, keywords and days.
 | GN1 every source classified in the summary | `tests/test_limit_summary.py::test_gn1_*` (2; mutation-checked) | done |
 | GN2 keywords stripped | `tests/test_adapters.py::test_gn2_keywords_stripped`, `tests/test_dedup.py::test_gn2_merged_keywords_stripped` (mutation-checked) | done |
 | GN3 one string is one keyword | `tests/test_adapters.py::test_gn3_single_string_keyword_is_one_keyword` (mutation-checked) | done |
+| GN4 one keyword reader | `tests/test_filtering.py::test_gn4_filter_uses_the_shared_reader` (mutation-checked) | done |
+| GN5 source lists agree exactly | `tests/test_limit_summary.py::test_gn1_every_registered_source_is_classified` (mutation-checked both ways) | done |
+| GN6 DB connection test not flaky | `tests/test_db_concurrency.py::test_each_thread_gets_its_own_connection` (mutation-checked) | done |
 | Filter editor FE1–FE3 | `tests/web/test_frontend_wiring.py::test_fe1_*`, `test_fe2_*`, `test_fe3_*` | done |
 | `/api/me` effective model | `tests/web/test_llm_key_routes.py::test_me1_*` | done |
 | Discover success with a live model | Ollama `qwen3.5:4b` timed out at the client's fixed 120 s; the error path was verified live, the success path only with a stub | partial |

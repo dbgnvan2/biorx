@@ -473,3 +473,13 @@ def test_kw6_title_box_ignores_keywords_and_no_keywords_is_unchanged():
                                       {"both": "internal family systems"})
         assert text_group_matches({"title": "Internal family systems", "abstract": "",
                                    "keywords": kw}, {"both": "internal family systems"})
+
+
+def test_gn4_filter_uses_the_shared_reader():
+    """GN4: the filter reads keywords with schema.keyword_list."""
+    from src.filtering import keyword_fields
+    from src.sources.schema import keyword_list
+    for value in (["  Parts  ", "", None, 3], "Internal Family Systems", None, 5, {"a": 1}):
+        assert keyword_fields({"keywords": value}) == keyword_list(value)
+    p = {"title": "x", "abstract": "y", "keywords": "Internal Family Systems"}
+    assert text_group_matches(p, {"both": "internal family systems"})   # not split into letters

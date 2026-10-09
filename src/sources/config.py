@@ -35,6 +35,11 @@ USER_AGENT_PRODUCT = "biorx/1.0"
 # Sources that are search-capable (shown in picker)
 _SEARCH_SOURCES = ["europepmc", "pubmed", "psyarxiv", "socarxiv", "biorxiv_medrxiv", "arxiv", "openalex"]
 
+# Declared above but with no search adapter yet: enabling one gives the M31
+# warning. Every other name in _SEARCH_SOURCES has an adapter (GN5,
+# tests/test_limit_summary.py::test_gn1_every_registered_source_is_classified).
+SOURCES_WITHOUT_ADAPTER = ("openalex",)
+
 # Display labels: the one map for the picker, status lines, warnings and the
 # web app (review S2; there were two, spelled differently).
 SOURCE_LABELS: Dict[str, str] = {

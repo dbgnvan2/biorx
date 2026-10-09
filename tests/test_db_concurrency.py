@@ -49,17 +49,20 @@ def test_default_db_path_falls_back_to_the_desktop_location(monkeypatch):
 # ── Concurrency ───────────────────────────────────────────────────────────────
 
 def test_each_thread_gets_its_own_connection(db):
+    # The connection objects are kept, not their id(): a finished thread's
+    # connection could be freed and its id reused by the next one, which made
+    # this test fail under load although the code was right (GN6).
     seen = {}
 
     def grab(name):
-        seen[name] = id(db.conn)
+        seen[name] = db.conn
 
     t1 = threading.Thread(target=grab, args=("a",))
     t2 = threading.Thread(target=grab, args=("b",))
     t1.start(); t2.start(); t1.join(); t2.join()
 
-    assert len(set(seen.values())) == 2, "threads shared one connection"
-    assert id(db.conn) not in seen.values(), "main thread reused a worker's connection"
+    assert seen["a"] is not seen["b"], "threads shared one connection"
+    assert all(db.conn is not c for c in seen.values()), "main thread reused a worker's connection"
 
 
 def test_parallel_writes_from_multiple_threads_all_land(db):

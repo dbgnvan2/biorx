@@ -1,7 +1,14 @@
 # Implementation plan — gate-notes gate TODO items (2026-10-08, GN4–GN5)
 
 **Request:** "fix the TODO items from today's gates" (third time).
-**Status:** PLAN — awaiting approval.
+**Status:** APPROVED 2026-10-08 ("continue until you are finished"); built.
+GN4–GN6 done, each test mutation-checked.
+**Found during the build — GN6:** `tests/test_db_concurrency.py::test_each_thread_gets_its_own_connection`
+failed once in the full suite under load and passed 8 of 8 times on its own. It
+compared `id()` values, and a finished thread's connection can be freed and its
+id reused by the next thread. The test now keeps the connection objects and
+compares them with `is`. It still fails when connections are shared
+(mutation-checked). Test-only change.
 **Source:** `TODO.md`, "Gate-notes gate" (three items, from
 `docs/cycles/2026-10-08_gate-notes-qa-gate.md`). The other sections from
 today are closed.

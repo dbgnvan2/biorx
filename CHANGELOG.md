@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-10-08 — gate-notes follow-ups (GN4–GN6)
+
+From `docs/implementation_plan_2026-10-08_gate_notes_2.md`.
+
+### Changed
+- The filter reads keywords with the same function as the sources
+  (`schema.keyword_list`).
+- `SOURCES_WITHOUT_ADAPTER` (`src/sources/config.py`) names the declared
+  sources with no search adapter (`openalex`). A test checks that the
+  declared sources, the registered adapters and the limit summary's lists
+  agree exactly.
+
+### Fixed
+- A database test failed now and then under load. It compared `id()` values,
+  which can be reused once an object is freed.
+
 ## 2026-10-08 — notes from today's gates (GN1–GN3)
 
 From `docs/implementation_plan_2026-10-08_gate_notes.md`.

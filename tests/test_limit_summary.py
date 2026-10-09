@@ -127,8 +127,11 @@ def test_ws6_repo_config_has_every_action_and_step():
 # docs/implementation_plan_2026-10-08_gate_notes.md#GN1
 
 def test_gn1_every_registered_source_is_classified():
+    """The three source lists agree exactly (GN1, GN5): the declared sources
+    less those with no adapter = the registered adapters = the summary's."""
     from src.limit_summary import DATE_SOURCES, OSF_SOURCES, WORD_SOURCES
-    from src.sources.config import load_sources_config
+    from src.sources.config import (SOURCES_WITHOUT_ADAPTER, _SEARCH_SOURCES,
+                                    load_sources_config)
     from src.sources.orchestrator import SourceOrchestrator
     cfg = load_sources_config()
     for section in (cfg.get("publication_sources") or {}).values():
@@ -136,7 +139,7 @@ def test_gn1_every_registered_source_is_classified():
             section["enabled"] = True
     registered = set(SourceOrchestrator(cfg)._search_adapters)
     lists = [set(WORD_SOURCES), set(OSF_SOURCES), set(DATE_SOURCES)]
-    assert len(registered) >= 6
+    assert registered == set(_SEARCH_SOURCES) - set(SOURCES_WITHOUT_ADAPTER)
     for name in registered:
         assert sum(name in group for group in lists) == 1, name
     assert set().union(*lists) == registered

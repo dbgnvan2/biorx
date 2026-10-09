@@ -196,16 +196,17 @@ def keyword_fields(paper: Dict[str, Any]) -> List[str]:
     apart).
 
     Purpose: The title-or-abstract box also matches the authors' keywords.
-    Spec:    docs/implementation_plan_2026-10-08_author_keywords.md#KW5, #KW6
+    Spec:    docs/implementation_plan_2026-10-08_author_keywords.md#KW5, #KW6,
+             docs/implementation_plan_2026-10-08_gate_notes_2.md#GN4
     Tests:   tests/test_filtering.py::test_kw5_keyword_match_kept,
-             tests/test_filtering.py::test_kw6_phrase_does_not_span_two_keywords
+             tests/test_filtering.py::test_kw6_phrase_does_not_span_two_keywords,
+             tests/test_filtering.py::test_gn4_filter_uses_the_shared_reader
+
+    The adapters' reader, so the filter and the sources read keywords one
+    way (GN4).
     """
-    value = paper.get("keywords") or []
-    if isinstance(value, str):
-        value = [value]
-    if not isinstance(value, (list, tuple)):
-        return []
-    return [k for k in value if isinstance(k, str) and k.strip()]
+    from src.sources.schema import keyword_list
+    return keyword_list(paper.get("keywords"))
 
 
 def text_group_matches(paper: Dict[str, Any], group: Dict[str, str]) -> bool:
